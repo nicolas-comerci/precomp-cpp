@@ -1,3 +1,8 @@
+#ifndef STDTHREAD_IMPORTED
+#define STDTHREAD_IMPORTED
+#include <thread>
+#endif
+
 // Switches class
 class Switches {
   public:

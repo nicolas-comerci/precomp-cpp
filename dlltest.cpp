@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "precomp.h"
+#include "precomp_dll.h"
 
 __declspec (dllimport)
 void get_copyright_msg(char* msg);

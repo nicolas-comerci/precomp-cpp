@@ -65,7 +65,10 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include <sstream>
 #include <string>
 #include <signal.h>
+#ifndef STDTHREAD_IMPORTED
+#define STDTHREAD_IMPORTED
 #include <thread>
+#endif
 #include <set>
 #ifdef MINGW
 #ifndef _GLIBCXX_HAS_GTHREADS
