@@ -140,12 +140,11 @@ int work_sign_var = 0;
 long long work_sign_start_time = get_time_ms();
 
 // recursion
-int recursion_stack_size = 0;
 int recursion_depth = 0;
 int max_recursion_depth = 10;
 int max_recursion_depth_used = 0;
 bool max_recursion_depth_reached = false;
-unsigned char* recursion_stack = NULL;
+std::vector<unsigned char> recursion_stack;
 void recursion_stack_push(void* var, int var_size);
 void recursion_stack_pop(void* var, int var_size);
 void recursion_push();
@@ -7722,19 +7721,20 @@ void init_temp_files() {
 }
 
 void recursion_stack_push(void* var, int var_size) {
-  recursion_stack = (unsigned char*)realloc(recursion_stack, (recursion_stack_size + var_size) * sizeof(unsigned char));
   for (int i = 0; i < var_size; i++) {
-    recursion_stack[recursion_stack_size] = ((unsigned char*)var)[i];
-    recursion_stack_size++;
+    recursion_stack.push_back(((unsigned char*)var)[i]);
   }
 }
 
 void recursion_stack_pop(void* var, int var_size) {
   for (int i = var_size - 1; i >= 0; i--) {
-    recursion_stack_size--;
-    ((unsigned char*)var)[i] = recursion_stack[recursion_stack_size];
+    ((unsigned char*)var)[i] = recursion_stack.back();
+    recursion_stack.pop_back();
   }
-  recursion_stack = (unsigned char*)realloc(recursion_stack, recursion_stack_size * sizeof(unsigned char));
+  // We shrink the vector back logaritmically to mirror the exponential growth policy of the vector
+  // This should make it so we don't waste too much memory but we are also not resizing the vector every time
+  if (recursion_stack.size() <= recursion_stack.capacity() / 2)
+    recursion_stack.shrink_to_fit();
 }
 
 std::vector<std::tuple<void*, size_t>> recursion_stack_pack = {
