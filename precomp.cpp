@@ -90,8 +90,6 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #define PATH_DELIM '/'
 #endif
 
-using namespace std;
-
 #include "contrib/bzip2/bzlib.h"
 #include "contrib/giflib/precomp_gif.h"
 #include "contrib/packjpg/precomp_jpg.h"
@@ -280,8 +278,8 @@ long long saved_input_file_pos, saved_cb;
 int min_ident_size = 4;
 int min_ident_size_intense_brute_mode = 64;
 
-set<long long>* intense_ignore_offsets = new set<long long>();
-set<long long>* brute_ignore_offsets = new set<long long>();
+std::set<long long>* intense_ignore_offsets = new std::set<long long>();
+std::set<long long>* brute_ignore_offsets = new std::set<long long>();
 
 unsigned char zlib_header[2];
 unsigned int* idat_lengths = NULL;
@@ -1286,7 +1284,7 @@ int init(int argc, char* argv[]) {
         printf("\n");
         printf("Ignore position list:\n");
         for (j = 0; j < ignore_list_len; j++) {
-          cout << ignore_list[j] << endl;
+          std::cout << ignore_list[j] << std::endl;
         }
         printf("\n");
       }
@@ -1473,26 +1471,26 @@ int init_comfort(int argc, char* argv[]) {
   bool print_ignore_positions_message = true;
   bool compression_type_line_used = false;
 
-  ifstream ini_file(precomf_ini);
-  string line;
-  string parName, valuestr;
-  string::iterator it;
+  std::ifstream ini_file(precomf_ini);
+  std::string line;
+  std::string parName, valuestr;
+  std::string::iterator it;
   char param[256], value[256];
 
   while (getline(ini_file, line)) {
-    string::size_type semicolon_at_pos = line.find(";", 0);
-    if (semicolon_at_pos != string::npos) {
+    std::string::size_type semicolon_at_pos = line.find(";", 0);
+    if (semicolon_at_pos != std::string::npos) {
       line.erase(semicolon_at_pos, line.length() - semicolon_at_pos);
     }
 
     // valid line must contain an equal sign (=)
-    string::size_type equal_at_pos = line.find("=", 0);
+    std::string::size_type equal_at_pos = line.find("=", 0);
     if (line.empty()) {
-      equal_at_pos = string::npos;
+      equal_at_pos = std::string::npos;
     }
-    if (equal_at_pos != string::npos) {
+    if (equal_at_pos != std::string::npos) {
 
-      stringstream ss;
+      std::stringstream ss;
       ss << line;
       // get parameter name
       getline(ss, parName, '=');
@@ -2333,7 +2331,7 @@ int init_comfort(int argc, char* argv[]) {
       printf("\n");
       printf("Ignore position list:\n");
       for (i = 0; i < ignore_list_len; i++) {
-        cout << ignore_list[j] << endl;
+        std::cout << ignore_list[j] << std::endl;
       }
       printf("\n");
     }
@@ -2370,23 +2368,23 @@ void denit_compress() {
   safe_fclose(&fout);
 
   if ((recursion_depth == 0) && (!DEBUG_MODE) && show_lzma_progress && (old_lzma_progress_text_length > -1)) {
-    printf("%s", string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+    printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   #ifndef PRECOMPDLL
    long long fout_length = fileSize64(output_file_name);
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
-    printf("%s", string(14,'\b').c_str());
-    cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << endl;
+    printf("%s", std::string(14,'\b').c_str());
+    std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
     } else {
-    cout << "New size: " << fout_length << " instead of " << fin_length << "     " << endl;
+    std::cout << "New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
     }
    }
   #else
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
-    printf(string(14,'\b').c_str());
+    printf(std::string(14,'\b').c_str());
     printf("100.00%% - ");
     printf_time(get_time_ms() - start_time);
     }
@@ -2449,7 +2447,7 @@ void denit_decompress() {
   #ifndef PRECOMPDLL
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
-    printf("%s", string(14,'\b').c_str());
+    printf("%s", std::string(14,'\b').c_str());
     printf("100.00%%\n");
     }
     printf("\nDone.\n");
@@ -2458,7 +2456,7 @@ void denit_decompress() {
   #else
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
-    printf(string(14,'\b').c_str());
+    printf(std::string(14,'\b').c_str());
     printf("100.00%% - ");
     printf_time(get_time_ms() - start_time);
     }
@@ -2486,23 +2484,23 @@ void denit_convert() {
   safe_fclose(&fout);
 
   if ((!DEBUG_MODE) && show_lzma_progress && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
-    printf("%s", string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+    printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   long long fout_length = fileSize64(output_file_name);
   #ifndef PRECOMPDLL
    if (!DEBUG_MODE) {
-   printf("%s", string(14,'\b').c_str());
-   cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << endl;
+   printf("%s", std::string(14,'\b').c_str());
+   std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
    } else {
-   cout << "New size: " << fout_length << " instead of " << fin_length << "     " << endl;
+   std::cout << "New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
    }
    printf("\nDone.\n");
    printf_time(get_time_ms() - start_time);
   #else
    if (!DEBUG_MODE) {
-   printf(string(14,'\b').c_str());
-   cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << endl;
+   printf(std::string(14,'\b').c_str());
+   std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
    printf_time(get_time_ms() - start_time);
    }
   #endif
@@ -2954,7 +2952,7 @@ unsigned long long compare_files(FILE* file1, FILE* file2, unsigned int pos1, un
     size1 = fread(input_bytes1, 1, COMP_CHUNK, file1);
     size2 = fread(input_bytes2, 1, COMP_CHUNK, file2);
 
-    minsize = min(size1, size2);
+    minsize = std::min(size1, size2);
     for (i = 0; i < minsize; i++) {
       if (input_bytes1[i] != input_bytes2[i]) {
         endNow = true;
@@ -3076,15 +3074,15 @@ struct recompress_deflate_result {
 void debug_deflate_detected(const recompress_deflate_result& rdres, const char* type) {
   if (DEBUG_MODE) {
     print_debug_percent();
-    cout << "Possible zLib-Stream " << type << " found at position " << saved_input_file_pos << endl;
-    cout << "Compressed size: " << rdres.compressed_stream_size << endl;
-    cout << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << endl;
+    std::cout << "Possible zLib-Stream " << type << " found at position " << saved_input_file_pos << std::endl;
+    std::cout << "Compressed size: " << rdres.compressed_stream_size << std::endl;
+    std::cout << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
 
     if (rdres.accepted) {
       if (rdres.zlib_perfect) {
-        cout << "Detect ZLIB parameters: comp level " << rdres.zlib_comp_level << ", mem level " << rdres.zlib_mem_level << ", " << rdres.zlib_window_bits << "window bits" << endl;
+        std::cout << "Detect ZLIB parameters: comp level " << rdres.zlib_comp_level << ", mem level " << rdres.zlib_mem_level << ", " << rdres.zlib_window_bits << "window bits" << std::endl;
       } else {
-        cout << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << endl;
+        std::cout << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << std::endl;
       }
     }
   }
@@ -3092,19 +3090,19 @@ void debug_deflate_detected(const recompress_deflate_result& rdres, const char* 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type,
                                const unsigned hdr_length, const uint64_t rec_length) {
   if (DEBUG_MODE) {
-    cout << "Decompressed data - " << type << endl;
-    cout << "Header length: " << hdr_length << endl;
+    std::cout << "Decompressed data - " << type << std::endl;
+    std::cout << "Header length: " << hdr_length << std::endl;
     if (rdres.zlib_perfect) {
-      cout << "ZLIB Parameters: compression level " << rdres.zlib_comp_level 
+      std::cout << "ZLIB Parameters: compression level " << rdres.zlib_comp_level 
                             << " memory level " << rdres.zlib_mem_level
-                            << " window bits " << rdres.zlib_window_bits << endl;
+                            << " window bits " << rdres.zlib_window_bits << std::endl;
     } else {
-      cout << "Reconstruction data size: " << rdres.recon_data.size() << endl;
+      std::cout << "Reconstruction data size: " << rdres.recon_data.size() << std::endl;
     }
     if (rec_length > 0) {
-      cout << "Recursion data length: " << rec_length << endl;
+      std::cout << "Recursion data length: " << rec_length << std::endl;
     } else {
-      cout << "Recompressed length: " << rdres.compressed_stream_size << " - decompressed length: " << rdres.uncompressed_stream_size << endl;
+      std::cout << "Recompressed length: " << rdres.compressed_stream_size << " - decompressed length: " << rdres.uncompressed_stream_size << std::endl;
     }
   }
 }
@@ -3636,7 +3634,7 @@ void show_used_levels() {
    }
   }
 
-  string disable_methods("");
+  std::string disable_methods("");
   if (((use_pdf) && ((recompressed_pdf_count == 0) && (decompressed_pdf_count > 0)))) disable_methods += 'p';
   if (((use_zip) && ((recompressed_zip_count == 0) && (decompressed_zip_count > 0)))) disable_methods += 'z';
   if (((use_gzip) && ((recompressed_gzip_count == 0) && (decompressed_gzip_count > 0)))) disable_methods += 'g';
@@ -3734,7 +3732,7 @@ bool compress_file(float min_percent, float max_percent) {
         if (DEBUG_MODE) {
         printf("ZIP header detected\n");
         print_debug_percent();
-        cout << "ZIP header detected at position " << input_file_pos << endl;
+        std::cout << "ZIP header detected at position " << input_file_pos << std::endl;
         }
         unsigned int compressed_size = (in_buf[cb + 21] << 24) + (in_buf[cb + 20] << 16) + (in_buf[cb + 19] << 8) + in_buf[cb + 18];
         unsigned int uncompressed_size = (in_buf[cb + 25] << 24) + (in_buf[cb + 24] << 16) + (in_buf[cb + 23] << 8) + in_buf[cb + 22];
@@ -4339,7 +4337,7 @@ bool compress_file(float min_percent, float max_percent) {
             suppress_mp3_type_until[type] = position_length_sum;
             if (DEBUG_MODE) {
               print_debug_percent();
-              cout << "Unsupported MP3 type found at position " << saved_input_file_pos << ", length " << mp3_length << endl;
+              std::cout << "Unsupported MP3 type found at position " << saved_input_file_pos << ", length " << mp3_length << std::endl;
               printf ("Type: %s\n", filetype_description[type]);
             }
           }
@@ -4586,7 +4584,7 @@ while (fin_pos < fin_length) {
     if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
 
     if (DEBUG_MODE) {
-    cout << "Uncompressed data, length=" << uncompressed_data_length << endl;
+    std::cout << "Uncompressed data, length=" << uncompressed_data_length << std::endl;
     }
 
     fast_copy(fin, fout, uncompressed_data_length);
@@ -4772,7 +4770,7 @@ while (fin_pos < fin_length) {
       long long decompressed_data_length = fin_fget_vlint();
 
       if (DEBUG_MODE) {
-      cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << endl;
+      std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
       remove(tempfile1);
@@ -4850,7 +4848,7 @@ while (fin_pos < fin_length) {
       long long decompressed_data_length = fin_fget_vlint();
 
       if (DEBUG_MODE) {
-      cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << endl;
+      std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
       char recompress_msg[256];
@@ -5040,9 +5038,9 @@ while (fin_pos < fin_length) {
 
       if (DEBUG_MODE) {
         if (recursion_used) {
-          cout << "Recursion data length: " << recursion_data_length << endl;
+          std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
-          cout << "Encoded length: " << recompressed_data_length << " - decoded length: " << decompressed_data_length << endl;
+          std::cout << "Encoded length: " << recompressed_data_length << " - decoded length: " << decompressed_data_length << std::endl;
         }
       }
 
@@ -5093,9 +5091,9 @@ while (fin_pos < fin_length) {
 
       if (DEBUG_MODE) {
         if (recursion_used) {
-          cout << "Recursion data length: " << recursion_data_length << endl;
+          std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
-          cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << endl;
+          std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
         }
       }
 
@@ -5113,7 +5111,7 @@ while (fin_pos < fin_length) {
 
       if (retval != BZ_OK) {
         printf("Error recompressing data!");
-        cout << "retval = " << retval << endl;
+        std::cout << "retval = " << retval << std::endl;
         exit(0);
       }
 
@@ -5146,7 +5144,7 @@ while (fin_pos < fin_length) {
       long long decompressed_data_length = fin_fget_vlint();
 
       if (DEBUG_MODE) {
-      cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << endl;
+      std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
       char recompress_msg[256];
@@ -5321,8 +5319,8 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
               if ((identical_bytes > best_identical_bytes)  || ((identical_bytes == best_identical_bytes) && (penalty_bytes_len < best_penalty_bytes_len))) {
                 if (identical_bytes > min_ident_size) {
                   if (DEBUG_MODE) {
-                  cout << "Identical recompressed bytes: " << identical_bytes << " of " << compressed_stream_size << endl;
-                  cout << "Identical decompressed bytes: " << identical_bytes_decomp << " of " << decomp_bytes_total << endl;
+                  std::cout << "Identical recompressed bytes: " << identical_bytes << " of " << compressed_stream_size << std::endl;
+                  std::cout << "Identical decompressed bytes: " << identical_bytes_decomp << " of " << decomp_bytes_total << std::endl;
                   }
                 }
 
@@ -5409,7 +5407,7 @@ bool check_for_pcf_file() {
   // skip compression method
   fread(in, 1, 1, fin);
 
-  string header_filename = "";
+  std::string header_filename = "";
   char c;
   do {
     c = fgetc(fin);
@@ -5454,7 +5452,7 @@ void read_header() {
   fread(in, 1, 1, fin);
   compression_otf_method = in[0];
 
-  string header_filename = "";
+  std::string header_filename = "";
   char c;
   do {
     c = fgetc(fin);
@@ -5496,7 +5494,7 @@ void convert_header() {
   in[0] = conversion_to_method;
   fwrite(in, 1, 1, fout);
 
-  string header_filename = "";
+  std::string header_filename = "";
   char c;
   do {
     c = fgetc(fin);
@@ -5813,10 +5811,10 @@ unsigned long long tell_64(FILE* f) {
 }
 
 bool file_exists(char* filename) {
-  fstream fin;
+  std::fstream fin;
   bool retval = false;
 
-  fin.open(filename, ios::in);
+  fin.open(filename, std::ios::in);
   retval = fin.is_open();
   fin.close();
 
@@ -5846,7 +5844,7 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
   } else {
     fseek(file1, 0, SEEK_END);
     fseek(file2, 0, SEEK_END);
-    compare_end = min(ftell(file1), ftell(file2));
+    compare_end = std::min(ftell(file1), ftell(file2));
   }
 
   seek_64(file1, pos1);
@@ -5858,7 +5856,7 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
     size1 = own_fread(input_bytes1, 1, COMP_CHUNK, file1);
     size2 = own_fread(input_bytes2, 1, COMP_CHUNK, file2);
 
-    minsize = min(size1, size2);
+    minsize = std::min(size1, size2);
     for (i = 0; i < minsize; i++) {
       if (input_bytes1[i] != input_bytes2[i]) {
 
@@ -6419,7 +6417,7 @@ void try_decompression_gif(unsigned char version[5]) {
 
   if (DEBUG_MODE) {
   print_debug_percent();
-  cout << "Possible GIF found at position " << input_file_pos << endl;;
+  std::cout << "Possible GIF found at position " << input_file_pos << std::endl;;
   }
 
   seek_64(fin, input_file_pos);
@@ -6436,7 +6434,7 @@ void try_decompression_gif(unsigned char version[5]) {
   }
 
   if (DEBUG_MODE) {
-  cout << "Can be decompressed to " << decomp_length << " bytes" << endl;
+  std::cout << "Can be decompressed to " << decomp_length << " bytes" << std::endl;
   }
 
   safe_fclose(&ftempout);
@@ -6568,7 +6566,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           } else {
             printf ("Possible JPG found at position ");
           }
-          cout << saved_input_file_pos << ", length " << jpg_length << endl;
+          std::cout << saved_input_file_pos << ", length " << jpg_length << std::endl;
           // do not recompress non-progressive JPGs when prog_only is set
           if ((!progressive_jpg) && (prog_only)) {
             printf("Skipping (only progressive JPGs mode set)\n");
@@ -6803,7 +6801,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
         if (jpg_success) {
 
           if (DEBUG_MODE) {
-          cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << endl;
+          std::cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
           // end uncompressed data
@@ -6850,7 +6848,7 @@ void try_decompression_mp3 (long long mp3_length) {
 
         if (DEBUG_MODE) {
           print_debug_percent();
-          cout << "Possible MP3 found at position " << saved_input_file_pos << ", length " << mp3_length << endl;
+          std::cout << "Possible MP3 found at position " << saved_input_file_pos << ", length " << mp3_length << std::endl;
         }
 
         bool mp3_success = false;
@@ -6912,22 +6910,22 @@ void try_decompression_mp3 (long long mp3_length) {
         } else if ((!recompress_success) && (strncmp(recompress_msg, "big value pairs out of bounds", 29) == 0)) {
           suppress_mp3_big_value_pairs_sum = saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            cout << "Ignoring following streams with position/length sum " << suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << endl;
+            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "non-zero padbits found", 22) == 0)) {
           suppress_mp3_non_zero_padbits_sum = saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            cout << "Ignoring following streams with position/length sum " << suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << endl;
+            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent use of emphasis", 28) == 0)) {
           suppress_mp3_inconsistent_emphasis_sum = saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << endl;
+            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent original bit", 25) == 0)) {
           suppress_mp3_inconsistent_original_bit = saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << endl;
+            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << std::endl;
           }
         }
 
@@ -6968,7 +6966,7 @@ void try_decompression_mp3 (long long mp3_length) {
         if (mp3_success) {
 
           if (DEBUG_MODE) {
-          cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << endl;
+          std::cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
           // end uncompressed data
@@ -7109,12 +7107,12 @@ void try_decompression_bzip2(int compression_level) {
 
           if (DEBUG_MODE) {
           print_debug_percent();
-          cout << "Possible bZip2-Stream found at position " << saved_input_file_pos << ", compression level = " << compression_level << endl;
-          cout << "Compressed size: " << compressed_stream_size << endl;
+          std::cout << "Possible bZip2-Stream found at position " << saved_input_file_pos << ", compression level = " << compression_level << std::endl;
+          std::cout << "Compressed size: " << compressed_stream_size << std::endl;
 
           ftempout = tryOpen(tempfile1, "rb");
           fseek(ftempout, 0, SEEK_END);
-          cout << "Can be decompressed to " << tell_64(ftempout) << " bytes" << endl;
+          std::cout << "Can be decompressed to " << tell_64(ftempout) << " bytes" << std::endl;
           safe_fclose(&ftempout);
           }
 
@@ -7125,7 +7123,7 @@ void try_decompression_bzip2(int compression_level) {
             recompressed_bzip2_count++;
 
             if (DEBUG_MODE) {
-            cout << "Best match: " << best_identical_bytes << " bytes, decompressed to " << best_identical_bytes_decomp << " bytes" << endl;
+            std::cout << "Best match: " << best_identical_bytes << " bytes, decompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
             }
 
             non_zlib_was_used = true;
@@ -7429,8 +7427,8 @@ void try_decompression_base64(int base64_header_length) {
 
           if (DEBUG_MODE) {
           print_debug_percent();
-          cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << saved_input_file_pos << endl;
-          cout << "Can be decoded to " << identical_bytes << " bytes" << endl;
+          std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << saved_input_file_pos << std::endl;
+          std::cout << "Can be decoded to " << identical_bytes << " bytes" << std::endl;
           }
 
           // try to re-encode Base64 data
@@ -7455,7 +7453,7 @@ void try_decompression_base64(int base64_header_length) {
             recompressed_streams_count++;
             recompressed_base64_count++;
             if (DEBUG_MODE) {
-            cout << "Match: encoded to " << identical_bytes_decomp << " bytes" << endl;
+            std::cout << "Match: encoded to " << identical_bytes_decomp << " bytes" << std::endl;
             }
 
             // end uncompressed data
@@ -7739,82 +7737,82 @@ void recursion_stack_pop(void* var, int var_size) {
   recursion_stack = (unsigned char*)realloc(recursion_stack, recursion_stack_size * sizeof(unsigned char));
 }
 
-vector<tuple<void*, size_t>> recursion_stack_pack = {
-  make_tuple(&fin_length, sizeof(fin_length)),
-  make_tuple(&input_file_name, sizeof(input_file_name)),
-  make_tuple(&output_file_name, sizeof(output_file_name)),
-  make_tuple(&uncompressed_pos, sizeof(uncompressed_pos)),
-  make_tuple(&uncompressed_start, sizeof(uncompressed_start)),
-  make_tuple(&compressed_data_found, sizeof(compressed_data_found)),
-  make_tuple(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work)),
-  make_tuple(&uncompressed_length, sizeof(uncompressed_length)),
-  make_tuple(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total)),
-  make_tuple(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written)),
-  make_tuple(&input_file_pos, sizeof(input_file_pos)),
-  make_tuple(&retval, sizeof(retval)),
-  make_tuple(&in_buf_pos, sizeof(in_buf_pos)),
-  make_tuple(&cb, sizeof(cb)),
-  make_tuple(&saved_input_file_pos, sizeof(saved_input_file_pos)),
-  make_tuple(&saved_cb, sizeof(saved_cb)),
-  make_tuple(&fin, sizeof(fin)),
-  make_tuple(&fout, sizeof(fout)),
-  make_tuple(&ftempout, sizeof(ftempout)),
-  make_tuple(&frecomp, sizeof(frecomp)),
-  make_tuple(&fdecomp, sizeof(fdecomp)),
-  make_tuple(&fpack, sizeof(fpack)),
-  make_tuple(&fpng, sizeof(fpng)),
-  make_tuple(&fjpg, sizeof(fjpg)),
-  make_tuple(&fmp3, sizeof(fmp3)),
-  make_tuple(&in_buf[0], sizeof(in_buf[0])* IN_BUF_SIZE),
-  make_tuple(&metatempfile[0], sizeof(metatempfile[0]) * 18),
-  make_tuple(&tempfile0[0], sizeof(tempfile0[0]) * 19),
-  make_tuple(&tempfile1[0], sizeof(tempfile1[0]) * 19),
-  make_tuple(&tempfile2[0], sizeof(tempfile2[0]) * 19),
-  make_tuple(&tempfile3[0], sizeof(tempfile3[0]) * 19),
-  make_tuple(&penalty_bytes, sizeof(penalty_bytes)),
-  make_tuple(&local_penalty_bytes, sizeof(penalty_bytes)),
-  make_tuple(&best_penalty_bytes, sizeof(penalty_bytes)),
+std::vector<std::tuple<void*, size_t>> recursion_stack_pack = {
+  std::make_tuple(&fin_length, sizeof(fin_length)),
+  std::make_tuple(&input_file_name, sizeof(input_file_name)),
+  std::make_tuple(&output_file_name, sizeof(output_file_name)),
+  std::make_tuple(&uncompressed_pos, sizeof(uncompressed_pos)),
+  std::make_tuple(&uncompressed_start, sizeof(uncompressed_start)),
+  std::make_tuple(&compressed_data_found, sizeof(compressed_data_found)),
+  std::make_tuple(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work)),
+  std::make_tuple(&uncompressed_length, sizeof(uncompressed_length)),
+  std::make_tuple(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total)),
+  std::make_tuple(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written)),
+  std::make_tuple(&input_file_pos, sizeof(input_file_pos)),
+  std::make_tuple(&retval, sizeof(retval)),
+  std::make_tuple(&in_buf_pos, sizeof(in_buf_pos)),
+  std::make_tuple(&cb, sizeof(cb)),
+  std::make_tuple(&saved_input_file_pos, sizeof(saved_input_file_pos)),
+  std::make_tuple(&saved_cb, sizeof(saved_cb)),
+  std::make_tuple(&fin, sizeof(fin)),
+  std::make_tuple(&fout, sizeof(fout)),
+  std::make_tuple(&ftempout, sizeof(ftempout)),
+  std::make_tuple(&frecomp, sizeof(frecomp)),
+  std::make_tuple(&fdecomp, sizeof(fdecomp)),
+  std::make_tuple(&fpack, sizeof(fpack)),
+  std::make_tuple(&fpng, sizeof(fpng)),
+  std::make_tuple(&fjpg, sizeof(fjpg)),
+  std::make_tuple(&fmp3, sizeof(fmp3)),
+  std::make_tuple(&in_buf[0], sizeof(in_buf[0])* IN_BUF_SIZE),
+  std::make_tuple(&metatempfile[0], sizeof(metatempfile[0]) * 18),
+  std::make_tuple(&tempfile0[0], sizeof(tempfile0[0]) * 19),
+  std::make_tuple(&tempfile1[0], sizeof(tempfile1[0]) * 19),
+  std::make_tuple(&tempfile2[0], sizeof(tempfile2[0]) * 19),
+  std::make_tuple(&tempfile3[0], sizeof(tempfile3[0]) * 19),
+  std::make_tuple(&penalty_bytes, sizeof(penalty_bytes)),
+  std::make_tuple(&local_penalty_bytes, sizeof(penalty_bytes)),
+  std::make_tuple(&best_penalty_bytes, sizeof(penalty_bytes)),
 
-  make_tuple(&identical_bytes, sizeof(identical_bytes)),
-  make_tuple(&best_identical_bytes, sizeof(best_identical_bytes)),
-  make_tuple(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp)),
-  make_tuple(&best_compression, sizeof(best_compression)),
-  make_tuple(&best_mem_level, sizeof(best_mem_level)),
-  make_tuple(&penalty_bytes_len, sizeof(penalty_bytes_len)),
-  make_tuple(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len)),
-  make_tuple(&identical_bytes_decomp, sizeof(identical_bytes_decomp)),
+  std::make_tuple(&identical_bytes, sizeof(identical_bytes)),
+  std::make_tuple(&best_identical_bytes, sizeof(best_identical_bytes)),
+  std::make_tuple(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp)),
+  std::make_tuple(&best_compression, sizeof(best_compression)),
+  std::make_tuple(&best_mem_level, sizeof(best_mem_level)),
+  std::make_tuple(&penalty_bytes_len, sizeof(penalty_bytes_len)),
+  std::make_tuple(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len)),
+  std::make_tuple(&identical_bytes_decomp, sizeof(identical_bytes_decomp)),
 
-  make_tuple(&anything_was_used, sizeof(anything_was_used)),
-  make_tuple(&non_zlib_was_used, sizeof(non_zlib_was_used)),
-  make_tuple(&sec_time, sizeof(sec_time)),
-  make_tuple(&global_min_percent, sizeof(global_min_percent)),
-  make_tuple(&global_max_percent, sizeof(global_max_percent)),
-  make_tuple(&comp_decomp_state, sizeof(comp_decomp_state)),
-  make_tuple(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16),
-  make_tuple(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum)),
-  make_tuple(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum)),
-  make_tuple(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum)),
-  make_tuple(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit)),
-  make_tuple(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame)),
-  make_tuple(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n)),
-  make_tuple(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length)),
-  make_tuple(&intense_ignore_offsets, sizeof(intense_ignore_offsets)),
-  make_tuple(&brute_ignore_offsets, sizeof(brute_ignore_offsets)),
-  make_tuple(&decomp_io_buf, sizeof(decomp_io_buf)),
+  std::make_tuple(&anything_was_used, sizeof(anything_was_used)),
+  std::make_tuple(&non_zlib_was_used, sizeof(non_zlib_was_used)),
+  std::make_tuple(&sec_time, sizeof(sec_time)),
+  std::make_tuple(&global_min_percent, sizeof(global_min_percent)),
+  std::make_tuple(&global_max_percent, sizeof(global_max_percent)),
+  std::make_tuple(&comp_decomp_state, sizeof(comp_decomp_state)),
+  std::make_tuple(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16),
+  std::make_tuple(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum)),
+  std::make_tuple(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum)),
+  std::make_tuple(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum)),
+  std::make_tuple(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit)),
+  std::make_tuple(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame)),
+  std::make_tuple(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n)),
+  std::make_tuple(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length)),
+  std::make_tuple(&intense_ignore_offsets, sizeof(intense_ignore_offsets)),
+  std::make_tuple(&brute_ignore_offsets, sizeof(brute_ignore_offsets)),
+  std::make_tuple(&decomp_io_buf, sizeof(decomp_io_buf)),
 
-  make_tuple(&compression_otf_method, sizeof(compression_otf_method)),
-  make_tuple(&decompress_otf_end, sizeof(decompress_otf_end)),
+  std::make_tuple(&compression_otf_method, sizeof(compression_otf_method)),
+  std::make_tuple(&decompress_otf_end, sizeof(decompress_otf_end)),
 };
 
 void recursion_push() {
   for (auto iter = recursion_stack_pack.begin(); iter != recursion_stack_pack.end(); iter++) {
-    recursion_stack_push(get<0>(*iter), get<1>(*iter));
+    recursion_stack_push(std::get<0>(*iter), std::get<1>(*iter));
   }
 }
 
 void recursion_pop() {
   for (auto iter = recursion_stack_pack.rbegin(); iter != recursion_stack_pack.rend(); iter++) {
-    recursion_stack_pop(get<0>(*iter), get<1>(*iter));
+    recursion_stack_pop(std::get<0>(*iter), std::get<1>(*iter));
   }
 }
 
@@ -7877,8 +7875,8 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   local_penalty_bytes = new char[MAX_PENALTY_BYTES];
   best_penalty_bytes = new char[MAX_PENALTY_BYTES];
 
-  intense_ignore_offsets = new set<long long>();
-  brute_ignore_offsets = new set<long long>();
+  intense_ignore_offsets = new std::set<long long>();
+  brute_ignore_offsets = new std::set<long long>();
 
   // init MP3 suppression
   for (int i = 0; i < 16; i++) {
@@ -8251,11 +8249,11 @@ void init_compress_otf() {
         exit(1);
       }
 
-      string plural = "";
+      std::string plural = "";
       if (threads > 1) {
         plural = "s";
       }
-      cout << "Compressing with LZMA, " << threads << " thread" << plural.c_str() << ", memory usage: " << memory_usage / (1024 * 1024) << " MiB, block size: " << block_size / (1024 * 1024) << " MiB" << endl << endl;
+      std::cout << "Compressing with LZMA, " << threads << " thread" << plural.c_str() << ", memory usage: " << memory_usage / (1024 * 1024) << " MiB, block size: " << block_size / (1024 * 1024) << " MiB" << std::endl << std::endl;
       break;
     }
   }
@@ -8412,7 +8410,7 @@ void print_debug_percent() {
 void show_progress(float percent, bool use_backspaces, bool check_time) {
   if (!check_time || ((get_time_ms() - sec_time) >= 250)) {
     if (use_backspaces) {
-      printf("%s", string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
+      printf("%s", std::string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
     }
 
     bool new_lzma_text = false;
@@ -8421,14 +8419,14 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
       if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
         new_lzma_text = true;
         if ((old_lzma_progress_text_length > -1) && (use_backspaces)) {
-          printf("%s", string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+          printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
         }
         old_lzma_progress_text_length = snprintf_ret;
       }
     }
 
     if (use_backspaces) {
-      printf("%s", string(8,'\b').c_str()); // backspaces to remove output from %6.2f%
+      printf("%s", std::string(8,'\b').c_str()); // backspaces to remove output from %6.2f%
     }
     printf("%6.2f%% ", percent);
 
