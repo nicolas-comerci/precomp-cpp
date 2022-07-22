@@ -36,23 +36,23 @@
 #endif
 
 // batch error levels
-#define RETURN_NOTHING_DECOMPRESSED 2
-#define ERR_DISK_FULL 3
-#define ERR_TEMP_FILE_DISAPPEARED 4
-#define ERR_IGNORE_POS_TOO_BIG 5
-#define ERR_IDENTICAL_BYTE_SIZE_TOO_BIG 6
-#define ERR_RECURSION_DEPTH_TOO_BIG 7
-#define ERR_ONLY_SET_RECURSION_DEPTH_ONCE 8
-#define ERR_ONLY_SET_MIN_SIZE_ONCE 9
-#define ERR_DONT_USE_SPACE 10
-#define ERR_MORE_THAN_ONE_OUTPUT_FILE 11
-#define ERR_MORE_THAN_ONE_INPUT_FILE 12
-#define ERR_CTRL_C 13
-#define ERR_INTENSE_MODE_LIMIT_TOO_BIG 14
-#define ERR_BRUTE_MODE_LIMIT_TOO_BIG 15
-#define ERR_ONLY_SET_LZMA_MEMORY_ONCE 16
-#define ERR_ONLY_SET_LZMA_THREAD_ONCE 17
-#define ERR_ONLY_SET_LZMA_FILTERS_ONCE 18
+constexpr auto RETURN_NOTHING_DECOMPRESSED = 2;
+constexpr auto ERR_DISK_FULL = 3;
+constexpr auto ERR_TEMP_FILE_DISAPPEARED = 4;
+constexpr auto ERR_IGNORE_POS_TOO_BIG = 5;
+constexpr auto ERR_IDENTICAL_BYTE_SIZE_TOO_BIG = 6;
+constexpr auto ERR_RECURSION_DEPTH_TOO_BIG = 7;
+constexpr auto ERR_ONLY_SET_RECURSION_DEPTH_ONCE = 8;
+constexpr auto ERR_ONLY_SET_MIN_SIZE_ONCE = 9;
+constexpr auto ERR_DONT_USE_SPACE = 10;
+constexpr auto ERR_MORE_THAN_ONE_OUTPUT_FILE = 11;
+constexpr auto ERR_MORE_THAN_ONE_INPUT_FILE = 12;
+constexpr auto ERR_CTRL_C = 13;
+constexpr auto ERR_INTENSE_MODE_LIMIT_TOO_BIG = 14;
+constexpr auto ERR_BRUTE_MODE_LIMIT_TOO_BIG = 15;
+constexpr auto ERR_ONLY_SET_LZMA_MEMORY_ONCE = 16;
+constexpr auto ERR_ONLY_SET_LZMA_THREAD_ONCE = 17;
+constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 
 #define NOMINMAX
 
@@ -1150,24 +1150,24 @@ int init(int argc, char* argv[]) {
 
       // output file given? If not, use input filename with .pcf extension
       if ((!output_file_given) && (operation == P_COMPRESS)) {
-            if(!preserve_extension) {
-                output_file_name = new char[strlen(input_file_name) + 9];
-                strcpy(output_file_name, input_file_name);
-                char* backslash_at_pos = strrchr(output_file_name, PATH_DELIM);
-                char* dot_at_pos = strrchr(output_file_name, '.');
-                if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-                  strcpy(output_file_name + strlen(input_file_name), ".pcf");
-                } else {
-                  strcpy(dot_at_pos, ".pcf");
-                  // same as output file because input file had .pcf extension?
-                  if (strcmp(input_file_name, output_file_name) == 0) {
-                    strcpy(dot_at_pos, "_pcf.pcf");
-                  }
-                }
+        if(!preserve_extension) {
+          output_file_name = new char[strlen(input_file_name) + 9];
+          strcpy(output_file_name, input_file_name);
+          char* backslash_at_pos = strrchr(output_file_name, PATH_DELIM);
+          char* dot_at_pos = strrchr(output_file_name, '.');
+          if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
+              strcpy(output_file_name + strlen(input_file_name), ".pcf");
+          } else {
+              strcpy(dot_at_pos, ".pcf");
+              // same as output file because input file had .pcf extension?
+              if (strcmp(input_file_name, output_file_name) == 0) {
+              strcpy(dot_at_pos, "_pcf.pcf");
+              }
+          }
         } else {
-            output_file_name = new char[strlen(input_file_name) + 9];
-            strcpy(output_file_name,input_file_name);
-            strcat(output_file_name,".pcf");
+          output_file_name = new char[strlen(input_file_name) + 9];
+          strcpy(output_file_name,input_file_name);
+          strcat(output_file_name,".pcf");
         }
         output_file_given = true;
       } else if ((!output_file_given) && (operation == P_CONVERT)) {
@@ -7739,138 +7739,83 @@ void recursion_stack_pop(void* var, int var_size) {
   recursion_stack = (unsigned char*)realloc(recursion_stack, recursion_stack_size * sizeof(unsigned char));
 }
 
+vector<tuple<void*, size_t>> recursion_stack_pack = {
+  make_tuple(&fin_length, sizeof(fin_length)),
+  make_tuple(&input_file_name, sizeof(input_file_name)),
+  make_tuple(&output_file_name, sizeof(output_file_name)),
+  make_tuple(&uncompressed_pos, sizeof(uncompressed_pos)),
+  make_tuple(&uncompressed_start, sizeof(uncompressed_start)),
+  make_tuple(&compressed_data_found, sizeof(compressed_data_found)),
+  make_tuple(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work)),
+  make_tuple(&uncompressed_length, sizeof(uncompressed_length)),
+  make_tuple(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total)),
+  make_tuple(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written)),
+  make_tuple(&input_file_pos, sizeof(input_file_pos)),
+  make_tuple(&retval, sizeof(retval)),
+  make_tuple(&in_buf_pos, sizeof(in_buf_pos)),
+  make_tuple(&cb, sizeof(cb)),
+  make_tuple(&saved_input_file_pos, sizeof(saved_input_file_pos)),
+  make_tuple(&saved_cb, sizeof(saved_cb)),
+  make_tuple(&fin, sizeof(fin)),
+  make_tuple(&fout, sizeof(fout)),
+  make_tuple(&ftempout, sizeof(ftempout)),
+  make_tuple(&frecomp, sizeof(frecomp)),
+  make_tuple(&fdecomp, sizeof(fdecomp)),
+  make_tuple(&fpack, sizeof(fpack)),
+  make_tuple(&fpng, sizeof(fpng)),
+  make_tuple(&fjpg, sizeof(fjpg)),
+  make_tuple(&fmp3, sizeof(fmp3)),
+  make_tuple(&in_buf[0], sizeof(in_buf[0])* IN_BUF_SIZE),
+  make_tuple(&metatempfile[0], sizeof(metatempfile[0]) * 18),
+  make_tuple(&tempfile0[0], sizeof(tempfile0[0]) * 19),
+  make_tuple(&tempfile1[0], sizeof(tempfile1[0]) * 19),
+  make_tuple(&tempfile2[0], sizeof(tempfile2[0]) * 19),
+  make_tuple(&tempfile3[0], sizeof(tempfile3[0]) * 19),
+  make_tuple(&penalty_bytes, sizeof(penalty_bytes)),
+  make_tuple(&local_penalty_bytes, sizeof(penalty_bytes)),
+  make_tuple(&best_penalty_bytes, sizeof(penalty_bytes)),
+
+  make_tuple(&identical_bytes, sizeof(identical_bytes)),
+  make_tuple(&best_identical_bytes, sizeof(best_identical_bytes)),
+  make_tuple(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp)),
+  make_tuple(&best_compression, sizeof(best_compression)),
+  make_tuple(&best_mem_level, sizeof(best_mem_level)),
+  make_tuple(&penalty_bytes_len, sizeof(penalty_bytes_len)),
+  make_tuple(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len)),
+  make_tuple(&identical_bytes_decomp, sizeof(identical_bytes_decomp)),
+
+  make_tuple(&anything_was_used, sizeof(anything_was_used)),
+  make_tuple(&non_zlib_was_used, sizeof(non_zlib_was_used)),
+  make_tuple(&sec_time, sizeof(sec_time)),
+  make_tuple(&global_min_percent, sizeof(global_min_percent)),
+  make_tuple(&global_max_percent, sizeof(global_max_percent)),
+  make_tuple(&comp_decomp_state, sizeof(comp_decomp_state)),
+  make_tuple(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16),
+  make_tuple(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum)),
+  make_tuple(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum)),
+  make_tuple(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum)),
+  make_tuple(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit)),
+  make_tuple(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame)),
+  make_tuple(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n)),
+  make_tuple(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length)),
+  make_tuple(&intense_ignore_offsets, sizeof(intense_ignore_offsets)),
+  make_tuple(&brute_ignore_offsets, sizeof(brute_ignore_offsets)),
+  make_tuple(&decomp_io_buf, sizeof(decomp_io_buf)),
+
+  make_tuple(&compression_otf_method, sizeof(compression_otf_method)),
+  make_tuple(&decompress_otf_end, sizeof(decompress_otf_end)),
+};
+
 void recursion_push() {
-  recursion_stack_push(&fin_length, sizeof(fin_length));
-  recursion_stack_push(&input_file_name, sizeof(input_file_name));
-  recursion_stack_push(&output_file_name, sizeof(output_file_name));
-  recursion_stack_push(&uncompressed_pos, sizeof(uncompressed_pos));
-  recursion_stack_push(&uncompressed_start, sizeof(uncompressed_start));
-  recursion_stack_push(&compressed_data_found, sizeof(compressed_data_found));
-  recursion_stack_push(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work));
-  recursion_stack_push(&uncompressed_length, sizeof(uncompressed_length));
-  recursion_stack_push(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total));
-  recursion_stack_push(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written));
-  recursion_stack_push(&input_file_pos, sizeof(input_file_pos));
-  recursion_stack_push(&retval, sizeof(retval));
-  recursion_stack_push(&in_buf_pos, sizeof(in_buf_pos));
-  recursion_stack_push(&cb, sizeof(cb));
-  recursion_stack_push(&saved_input_file_pos, sizeof(saved_input_file_pos));
-  recursion_stack_push(&saved_cb, sizeof(saved_cb));
-  recursion_stack_push(&fin, sizeof(fin));
-  recursion_stack_push(&fout, sizeof(fout));
-  recursion_stack_push(&ftempout, sizeof(ftempout));
-  recursion_stack_push(&frecomp, sizeof(frecomp));
-  recursion_stack_push(&fdecomp, sizeof(fdecomp));
-  recursion_stack_push(&fpack, sizeof(fpack));
-  recursion_stack_push(&fpng, sizeof(fpng));
-  recursion_stack_push(&fjpg, sizeof(fjpg));
-  recursion_stack_push(&fmp3, sizeof(fmp3));
-  recursion_stack_push(&in_buf[0], sizeof(in_buf[0]) * IN_BUF_SIZE);
-  recursion_stack_push(&metatempfile[0], sizeof(metatempfile[0]) * 18);
-  recursion_stack_push(&tempfile0[0], sizeof(tempfile0[0]) * 19);
-  recursion_stack_push(&tempfile1[0], sizeof(tempfile1[0]) * 19);
-  recursion_stack_push(&tempfile2[0], sizeof(tempfile2[0]) * 19);
-  recursion_stack_push(&tempfile3[0], sizeof(tempfile3[0]) * 19);
-  recursion_stack_push(&penalty_bytes, sizeof(penalty_bytes));
-  recursion_stack_push(&local_penalty_bytes, sizeof(penalty_bytes));
-  recursion_stack_push(&best_penalty_bytes, sizeof(penalty_bytes));
-
-  recursion_stack_push(&identical_bytes, sizeof(identical_bytes));
-  recursion_stack_push(&best_identical_bytes, sizeof(best_identical_bytes));
-  recursion_stack_push(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp));
-  recursion_stack_push(&best_compression, sizeof(best_compression));
-  recursion_stack_push(&best_mem_level, sizeof(best_mem_level));
-  recursion_stack_push(&penalty_bytes_len, sizeof(penalty_bytes_len));
-  recursion_stack_push(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len));
-  recursion_stack_push(&identical_bytes_decomp, sizeof(identical_bytes_decomp));
-
-  recursion_stack_push(&anything_was_used, sizeof(anything_was_used));
-  recursion_stack_push(&non_zlib_was_used, sizeof(non_zlib_was_used));
-  recursion_stack_push(&sec_time, sizeof(sec_time));
-  recursion_stack_push(&global_min_percent, sizeof(global_min_percent));
-  recursion_stack_push(&global_max_percent, sizeof(global_max_percent));
-  recursion_stack_push(&comp_decomp_state, sizeof(comp_decomp_state));
-  recursion_stack_push(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16);
-  recursion_stack_push(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum));
-  recursion_stack_push(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum));
-  recursion_stack_push(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum));
-  recursion_stack_push(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit));
-  recursion_stack_push(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame));
-  recursion_stack_push(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n));
-  recursion_stack_push(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length));
-  recursion_stack_push(&intense_ignore_offsets, sizeof(intense_ignore_offsets));
-  recursion_stack_push(&brute_ignore_offsets, sizeof(brute_ignore_offsets));
-  recursion_stack_push(&decomp_io_buf, sizeof(decomp_io_buf));
-
-  recursion_stack_push(&compression_otf_method, sizeof(compression_otf_method));
-  recursion_stack_push(&decompress_otf_end, sizeof(decompress_otf_end));
+  for (auto iter = recursion_stack_pack.begin(); iter != recursion_stack_pack.end(); iter++) {
+    recursion_stack_push(get<0>(*iter), get<1>(*iter));
+  }
 }
 
 void recursion_pop() {
-  recursion_stack_pop(&decompress_otf_end, sizeof(decompress_otf_end));
-  recursion_stack_pop(&compression_otf_method, sizeof(compression_otf_method));
-
-  recursion_stack_pop(&decomp_io_buf, sizeof(decomp_io_buf));
-  recursion_stack_pop(&brute_ignore_offsets, sizeof(brute_ignore_offsets));
-  recursion_stack_pop(&intense_ignore_offsets, sizeof(intense_ignore_offsets));
-  recursion_stack_pop(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length));
-  recursion_stack_pop(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n));
-  recursion_stack_pop(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame));
-  recursion_stack_pop(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit));
-  recursion_stack_pop(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum));
-  recursion_stack_pop(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum));
-  recursion_stack_pop(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum));
-  recursion_stack_pop(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16);
-  recursion_stack_pop(&comp_decomp_state, sizeof(comp_decomp_state));
-  recursion_stack_pop(&global_max_percent, sizeof(global_max_percent));
-  recursion_stack_pop(&global_min_percent, sizeof(global_min_percent));
-  recursion_stack_pop(&sec_time, sizeof(sec_time));
-  recursion_stack_pop(&non_zlib_was_used, sizeof(non_zlib_was_used));
-  recursion_stack_pop(&anything_was_used, sizeof(anything_was_used));
-
-  recursion_stack_pop(&identical_bytes_decomp, sizeof(identical_bytes_decomp));
-  recursion_stack_pop(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len));
-  recursion_stack_pop(&penalty_bytes_len, sizeof(penalty_bytes_len));
-  recursion_stack_pop(&best_mem_level, sizeof(best_mem_level));
-  recursion_stack_pop(&best_compression, sizeof(best_compression));
-  recursion_stack_pop(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp));
-  recursion_stack_pop(&best_identical_bytes, sizeof(best_identical_bytes));
-  recursion_stack_pop(&identical_bytes, sizeof(identical_bytes));
-
-  recursion_stack_pop(&best_penalty_bytes, sizeof(penalty_bytes));
-  recursion_stack_pop(&local_penalty_bytes, sizeof(penalty_bytes));
-  recursion_stack_pop(&penalty_bytes, sizeof(penalty_bytes));
-  recursion_stack_pop(&tempfile3[0], sizeof(tempfile3[0]) * 19);
-  recursion_stack_pop(&tempfile2[0], sizeof(tempfile2[0]) * 19);
-  recursion_stack_pop(&tempfile1[0], sizeof(tempfile1[0]) * 19);
-  recursion_stack_pop(&tempfile0[0], sizeof(tempfile0[0]) * 19);
-  recursion_stack_pop(&metatempfile[0], sizeof(metatempfile[0]) * 18);
-  recursion_stack_pop(&in_buf[0], sizeof(in_buf[0]) * IN_BUF_SIZE);
-  recursion_stack_pop(&fmp3, sizeof(fmp3));
-  recursion_stack_pop(&fjpg, sizeof(fjpg));
-  recursion_stack_pop(&fpng, sizeof(fpng));
-  recursion_stack_pop(&fpack, sizeof(fpack));
-  recursion_stack_pop(&fdecomp, sizeof(fdecomp));
-  recursion_stack_pop(&frecomp, sizeof(frecomp));
-  recursion_stack_pop(&ftempout, sizeof(ftempout));
-  recursion_stack_pop(&fout, sizeof(fout));
-  recursion_stack_pop(&fin, sizeof(fin));
-  recursion_stack_pop(&saved_cb, sizeof(saved_cb));
-  recursion_stack_pop(&saved_input_file_pos, sizeof(saved_input_file_pos));
-  recursion_stack_pop(&cb, sizeof(cb));
-  recursion_stack_pop(&in_buf_pos, sizeof(in_buf_pos));
-  recursion_stack_pop(&retval, sizeof(retval));
-  recursion_stack_pop(&input_file_pos, sizeof(input_file_pos));
-  recursion_stack_pop(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written));
-  recursion_stack_pop(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total));
-  recursion_stack_pop(&uncompressed_length, sizeof(uncompressed_length));
-  recursion_stack_pop(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work));
-  recursion_stack_pop(&compressed_data_found, sizeof(compressed_data_found));
-  recursion_stack_pop(&uncompressed_start, sizeof(uncompressed_start));
-  recursion_stack_pop(&uncompressed_pos, sizeof(uncompressed_pos));
-  recursion_stack_pop(&output_file_name, sizeof(output_file_name));
-  recursion_stack_pop(&input_file_name, sizeof(input_file_name));
-  recursion_stack_pop(&fin_length, sizeof(fin_length));
+  for (auto iter = recursion_stack_pack.rbegin(); iter != recursion_stack_pack.rend(); iter++) {
+    recursion_stack_pop(get<0>(*iter), get<1>(*iter));
+  }
 }
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, bool leave_open) {

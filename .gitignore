@@ -50,3 +50,7 @@ build/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
+.idea/
+cmake-build-debug/
+cmake-build-release/
+CMakeSettings.json
