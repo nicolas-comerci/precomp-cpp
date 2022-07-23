@@ -78,7 +78,7 @@ bool file_exists(char* filename);
 #endif
 void error(int error_nr);
 FILE* tryOpen(const char* filename, const char* mode);
-long long fileSize64(char* filename);
+long long fileSize64(const char* filename);
 void print64(long long i64);
 void init_temp_files();
 long long get_time_ms();
@@ -161,3 +161,8 @@ void init_decompress_otf();
 void denit_decompress_otf();
 int auto_detected_thread_count();
 int lzma_max_memory_default();
+
+class RecursionContext {
+  public:
+    std::string input_file_name;
+};
