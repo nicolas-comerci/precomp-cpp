@@ -71,7 +71,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
 size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream);
 void seek_64(FILE* f, unsigned long long pos);
 unsigned long long tell_64(FILE* f);
-bool file_exists(char* filename);
+bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
   void wait_for_key();
@@ -165,4 +165,5 @@ int lzma_max_memory_default();
 class RecursionContext {
   public:
     std::string input_file_name;
+    std::string output_file_name;
 };

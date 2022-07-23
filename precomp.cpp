@@ -196,8 +196,6 @@ long long uncompressed_length = -1;
 long long uncompressed_pos;
 long long uncompressed_start;
 
-char* output_file_name = NULL;
-
 long long start_time, sec_time;
 long long fin_length;
 long long uncompressed_bytes_written = 0;
@@ -429,8 +427,7 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
   setSwitches(switches);
 
   current_recursion_context.input_file_name = in_file;
-  output_file_name = new char[strlen(out_file)+1];
-  strcpy(output_file_name, out_file);
+  current_recursion_context.output_file_name = out_file;
 
   start_time = get_time_ms();
 
@@ -474,8 +471,7 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
   setSwitches(switches);
 
   current_recursion_context.input_file_name = in_file;
-  output_file_name = new char[strlen(out_file)+1];
-  strcpy(output_file_name, out_file);
+  current_recursion_context.output_file_name = out_file;
 
   start_time = get_time_ms();
 
@@ -1081,16 +1077,15 @@ int init(int argc, char* argv[]) {
             }
 
             output_file_given = true;
-            output_file_name = new char[strlen(argv[i]) + 5];
-            strcpy(output_file_name, argv[i] + 2);
+            current_recursion_context.output_file_name = argv[i] + 2;
 
             // check for backslash in file name
-            char* backslash_at_pos = strrchr(output_file_name, PATH_DELIM);
+            const char* backslash_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), PATH_DELIM);
 
             // dot in output file name? If not, use .pcf extension
-            char* dot_at_pos = strrchr(output_file_name, '.');
+            const char* dot_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), '.');
             if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
-              strcpy(output_file_name + strlen(argv[i]) - 2, ".pcf");
+              current_recursion_context.output_file_name += ".pcf";
               appended_pcf = true;
             }
 
@@ -1150,23 +1145,25 @@ int init(int argc, char* argv[]) {
       // output file given? If not, use input filename with .pcf extension
       if ((!output_file_given) && (operation == P_COMPRESS)) {
         if(!preserve_extension) {
-          output_file_name = new char[current_recursion_context.input_file_name.length() + 9];
-          strcpy(output_file_name, current_recursion_context.input_file_name.c_str());
-          char* backslash_at_pos = strrchr(output_file_name, PATH_DELIM);
-          char* dot_at_pos = strrchr(output_file_name, '.');
+          current_recursion_context.output_file_name = current_recursion_context.input_file_name;
+          const char* backslash_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), PATH_DELIM);
+          const char* dot_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), '.');
           if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-              strcpy(output_file_name + current_recursion_context.input_file_name.length(), ".pcf");
+            current_recursion_context.output_file_name += ".pcf";
           } else {
-              strcpy(dot_at_pos, ".pcf");
-              // same as output file because input file had .pcf extension?
-              if (current_recursion_context.input_file_name.compare(output_file_name) == 0) {
-              strcpy(dot_at_pos, "_pcf.pcf");
-              }
+            current_recursion_context.output_file_name = std::string(
+              current_recursion_context.output_file_name.c_str(),
+              dot_at_pos - current_recursion_context.output_file_name.c_str()
+            );
+            // same as output file because input file had .pcf extension?
+            if (current_recursion_context.input_file_name.compare(current_recursion_context.output_file_name + ".pcf") == 0) {
+              current_recursion_context.output_file_name += "_pcf.pcf";
+            } else {
+              current_recursion_context.output_file_name += ".pcf";
+            }
           }
         } else {
-          output_file_name = new char[current_recursion_context.input_file_name.length() + 9];
-          strcpy(output_file_name, current_recursion_context.input_file_name.c_str());
-          strcat(output_file_name, ".pcf");
+          current_recursion_context.output_file_name = current_recursion_context.input_file_name + ".pcf";
         }
         output_file_given = true;
       } else if ((!output_file_given) && (operation == P_CONVERT)) {
@@ -1249,13 +1246,13 @@ int init(int argc, char* argv[]) {
     if (operation == P_DECOMPRESS) {
       // if .pcf was appended, remove it
       if (appended_pcf) {
-        output_file_name[strlen(output_file_name)-4] = 0;
+        current_recursion_context.output_file_name = current_recursion_context.output_file_name.substr(0, current_recursion_context.output_file_name.length() - 4);
       }
       read_header();
     }
 
-    if (file_exists(output_file_name)) {
-      printf("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name);
+    if (file_exists(current_recursion_context.output_file_name.c_str())) {
+      printf("Output file \"%s\" exists. Overwrite (y/n)? ", current_recursion_context.output_file_name.c_str());
       char ch = get_char_with_echo();
       if ((ch != 'Y') && (ch != 'y')) {
         printf("\n");
@@ -1268,14 +1265,14 @@ int init(int argc, char* argv[]) {
         #endif
       }
     }
-    fout = fopen(output_file_name,"wb");
+    fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
     if (fout == NULL) {
-      printf("ERROR: Can't create output file \"%s\"\n", output_file_name);
+      printf("ERROR: Can't create output file \"%s\"\n", current_recursion_context.output_file_name.c_str());
       exit(1);
     }
 
     printf("Input file: %s\n", current_recursion_context.input_file_name.c_str());
-    printf("Output file: %s\n\n", output_file_name);
+    printf("Output file: %s\n\n", current_recursion_context.output_file_name.c_str());
     if (DEBUG_MODE) {
       if (min_ident_size_set) {
         printf("\n");
@@ -2281,28 +2278,31 @@ int init_comfort(int argc, char* argv[]) {
 
   if (operation == P_COMPRESS) {
     if(!preserve_extension) {
-      output_file_name = new char[current_recursion_context.input_file_name.length() + 9];
-      strcpy(output_file_name, current_recursion_context.input_file_name.c_str());
-      char* backslash_at_pos = strrchr(output_file_name, PATH_DELIM);
-      char* dot_at_pos = strrchr(output_file_name, '.');
+      current_recursion_context.output_file_name = current_recursion_context.input_file_name;
+      const char* backslash_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), PATH_DELIM);
+      const char* dot_at_pos = strrchr(current_recursion_context.output_file_name.c_str(), '.');
       if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-        strcpy(output_file_name + current_recursion_context.input_file_name.length(), ".pcf");
+        current_recursion_context.output_file_name += ".pcf";
       } else {
-        strcpy(dot_at_pos, ".pcf");
+        current_recursion_context.output_file_name = std::string(
+          current_recursion_context.output_file_name.c_str(),
+          dot_at_pos - current_recursion_context.output_file_name.c_str()
+        );
         // same as output file because input file had .pcf extension?
-        if (current_recursion_context.input_file_name.compare(output_file_name) == 0) {
-          strcpy(dot_at_pos, "_pcf.pcf");
+        if (current_recursion_context.input_file_name.compare(current_recursion_context.output_file_name + ".pcf") == 0) {
+          current_recursion_context.output_file_name += "_pcf.pcf";
+        }
+        else {
+          current_recursion_context.output_file_name += ".pcf";
         }
       }
     } else {
-      output_file_name = new char[current_recursion_context.input_file_name.length() + 9];
-      strcpy(output_file_name, current_recursion_context.input_file_name.c_str());
-      strcat(output_file_name,".pcf");
+      current_recursion_context.output_file_name = current_recursion_context.input_file_name + ".pcf";
     }
   }
 
-  if (file_exists(output_file_name)) {
-    printf("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name);
+  if (file_exists(current_recursion_context.output_file_name.c_str())) {
+    printf("Output file \"%s\" exists. Overwrite (y/n)? ", current_recursion_context.output_file_name.c_str());
     char ch = getche();
     if ((ch != 'Y') && (ch != 'y')) {
       printf("\n");
@@ -2314,15 +2314,15 @@ int init_comfort(int argc, char* argv[]) {
   } else {
     printf("\n");
   }
-  fout = fopen(output_file_name,"wb");
+  fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
   if (fout == NULL) {
-    printf("ERROR: Can't create output file \"%s\"\n", output_file_name);
+    printf("ERROR: Can't create output file \"%s\"\n", current_recursion_context.output_file_name.c_str());
     wait_for_key();
     exit(1);
   }
 
   printf("Input file: %s\n", current_recursion_context.input_file_name.c_str());
-  printf("Output file: %s\n\n", output_file_name);
+  printf("Output file: %s\n\n", current_recursion_context.output_file_name.c_str());
   if (DEBUG_MODE) {
     if (min_ident_size_set) {
       printf("\n");
@@ -2373,7 +2373,7 @@ void denit_compress() {
   }
 
   #ifndef PRECOMPDLL
-   long long fout_length = fileSize64(output_file_name);
+   long long fout_length = fileSize64(current_recursion_context.output_file_name.c_str());
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
     printf("%s", std::string(14,'\b').c_str());
@@ -2488,7 +2488,7 @@ void denit_convert() {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
-  long long fout_length = fileSize64(output_file_name);
+  long long fout_length = fileSize64(current_recursion_context.output_file_name.c_str());
   #ifndef PRECOMPDLL
    if (!DEBUG_MODE) {
    printf("%s", std::string(14,'\b').c_str());
@@ -5423,9 +5423,8 @@ bool check_for_pcf_file() {
   strcpy(lastslash, "");
   header_filename = exec_dir + header_filename;
 
-  if (output_file_name == NULL) {
-    output_file_name = new char[strlen(header_filename.c_str()) + 1];
-    strcpy(output_file_name, header_filename.c_str());
+  if (current_recursion_context.output_file_name.empty()) {
+    current_recursion_context.output_file_name = header_filename;
   }
 
   return true;
@@ -5460,9 +5459,8 @@ void read_header() {
     if (c != 0) header_filename += c;
   } while (c != 0);
 
-  if (output_file_name == NULL) {
-    output_file_name = new char[strlen(header_filename.c_str()) + 1];
-    strcpy(output_file_name, header_filename.c_str());
+  if (current_recursion_context.output_file_name.empty()) {
+    current_recursion_context.output_file_name = header_filename;
   }
 }
 
@@ -5811,7 +5809,7 @@ unsigned long long tell_64(FILE* f) {
   #endif
 }
 
-bool file_exists(char* filename) {
+bool file_exists(const char* filename) {
   std::fstream fin;
   bool retval = false;
 
@@ -7560,7 +7558,7 @@ void error(int error_nr) {
       printf("There is not enough space on disk");
       // delete output file
       safe_fclose(&fout);
-      remove(output_file_name);
+      remove(current_recursion_context.output_file_name.c_str());
       break;
     case ERR_RECURSION_DEPTH_TOO_BIG:
       printf("Recursion depth too big");
@@ -7741,7 +7739,6 @@ void recursion_stack_pop(void* var, int var_size) {
 
 std::vector<std::tuple<void*, size_t>> recursion_stack_pack = {
   std::make_tuple(&fin_length, sizeof(fin_length)),
-  std::make_tuple(&output_file_name, sizeof(output_file_name)),
   std::make_tuple(&uncompressed_pos, sizeof(uncompressed_pos)),
   std::make_tuple(&uncompressed_start, sizeof(uncompressed_start)),
   std::make_tuple(&compressed_data_found, sizeof(compressed_data_found)),
@@ -7865,13 +7862,11 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
     exit(0);
   }
   current_recursion_context.input_file_name = tempfile1;
-  output_file_name = new char[strlen(tempfile1)+2];
-  strcpy(output_file_name, tempfile1);
-  output_file_name[strlen(tempfile1)] = '_';
-  output_file_name[strlen(tempfile1) + 1] = 0;
+  current_recursion_context.output_file_name = tempfile1;
+  current_recursion_context.output_file_name += '_';
   tmp_r.file_name = new char[strlen(tempfile1)+2];
-  strcpy(tmp_r.file_name, output_file_name);
-  recursion_fout = tryOpen(output_file_name,"wb");
+  strcpy(tmp_r.file_name, current_recursion_context.output_file_name.c_str());
+  recursion_fout = tryOpen(current_recursion_context.output_file_name.c_str(), "wb");
   fout = recursion_fout;
 
   penalty_bytes = new char[MAX_PENALTY_BYTES];
@@ -7904,7 +7899,6 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   delete intense_ignore_offsets;
   delete brute_ignore_offsets;
   // TODO CHECK: Delete current_recursion_context?
-  delete[] output_file_name;
   delete[] penalty_bytes;
   delete[] local_penalty_bytes;
   delete[] best_penalty_bytes;
@@ -7973,13 +7967,11 @@ recursion_result recursion_decompress(long long recursion_data_length) {
     exit(0);
   }
   current_recursion_context.input_file_name = tempfile1;
-  output_file_name = new char[strlen(tempfile1)+2];
-  strcpy(output_file_name, tempfile1);
-  output_file_name[strlen(tempfile1)] = '_';
-  output_file_name[strlen(tempfile1) + 1] = 0;
+  current_recursion_context.output_file_name = tempfile1;
+  current_recursion_context.output_file_name += '_';
   tmp_r.file_name = new char[strlen(tempfile1)+2];
-  strcpy(tmp_r.file_name, output_file_name);
-  recursion_fout = tryOpen(output_file_name,"wb");
+  strcpy(tmp_r.file_name, current_recursion_context.output_file_name.c_str());
+  recursion_fout = tryOpen(current_recursion_context.output_file_name.c_str(), "wb");
   fout = recursion_fout;
 
   penalty_bytes = new char[MAX_PENALTY_BYTES];
@@ -7996,7 +7988,6 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   decompress_file();
 
   // TODO CHECK: Delete current_recursion_context?
-  delete[] output_file_name;
   delete[] penalty_bytes;
   delete[] local_penalty_bytes;
   delete[] best_penalty_bytes;
