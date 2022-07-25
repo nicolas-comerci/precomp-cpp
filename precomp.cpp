@@ -64,6 +64,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <array>
 #include <signal.h>
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
@@ -115,23 +116,12 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #define IDENTICAL_COMPRESSED_BYTES_TOLERANCE 32
 
 #define MAX_IO_BUFFER_SIZE 64 * 1024 * 1024
-unsigned char* decomp_io_buf = NULL;
 
 unsigned char copybuf[COPY_BUF_SIZE];
-
-unsigned char in_buf[IN_BUF_SIZE];
-long long in_buf_pos;
-int cb; // "checkbuf"
 
 unsigned char in[CHUNK];
 unsigned char out[CHUNK];
 
-// name of temporary files
-char metatempfile[18] = "~temp00000000.dat";
-char tempfile0[19] = "~temp000000000.dat";
-char tempfile1[19] = "~temp000000001.dat";
-char tempfile2[19] = "~temp000000002.dat";
-char tempfile3[19] = "~temp000000003.dat";
 char* tempfilelist;
 int tempfilelist_count = 0;
 int tempfile_instance = 0;
@@ -147,16 +137,10 @@ int recursion_depth = 0;
 int max_recursion_depth = 10;
 int max_recursion_depth_used = 0;
 bool max_recursion_depth_reached = false;
-std::vector<unsigned char> recursion_stack;
 RecursionContext current_recursion_context = RecursionContext();
 std::vector<RecursionContext> recursion_contexts_stack;
-void recursion_stack_push(void* var, int var_size);
-void recursion_stack_pop(void* var, int var_size);
 void recursion_push();
 void recursion_pop();
-
-float global_min_percent = 0;
-float global_max_percent = 100;
 
 // compression-on-the-fly
 unsigned char otf_in[CHUNK];
@@ -167,39 +151,15 @@ lzma_stream otf_xz_stream_c = LZMA_STREAM_INIT, otf_xz_stream_d = LZMA_STREAM_IN
 lzma_init_mt_extra_parameters otf_xz_extra_params;
 int otf_xz_filter_used_count = 0;
 
-int compression_otf_method = OTF_XZ_MT;
 uint64_t compression_otf_max_memory = 0;
 int compression_otf_thread_count = 0;
 int conversion_from_method;
 int conversion_to_method;
-bool decompress_otf_end = false;
 bz_stream otf_bz2_stream_c, otf_bz2_stream_d;
-
-FILE* fin = NULL;
-FILE* fout = NULL;
-FILE* ftempout = NULL;
-FILE* frecomp = NULL;
-FILE* fdecomp = NULL;
-FILE* fpack = NULL;
-FILE* fpng = NULL;
-FILE* fjpg = NULL;
-FILE* fmp3 = NULL;
-
-long long retval;
-long long input_file_pos;
 
 bool DEBUG_MODE = false;
 
-bool compressed_data_found;
-bool uncompressed_data_in_work;
-long long uncompressed_length = -1;
-long long uncompressed_pos;
-long long uncompressed_start;
-
-long long start_time, sec_time;
-long long fin_length;
-long long uncompressed_bytes_written = 0;
-long long uncompressed_bytes_total = 0;
+long long start_time;
 bool show_lzma_progress = true;
 char lzma_progress_text[70];
 int old_lzma_progress_text_length = -1;
@@ -208,9 +168,7 @@ int lzma_mib_total = 0, lzma_mib_written = 0;
 int comp_mem_level_count[81];
 zLibMTF MTF;
 bool zlib_level_was_used[81];
-bool anything_was_used;
 bool level_switch_used = false;
-bool non_zlib_was_used;
 
 // preflate config
 size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
@@ -253,48 +211,16 @@ unsigned int decompressed_bzip2_count = 0;
 unsigned int decompressed_zlib_count = 0;    // intense mode
 unsigned int decompressed_brute_count = 0;   // brute mode
 
-#define P_NONE 0
-#define P_COMPRESS 1
-#define P_DECOMPRESS 2
-#define P_CONVERT 3
-int comp_decomp_state = P_NONE;
-
-// penalty bytes
-#define MAX_PENALTY_BYTES 16384
-#ifndef PRECOMPDLL
-char* penalty_bytes = new char[MAX_PENALTY_BYTES];
-char* local_penalty_bytes = new char[MAX_PENALTY_BYTES];
-char* best_penalty_bytes = new char[MAX_PENALTY_BYTES];
-#else
-char* penalty_bytes;
-char* local_penalty_bytes;
-char* best_penalty_bytes;
-#endif
-int penalty_bytes_len = 0;
-
 long long* ignore_list = NULL; // positions to ignore
 int ignore_list_len = 0;
 
-long long saved_input_file_pos, saved_cb;
 int min_ident_size = 4;
 int min_ident_size_intense_brute_mode = 64;
-
-std::set<long long>* intense_ignore_offsets = new std::set<long long>();
-std::set<long long>* brute_ignore_offsets = new std::set<long long>();
 
 unsigned char zlib_header[2];
 unsigned int* idat_lengths = NULL;
 unsigned int* idat_crcs = NULL;
 int idat_count;
-
-long long suppress_mp3_type_until[16];
-long long suppress_mp3_big_value_pairs_sum;
-long long suppress_mp3_non_zero_padbits_sum;
-long long suppress_mp3_inconsistent_emphasis_sum;
-long long suppress_mp3_inconsistent_original_bit;
-long long mp3_parsing_cache_second_frame;
-long long mp3_parsing_cache_n;
-long long mp3_parsing_cache_mp3_length;
 
 bool fast_mode = false;
 bool intense_mode = false;
@@ -353,8 +279,8 @@ DLL void get_copyright_msg(char* msg) {
 }
 
 void setSwitches(Switches switches) {
-  compression_otf_method = switches.compression_method;
-  show_lzma_progress = (compression_otf_method == OTF_XZ_MT);
+  current_recursion_context.compression_otf_method = switches.compression_method;
+  show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
   ignore_list = switches.ignore_list;
   ignore_list_len = switches.ignore_list_len;
   intense_mode = switches.intense_mode;
@@ -407,18 +333,17 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
     zlib_level_was_used[i] = false;
   }
 
-  fin_length = fileSize64(in_file);
+  current_recursion_context.fin_length = fileSize64(in_file);
 
-  fin = fopen(in_file, "rb");
-  if (fin == NULL) {
+  current_recursion_context.fin = fopen(in_file, "rb");
+  if (current_recursion_context.fin == NULL) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  fout = fopen(out_file, "wb");
-
-  if (fout == NULL) {
+  current_recursion_context.fout = fopen(out_file, "wb");
+  if (current_recursion_context.fout == NULL) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
     return false;
@@ -430,10 +355,6 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
   current_recursion_context.output_file_name = out_file;
 
   start_time = get_time_ms();
-
-  penalty_bytes = new char[MAX_PENALTY_BYTES];
-  local_penalty_bytes = new char[MAX_PENALTY_BYTES];
-  best_penalty_bytes = new char[MAX_PENALTY_BYTES];
 
   compress_file();
 
@@ -452,17 +373,17 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
     zlib_level_was_used[i] = false;
   }
 
-  fin_length = fileSize64(in_file);
+  current_recursion_context.fin_length = fileSize64(in_file);
 
-  fin = fopen(in_file, "rb");
-  if (fin == NULL) {
+  current_recursion_context.fin = fopen(in_file, "rb");
+  if (current_recursion_context.fin == NULL) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  fout = fopen(out_file, "wb");
-  if (fout == NULL) {
+  current_recursion_context.fout = fopen(out_file, "wb");
+  if (current_recursion_context.fout == NULL) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
     return false;
@@ -474,10 +395,6 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
   current_recursion_context.output_file_name = out_file;
 
   start_time = get_time_ms();
-
-  penalty_bytes = new char[MAX_PENALTY_BYTES];
-  local_penalty_bytes = new char[MAX_PENALTY_BYTES];
-  best_penalty_bytes = new char[MAX_PENALTY_BYTES];
 
   decompress_file();
 
@@ -644,13 +561,13 @@ int init(int argc, char* argv[]) {
 
   // init MP3 suppression
   for (i = 0; i < 16; i++) {
-    suppress_mp3_type_until[i] = -1;
+    current_recursion_context.suppress_mp3_type_until[i] = -1;
   }
-  suppress_mp3_big_value_pairs_sum = -1;
-  suppress_mp3_non_zero_padbits_sum = -1;
-  suppress_mp3_inconsistent_emphasis_sum = -1;
-  suppress_mp3_inconsistent_original_bit = -1;
-  mp3_parsing_cache_second_frame = -1;
+  current_recursion_context.suppress_mp3_big_value_pairs_sum = -1;
+  current_recursion_context.suppress_mp3_non_zero_padbits_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_emphasis_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_original_bit = -1;
+  current_recursion_context.mp3_parsing_cache_second_frame = -1;
   
   // init LZMA filters
   memset(&otf_xz_extra_params, 0, sizeof(otf_xz_extra_params));
@@ -968,13 +885,13 @@ int init(int argc, char* argv[]) {
           {
             switch (toupper(argv[i][2])) {
               case 'N': // no compression
-                compression_otf_method = OTF_NONE;
+                current_recursion_context.compression_otf_method = OTF_NONE;
                 break;
               case 'B': // bZip2
-                compression_otf_method = OTF_BZIP2;
+                current_recursion_context.compression_otf_method = OTF_BZIP2;
                 break;
               case 'L': // lzma2 multithreaded
-                compression_otf_method = OTF_XZ_MT;
+                current_recursion_context.compression_otf_method = OTF_XZ_MT;
                 break;
               default:
                 printf("ERROR: Invalid compression method %c\n", argv[i][2]);
@@ -985,7 +902,7 @@ int init(int argc, char* argv[]) {
                 printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
-            show_lzma_progress = (compression_otf_method == OTF_XZ_MT);
+            show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
             break;
           }
         case 'N':
@@ -1133,10 +1050,10 @@ int init(int argc, char* argv[]) {
       input_file_given = true;
       current_recursion_context.input_file_name = argv[i];
 
-      fin_length = fileSize64(argv[i]);
+      current_recursion_context.fin_length = fileSize64(argv[i]);
 
-      fin = fopen(argv[i],"rb");
-      if (fin == NULL) {
+      current_recursion_context.fin = fopen(argv[i],"rb");
+      if (current_recursion_context.fin == NULL) {
         printf("ERROR: Input file \"%s\" doesn't exist\n", current_recursion_context.input_file_name.c_str());
 
         exit(1);
@@ -1265,8 +1182,8 @@ int init(int argc, char* argv[]) {
         #endif
       }
     }
-    fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
-    if (fout == NULL) {
+    current_recursion_context.fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
+    if (current_recursion_context.fout == NULL) {
       printf("ERROR: Can't create output file \"%s\"\n", current_recursion_context.output_file_name.c_str());
       exit(1);
     }
@@ -1341,13 +1258,13 @@ int init_comfort(int argc, char* argv[]) {
 
   // init MP3 suppression
   for (i = 0; i < 16; i++) {
-    suppress_mp3_type_until[i] = -1;
+    current_recursion_context.suppress_mp3_type_until[i] = -1;
   }
-  suppress_mp3_big_value_pairs_sum = -1;
-  suppress_mp3_non_zero_padbits_sum = -1;
-  suppress_mp3_inconsistent_emphasis_sum = -1;
-  suppress_mp3_inconsistent_original_bit = -1;
-  mp3_parsing_cache_second_frame = -1;
+  current_recursion_context.suppress_mp3_big_value_pairs_sum = -1;
+  current_recursion_context.suppress_mp3_non_zero_padbits_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_emphasis_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_original_bit = -1;
+  current_recursion_context.mp3_parsing_cache_second_frame = -1;
 
   // init LZMA filters
   memset(&otf_xz_extra_params, 0, sizeof(otf_xz_extra_params));
@@ -1365,16 +1282,16 @@ int init_comfort(int argc, char* argv[]) {
   } else {
     current_recursion_context.input_file_name = argv[1];
 
-    fin_length = fileSize64(current_recursion_context.input_file_name.c_str());
+    current_recursion_context.fin_length = fileSize64(current_recursion_context.input_file_name.c_str());
 
-    fin = fopen(current_recursion_context.input_file_name.c_str(), "rb");
-    if (fin == NULL) {
+    current_recursion_context.fin = fopen(current_recursion_context.input_file_name.c_str(), "rb");
+    if (current_recursion_context.fin == NULL) {
       printf("ERROR: Input file \"%s\" doesn't exist\n", current_recursion_context.input_file_name.c_str());
       wait_for_key();
       exit(1);
     }
 
-    if (fin_length > 6) {
+    if (current_recursion_context.fin_length > 6) {
       if (check_for_pcf_file()) {
         operation = P_DECOMPRESS;
       }
@@ -1582,23 +1499,23 @@ int init_comfort(int argc, char* argv[]) {
         if (strcmp(param, "compression_method") == 0) {
           if (strcmp(value, "0") == 0) {
             printf("INI: Using no compression method\n");
-            compression_otf_method = OTF_NONE;
+            current_recursion_context.compression_otf_method = OTF_NONE;
             valid_param = true;
           }
 
           if (strcmp(value, "1") == 0) {
             printf("INI: Using bZip2 compression method\n");
-            compression_otf_method = OTF_BZIP2;
+            current_recursion_context.compression_otf_method = OTF_BZIP2;
             valid_param = true;
           }
 
           if (strcmp(value, "2") == 0) {
             printf("INI: Using lzma2 multithreaded compression method\n");
-            compression_otf_method = OTF_XZ_MT;
+            current_recursion_context.compression_otf_method = OTF_XZ_MT;
             valid_param = true;
           }
 
-          show_lzma_progress = (compression_otf_method == OTF_XZ_MT);
+          show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
 
           if (!valid_param) {
             printf("ERROR: Invalid compression method value: %s\n", value);
@@ -2314,8 +2231,8 @@ int init_comfort(int argc, char* argv[]) {
   } else {
     printf("\n");
   }
-  fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
-  if (fout == NULL) {
+  current_recursion_context.fout = fopen(current_recursion_context.output_file_name.c_str(), "wb");
+  if (current_recursion_context.fout == NULL) {
     printf("ERROR: Can't create output file \"%s\"\n", current_recursion_context.output_file_name.c_str());
     wait_for_key();
     exit(1);
@@ -2361,12 +2278,12 @@ int init_comfort(int argc, char* argv[]) {
 
 void denit_compress() {
 
-  if (compression_otf_method != OTF_NONE) {
+  if (current_recursion_context.compression_otf_method != OTF_NONE) {
     denit_compress_otf();
   }
 
-  safe_fclose(&fin);
-  safe_fclose(&fout);
+  safe_fclose(&current_recursion_context.fin);
+  safe_fclose(&current_recursion_context.fout);
 
   if ((recursion_depth == 0) && (!DEBUG_MODE) && show_lzma_progress && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
@@ -2377,9 +2294,9 @@ void denit_compress() {
    if (recursion_depth == 0) {
     if (!DEBUG_MODE) {
     printf("%s", std::string(14,'\b').c_str());
-    std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
+    std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
     } else {
-    std::cout << "New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
+    std::cout << "New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
     }
    }
   #else
@@ -2426,11 +2343,11 @@ void denit_compress() {
    }
   #endif
 
-  remove(metatempfile);
-  remove(tempfile0);
-  remove(tempfile1);
-  remove(tempfile2);
-  remove(tempfile3);
+  remove(current_recursion_context.metatempfile);
+  remove(current_recursion_context.tempfile0);
+  remove(current_recursion_context.tempfile1);
+  remove(current_recursion_context.tempfile2);
+  remove(current_recursion_context.tempfile3);
 
   tempfilelist_count -= 8;
   tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
@@ -2438,8 +2355,8 @@ void denit_compress() {
   if (recursion_depth == 0) {
     free(ignore_list);
   }
-  if (decomp_io_buf != NULL) delete[] decomp_io_buf;
-  decomp_io_buf = NULL;
+  if (current_recursion_context.decomp_io_buf != NULL) delete[] current_recursion_context.decomp_io_buf;
+  current_recursion_context.decomp_io_buf = NULL;
 
   denit();
 }
@@ -2464,15 +2381,15 @@ void denit_decompress() {
    }
   #endif
 
-  if (compression_otf_method != OTF_NONE) {
+  if (current_recursion_context.compression_otf_method != OTF_NONE) {
     denit_decompress_otf();
   }
 
-  remove(metatempfile);
-  remove(tempfile0);
-  remove(tempfile1);
-  remove(tempfile2);
-  remove(tempfile3);
+  remove(current_recursion_context.metatempfile);
+  remove(current_recursion_context.tempfile0);
+  remove(current_recursion_context.tempfile1);
+  remove(current_recursion_context.tempfile2);
+  remove(current_recursion_context.tempfile3);
 
   tempfilelist_count -= 8;
   tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
@@ -2481,8 +2398,8 @@ void denit_decompress() {
 }
 
 void denit_convert() {
-  safe_fclose(&fin);
-  safe_fclose(&fout);
+  safe_fclose(&current_recursion_context.fin);
+  safe_fclose(&current_recursion_context.fout);
 
   if ((!DEBUG_MODE) && show_lzma_progress && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
@@ -2492,16 +2409,16 @@ void denit_convert() {
   #ifndef PRECOMPDLL
    if (!DEBUG_MODE) {
    printf("%s", std::string(14,'\b').c_str());
-   std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
+   std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
    } else {
-   std::cout << "New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
+   std::cout << "New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
    }
    printf("\nDone.\n");
    printf_time(get_time_ms() - start_time);
   #else
    if (!DEBUG_MODE) {
    printf(std::string(14,'\b').c_str());
-   std::cout << "100.00% - New size: " << fout_length << " instead of " << fin_length << "     " << std::endl;
+   std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
    printf_time(get_time_ms() - start_time);
    }
   #endif
@@ -2510,8 +2427,8 @@ void denit_convert() {
 }
 
 void denit() {
-  safe_fclose(&fin);
-  safe_fclose(&fout);
+  safe_fclose(&current_recursion_context.fin);
+  safe_fclose(&current_recursion_context.fout);
 }
 
 // Brute mode detects a bit less than intense mode to avoid false positives
@@ -2534,10 +2451,10 @@ bool brute_mode_is_active() {
 
 void copy_penalty_bytes(long long& rek_penalty_bytes_len, bool& use_penalty_bytes) {
   if ((rek_penalty_bytes_len > 0) && (use_penalty_bytes)) {
-    memcpy(penalty_bytes, local_penalty_bytes, rek_penalty_bytes_len);
-    penalty_bytes_len = rek_penalty_bytes_len;
+    std::copy(current_recursion_context.local_penalty_bytes.data(), current_recursion_context.local_penalty_bytes.data() + rek_penalty_bytes_len, current_recursion_context.penalty_bytes.begin());
+    current_recursion_context.penalty_bytes_len = rek_penalty_bytes_len;
   } else {
-    penalty_bytes_len = 0;
+    current_recursion_context.penalty_bytes_len = 0;
   }
 }
 
@@ -2589,8 +2506,8 @@ long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& 
       have = DEF_COMPARE_CHUNK - strm.avail_out;
 
       if (have > 0) {
-        if (compfile == fin) {
-          identical_bytes_compare = compare_file_mem_penalty(compfile, out, input_file_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
+        if (compfile == current_recursion_context.fin) {
+          identical_bytes_compare = compare_file_mem_penalty(compfile, out, current_recursion_context.input_file_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         } else {
           identical_bytes_compare = compare_file_mem_penalty(compfile, out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         }
@@ -2710,7 +2627,7 @@ int histogram[256];
 
 bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = false) {
   // first check BTYPE bits, skip 11 ("reserved (error)")
-  int btype = (in_buf[cb_pos] & 0x07) >> 1;
+  int btype = (current_recursion_context.in_buf[cb_pos] & 0x07) >> 1;
   if (btype == 3) return false;
   // skip BTYPE = 00 ("uncompressed") only in brute mode, because these can be useful for recursion
   // and often occur in combination with static/dynamic BTYPE blocks
@@ -2725,7 +2642,7 @@ bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = fa
     int maximum=0, used=0, offset=cb_pos;
     for (int i=0;i<4;i++,offset+=64){
       for (int j=0;j<64;j++){
-        int* freq = &histogram[in_buf[offset+j]];
+        int* freq = &histogram[current_recursion_context.in_buf[offset+j]];
         used+=((*freq)==0);
         maximum+=(++(*freq))>maximum;
       }
@@ -2751,7 +2668,7 @@ bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = fa
   print_work_sign(true);
 
   strm.avail_in = 2048;
-  strm.next_in = in_buf + cb_pos;
+  strm.next_in = current_recursion_context.in_buf + cb_pos;
 
   /* run inflate() on input until output buffer not full */
   do {
@@ -2900,17 +2817,17 @@ int def_bzip2(FILE *source, FILE *dest, int level) {
 long long file_recompress_bzip2(FILE* origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total) {
   long long retval;
 
-  ftempout = fopen(tempfile1,"rb");
-  fseek(ftempout, 0, SEEK_END);
-  decompressed_bytes_total = tell_64(ftempout);
-  if (ftempout == NULL) {
+  current_recursion_context.ftempout = fopen(current_recursion_context.tempfile1, "rb");
+  fseek(current_recursion_context.ftempout, 0, SEEK_END);
+  decompressed_bytes_total = tell_64(current_recursion_context.ftempout);
+  if (current_recursion_context.ftempout == NULL) {
     error(ERR_TEMP_FILE_DISAPPEARED);
   }
 
-  fseek(ftempout, 0, SEEK_SET);
-  retval = def_compare_bzip2(ftempout, origfile, level, decompressed_bytes_used);
+  fseek(current_recursion_context.ftempout, 0, SEEK_SET);
+  retval = def_compare_bzip2(current_recursion_context.ftempout, origfile, level, decompressed_bytes_used);
 
-  safe_fclose(&ftempout);
+  safe_fclose(&current_recursion_context.ftempout);
 
   if (retval < 0) return -1;
 
@@ -2918,19 +2835,19 @@ long long file_recompress_bzip2(FILE* origfile, int level, long long& decompress
 }
 
 void write_decompressed_data(long long byte_count, char* decompressed_file_name) {
-  ftempout = fopen(decompressed_file_name, "rb");
-  if (ftempout == NULL) error(ERR_TEMP_FILE_DISAPPEARED);
+  current_recursion_context.ftempout = fopen(decompressed_file_name, "rb");
+  if (current_recursion_context.ftempout == NULL) error(ERR_TEMP_FILE_DISAPPEARED);
 
-  fseek(ftempout, 0, SEEK_SET);
+  fseek(current_recursion_context.ftempout, 0, SEEK_SET);
 
-  fast_copy(ftempout, fout, byte_count);
+  fast_copy(current_recursion_context.ftempout, current_recursion_context.fout, byte_count);
 
-  safe_fclose(&ftempout);
+  safe_fclose(&current_recursion_context.ftempout);
 }
 
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* decompressed_file_name) {
     if (in_memory) {
-      fast_copy(decomp_io_buf, fout, byte_count);
+      fast_copy(current_recursion_context.decomp_io_buf, current_recursion_context.fout, byte_count);
     } else {
       write_decompressed_data(byte_count, decompressed_file_name);
     }
@@ -2993,12 +2910,12 @@ long long compare_file_mem_penalty(FILE* file1, unsigned char* input_bytes2, lon
 
       local_penalty_bytes_len += 5;
       // position
-      local_penalty_bytes[local_penalty_bytes_len-5] = (total_same_byte_count >> 24) % 256;
-      local_penalty_bytes[local_penalty_bytes_len-4] = (total_same_byte_count >> 16) % 256;
-      local_penalty_bytes[local_penalty_bytes_len-3] = (total_same_byte_count >> 8) % 256;
-      local_penalty_bytes[local_penalty_bytes_len-2] = total_same_byte_count % 256;
+      current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-5] = (total_same_byte_count >> 24) % 256;
+      current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-4] = (total_same_byte_count >> 16) % 256;
+      current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-3] = (total_same_byte_count >> 8) % 256;
+      current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-2] = total_same_byte_count % 256;
       // new byte
-      local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
+      current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
     }
     total_same_byte_count++;
 
@@ -3017,47 +2934,38 @@ long long compare_file_mem_penalty(FILE* file1, unsigned char* input_bytes2, lon
 }
 
 void start_uncompressed_data() {
-  uncompressed_length = 0;
-  uncompressed_pos = input_file_pos;
+  current_recursion_context.uncompressed_length = 0;
+  current_recursion_context.uncompressed_pos = current_recursion_context.input_file_pos;
 
   // uncompressed data
   fout_fputc(0);
 
-  uncompressed_data_in_work = true;
+  current_recursion_context.uncompressed_data_in_work = true;
 }
 
 void end_uncompressed_data() {
 
-  if (!uncompressed_data_in_work) return;
+  if (!current_recursion_context.uncompressed_data_in_work) return;
 
-  fout_fput_vlint(uncompressed_length);
+  fout_fput_vlint(current_recursion_context.uncompressed_length);
 
   // fast copy of uncompressed data
-  seek_64(fin, uncompressed_pos);
-  fast_copy(fin, fout, uncompressed_length, true);
+  seek_64(current_recursion_context.fin, current_recursion_context.uncompressed_pos);
+  fast_copy(current_recursion_context.fin, current_recursion_context.fout, current_recursion_context.uncompressed_length, true);
 
-  uncompressed_length = -1;
+  current_recursion_context.uncompressed_length = -1;
 
-  uncompressed_data_in_work = false;
+  current_recursion_context.uncompressed_data_in_work = false;
 }
 
-long long identical_bytes = -1;
-long long best_identical_bytes = -1;
-long long best_identical_bytes_decomp = -1;
-int best_compression = -1;
-int best_mem_level = -1;
 int best_windowbits = -1;
-int best_penalty_bytes_len = 0;
-long long identical_bytes_decomp = -1;
 
 void init_decompression_variables() {
-  identical_bytes = -1;
-  best_identical_bytes = -1;
-  best_compression = -1;
-  best_mem_level = -1;
-  best_penalty_bytes_len = 0;
-  best_identical_bytes_decomp = -1;
-  identical_bytes_decomp = -1;
+  current_recursion_context.identical_bytes = -1;
+  current_recursion_context.best_identical_bytes = -1;
+  current_recursion_context.best_penalty_bytes_len = 0;
+  current_recursion_context.best_identical_bytes_decomp = -1;
+  current_recursion_context.identical_bytes_decomp = -1;
 }
 
 struct recompress_deflate_result {
@@ -3075,7 +2983,7 @@ struct recompress_deflate_result {
 void debug_deflate_detected(const recompress_deflate_result& rdres, const char* type) {
   if (DEBUG_MODE) {
     print_debug_percent();
-    std::cout << "Possible zLib-Stream " << type << " found at position " << saved_input_file_pos << std::endl;
+    std::cout << "Possible zLib-Stream " << type << " found at position " << current_recursion_context.saved_input_file_pos << std::endl;
     std::cout << "Compressed size: " << rdres.compressed_stream_size << std::endl;
     std::cout << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
 
@@ -3129,7 +3037,7 @@ public:
   UncompressedOutStream(bool& in_memory) : _written(0), _in_memory(in_memory) {}
   ~UncompressedOutStream() {
     if (!_in_memory) {
-      safe_fclose(&ftempout);
+      safe_fclose(&current_recursion_context.ftempout);
     }
   }
 
@@ -3140,13 +3048,13 @@ public:
         _in_memory = false;
         write_ftempout_if_not_present(_written, true, true);
       } else {
-        memcpy(decomp_io_buf + _written, buffer, size);
+        memcpy(current_recursion_context.decomp_io_buf + _written, buffer, size);
         _written += size;
         return size;
       }
     }
     _written += size;
-    return own_fwrite(buffer, 1, size, ftempout);
+    return own_fwrite(buffer, 1, size, current_recursion_context.ftempout);
   }
 
   uint64_t written() const {
@@ -3159,8 +3067,8 @@ private:
 };
 
 recompress_deflate_result try_recompression_deflate(FILE* file) {
-  if (file == fin) {
-    seek_64(file, input_file_pos);
+  if (file == current_recursion_context.fin) {
+    seek_64(file, current_recursion_context.input_file_pos);
   } else {
     seek_64(file, 0);
   }
@@ -3182,8 +3090,8 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
     result.uncompressed_stream_size = uos.written();
 
     if (preflate_verify && result.accepted) {
-      if (file == fin) {
-        seek_64(file, input_file_pos);
+      if (file == current_recursion_context.fin) {
+        seek_64(file, current_recursion_context.input_file_pos);
       } else {
         seek_64(file, 0);
       }
@@ -3192,8 +3100,8 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
       is2.read(orgdata.data(), orgdata.size());
 
       MemStream reencoded_deflate;
-      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(decomp_io_buf, decomp_io_buf + result.uncompressed_stream_size) : std::vector<uint8_t>());
-      OwnFileInputStream uncompressed_file(result.uncompressed_in_memory ? NULL : ftempout);
+      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(current_recursion_context.decomp_io_buf, current_recursion_context.decomp_io_buf + result.uncompressed_stream_size) : std::vector<uint8_t>());
+      OwnFileInputStream uncompressed_file(result.uncompressed_in_memory ? NULL : current_recursion_context.ftempout);
       if (!preflate_reencode(reencoded_deflate, result.recon_data, 
                              result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file, 
                              result.uncompressed_stream_size,
@@ -3327,7 +3235,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
   int bmp_header_type = 0; // 0 = none, 1 = 8-bit, 2 = 24-bit
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(fin);
+  recompress_deflate_result rdres = try_recompression_deflate(current_recursion_context.fin);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -3344,7 +3252,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       recompressed_streams_count++;
       recompressed_pdf_count++;
 
-      non_zlib_was_used = true;
+      current_recursion_context.non_zlib_was_used = true;
       debug_sums(rdres);
 
       if (img_bpc == 8) {
@@ -3375,7 +3283,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
       // end uncompressed data
 
-      compressed_data_found = true;
+      current_recursion_context.compressed_data_found = true;
       end_uncompressed_data();
 
       debug_pos();
@@ -3393,7 +3301,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         bmp_c = 128;
       }
 
-      fout_fput_deflate_hdr(D_PDF, bmp_c, rdres, in_buf + cb + 12, pdf_header_length - 12, false);
+      fout_fput_deflate_hdr(D_PDF, bmp_c, rdres, current_recursion_context.in_buf + current_recursion_context.cb + 12, pdf_header_length - 12, false);
       fout_fput_recon_data(rdres);
 
       // eventually write BMP header
@@ -3471,22 +3379,22 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         fout_fput_uncompressed(rdres);
       } else {
         if (!rdres.uncompressed_in_memory) {
-          ftempout = fopen(tempfile1,"rb");
-          if (ftempout == NULL) {
+          current_recursion_context.ftempout = fopen(current_recursion_context.tempfile1, "rb");
+          if (current_recursion_context.ftempout == NULL) {
             error(ERR_TEMP_FILE_DISAPPEARED);
           }
 
-          fseek(ftempout, 0, SEEK_SET);
+          fseek(current_recursion_context.ftempout, 0, SEEK_SET);
         }
 
-        unsigned char* buf_ptr = decomp_io_buf;
+        unsigned char* buf_ptr = current_recursion_context.decomp_io_buf;
         for (int y = 0; y < img_height; y++) {
 
           if (rdres.uncompressed_in_memory) {
-            fast_copy(buf_ptr, fout, img_width);
+            fast_copy(buf_ptr, current_recursion_context.fout, img_width);
             buf_ptr += img_width;
           } else {
-            fast_copy(ftempout, fout, img_width);
+            fast_copy(current_recursion_context.ftempout, current_recursion_context.fout, img_width);
           }
 
           for (int i = 0; i < (4 - (img_width % 4)); i++) {
@@ -3495,19 +3403,19 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
         }
 
-        safe_fclose(&ftempout);
+        safe_fclose(&current_recursion_context.ftempout);
       }
 
       // start new uncompressed data
       debug_pos();
 
       // set input file pointer after recompressed data
-      input_file_pos += rdres.compressed_stream_size - 1;
-      cb += rdres.compressed_stream_size - 1;
+      current_recursion_context.input_file_pos += rdres.compressed_stream_size - 1;
+      current_recursion_context.cb += rdres.compressed_stream_size - 1;
 
     } else {
-      if (intense_mode_is_active()) intense_ignore_offsets->insert(input_file_pos - 2);
-      if (brute_mode_is_active()) brute_ignore_offsets->insert(input_file_pos);
+      if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
+      if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
       if (DEBUG_MODE) {
         printf("No matches\n");
       }
@@ -3522,7 +3430,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
   init_decompression_variables();
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(fin);
+  recompress_deflate_result rdres = try_recompression_deflate(current_recursion_context.fin);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
     decompressed_streams_count++;
@@ -3534,7 +3442,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       recompressed_streams_count++;
       rcounter++;
 
-      non_zlib_was_used = true;
+      current_recursion_context.non_zlib_was_used = true;
 
       debug_sums(rdres);
 
@@ -3542,7 +3450,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
 
       debug_pos();
 
-      compressed_data_found = true;
+      current_recursion_context.compressed_data_found = true;
       end_uncompressed_data();
 
       // check recursion
@@ -3566,12 +3474,12 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       debug_pos();
 
       // set input file pointer after recompressed data
-      input_file_pos += rdres.compressed_stream_size - 1;
-      cb += rdres.compressed_stream_size - 1;
+      current_recursion_context.input_file_pos += rdres.compressed_stream_size - 1;
+      current_recursion_context.cb += rdres.compressed_stream_size - 1;
 
     } else {
-      if (type == D_SWF && intense_mode_is_active()) intense_ignore_offsets->insert(input_file_pos - 2);
-      if (type != D_BRUTE && brute_mode_is_active()) brute_ignore_offsets->insert(input_file_pos);
+      if (type == D_SWF && intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
+      if (type != D_BRUTE && brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
       if (DEBUG_MODE) {
         printf("No matches\n");
       }
@@ -3582,14 +3490,14 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
 
 void try_decompression_zip(int zip_header_length) {
   try_decompression_deflate_type(decompressed_zip_count, recompressed_zip_count, 
-                                 D_ZIP, in_buf + cb + 4, zip_header_length - 4, false,
+                                 D_ZIP, current_recursion_context.in_buf + current_recursion_context.cb + 4, zip_header_length - 4, false,
                                  "in ZIP");
 }
 
 void show_used_levels() {
-  if (!anything_was_used) {
-    if (!non_zlib_was_used) {
-      if (compression_otf_method == OTF_NONE) {
+  if (!current_recursion_context.anything_was_used) {
+    if (!current_recursion_context.non_zlib_was_used) {
+      if (current_recursion_context.compression_otf_method == OTF_NONE) {
         printf("\nNone of the given compression and memory levels could be used.\n");
         printf("There will be no gain compressing the output file.\n");
       }
@@ -3674,51 +3582,51 @@ void show_used_levels() {
 
 bool compress_file(float min_percent, float max_percent) {
 
-  comp_decomp_state = P_COMPRESS;
+  current_recursion_context.comp_decomp_state = P_COMPRESS;
 
   init_temp_files();
-  decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
+  current_recursion_context.decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
 
-  global_min_percent = min_percent;
-  global_max_percent = max_percent;
+  current_recursion_context.global_min_percent = min_percent;
+  current_recursion_context.global_max_percent = max_percent;
 
   if (recursion_depth == 0) write_header();
-  uncompressed_length = -1;
-  uncompressed_bytes_total = 0;
-  uncompressed_bytes_written = 0;
+  current_recursion_context.uncompressed_length = -1;
+  current_recursion_context.uncompressed_bytes_total = 0;
+  current_recursion_context.uncompressed_bytes_written = 0;
 
   if (!DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
 
-  seek_64(fin, 0);
-  fread(in_buf, 1, IN_BUF_SIZE, fin);
-  in_buf_pos = 0;
-  cb = -1;
+  seek_64(current_recursion_context.fin, 0);
+  fread(current_recursion_context.in_buf, 1, IN_BUF_SIZE, current_recursion_context.fin);
+  long long in_buf_pos = 0;
+  current_recursion_context.cb = -1;
 
-  anything_was_used = false;
-  non_zlib_was_used = false;
+  current_recursion_context.anything_was_used = false;
+  current_recursion_context.non_zlib_was_used = false;
 
-  for (input_file_pos = 0; input_file_pos < fin_length; input_file_pos++) {
+  for (current_recursion_context.input_file_pos = 0; current_recursion_context.input_file_pos < current_recursion_context.fin_length; current_recursion_context.input_file_pos++) {
 
-    compressed_data_found = false;
+  current_recursion_context.compressed_data_found = false;
 
   bool ignore_this_pos = false;
 
-  if ((in_buf_pos + IN_BUF_SIZE) <= (input_file_pos + CHECKBUF_SIZE)) {
-    seek_64(fin, input_file_pos);
-    fread(in_buf, 1, IN_BUF_SIZE, fin);
-    in_buf_pos = input_file_pos;
-    cb = 0;
+  if ((in_buf_pos + IN_BUF_SIZE) <= (current_recursion_context.input_file_pos + CHECKBUF_SIZE)) {
+    seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
+    fread(current_recursion_context.in_buf, 1, IN_BUF_SIZE, current_recursion_context.fin);
+    in_buf_pos = current_recursion_context.input_file_pos;
+    current_recursion_context.cb = 0;
 
     if (!DEBUG_MODE) {
-      float percent = ((input_file_pos + uncompressed_bytes_written) / ((float)fin_length + uncompressed_bytes_total)) * (max_percent - min_percent) + min_percent;
+      float percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (max_percent - min_percent) + min_percent;
       show_progress(percent, true, true);
     }
   } else {
-    cb++;
+    current_recursion_context.cb++;
   }
 
   for (int j = 0; j < ignore_list_len; j++) {
-    ignore_this_pos = (ignore_list[j] == input_file_pos);
+    ignore_this_pos = (ignore_list[j] == current_recursion_context.input_file_pos);
     if (ignore_this_pos) {
       break;
     }
@@ -3727,18 +3635,18 @@ bool compress_file(float min_percent, float max_percent) {
   if (!ignore_this_pos) {
 
     // ZIP header?
-    if (((in_buf[cb] == 'P') && (in_buf[cb + 1] == 'K')) && (use_zip)) {
+    if (((current_recursion_context.in_buf[current_recursion_context.cb] == 'P') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'K')) && (use_zip)) {
       // local file header?
-      if ((in_buf[cb + 2] == 3) && (in_buf[cb + 3] == 4)) {
+      if ((current_recursion_context.in_buf[current_recursion_context.cb + 2] == 3) && (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 4)) {
         if (DEBUG_MODE) {
         printf("ZIP header detected\n");
         print_debug_percent();
-        std::cout << "ZIP header detected at position " << input_file_pos << std::endl;
+        std::cout << "ZIP header detected at position " << current_recursion_context.input_file_pos << std::endl;
         }
-        unsigned int compressed_size = (in_buf[cb + 21] << 24) + (in_buf[cb + 20] << 16) + (in_buf[cb + 19] << 8) + in_buf[cb + 18];
-        unsigned int uncompressed_size = (in_buf[cb + 25] << 24) + (in_buf[cb + 24] << 16) + (in_buf[cb + 23] << 8) + in_buf[cb + 22];
-        unsigned int filename_length = (in_buf[cb + 27] << 8) + in_buf[cb + 26];
-        unsigned int extra_field_length = (in_buf[cb + 29] << 8) + in_buf[cb + 28];
+        unsigned int compressed_size = (current_recursion_context.in_buf[current_recursion_context.cb + 21] << 24) + (current_recursion_context.in_buf[current_recursion_context.cb + 20] << 16) + (current_recursion_context.in_buf[current_recursion_context.cb + 19] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 18];
+        unsigned int uncompressed_size = (current_recursion_context.in_buf[current_recursion_context.cb + 25] << 24) + (current_recursion_context.in_buf[current_recursion_context.cb + 24] << 16) + (current_recursion_context.in_buf[current_recursion_context.cb + 23] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 22];
+        unsigned int filename_length = (current_recursion_context.in_buf[current_recursion_context.cb + 27] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 26];
+        unsigned int extra_field_length = (current_recursion_context.in_buf[current_recursion_context.cb + 29] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 28];
         if (DEBUG_MODE) {
         printf("compressed size: %i\n", compressed_size);
         printf("uncompressed size: %i\n", uncompressed_size);
@@ -3747,52 +3655,52 @@ bool compress_file(float min_percent, float max_percent) {
         }
 
         if ((filename_length + extra_field_length) <= CHECKBUF_SIZE
-            && in_buf[cb + 8] == 8 && in_buf[cb + 9] == 0) { // Compression method 8: Deflate
+            && current_recursion_context.in_buf[current_recursion_context.cb + 8] == 8 && current_recursion_context.in_buf[current_recursion_context.cb + 9] == 0) { // Compression method 8: Deflate
 
           int header_length = 30 + filename_length + extra_field_length;
 
-          saved_input_file_pos = input_file_pos;
-          saved_cb = cb;
+          current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+          current_recursion_context.saved_cb = current_recursion_context.cb;
 
-          input_file_pos += header_length;
+          current_recursion_context.input_file_pos += header_length;
 
           try_decompression_zip(header_length);
 
-          cb += header_length;
+          current_recursion_context.cb += header_length;
 
-          if (!compressed_data_found) {
-            input_file_pos = saved_input_file_pos;
-            cb = saved_cb;
+          if (!current_recursion_context.compressed_data_found) {
+            current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+            current_recursion_context.cb = current_recursion_context.saved_cb;
           }
 
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_gzip)) { // no ZIP header -> GZip header?
-      if ((in_buf[cb] == 31) && (in_buf[cb + 1] == 139)) {
+    if ((!current_recursion_context.compressed_data_found) && (use_gzip)) { // no ZIP header -> GZip header?
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 31) && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 139)) {
         // check zLib header in GZip header
-        int compression_method = (in_buf[cb + 2] & 15);
+        int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb + 2] & 15);
         if ((compression_method == 8) &&
-           ((in_buf[cb + 3] & 224) == 0)  // reserved FLG bits must be zero
+           ((current_recursion_context.in_buf[current_recursion_context.cb + 3] & 224) == 0)  // reserved FLG bits must be zero
           ) {
 
-          //((in_buf[cb + 8] == 2) || (in_buf[cb + 8] == 4)) { //XFL = 2 or 4
+          //((current_recursion_context.in_buf[current_recursion_context.cb + 8] == 2) || (current_recursion_context.in_buf[current_recursion_context.cb + 8] == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
           //
           //  TODO: compressed data is followed by CRC-32 and uncompressed
           //    size. Uncompressed size can be used to check if it is really
           //    a GZ stream.
 
-          bool fhcrc = (in_buf[cb + 3] & 2) == 2;
-          bool fextra = (in_buf[cb + 3] & 4) == 4;
-          bool fname = (in_buf[cb + 3] & 8) == 8;
-          bool fcomment = (in_buf[cb + 3] & 16) == 16;
+          bool fhcrc = (current_recursion_context.in_buf[current_recursion_context.cb + 3] & 2) == 2;
+          bool fextra = (current_recursion_context.in_buf[current_recursion_context.cb + 3] & 4) == 4;
+          bool fname = (current_recursion_context.in_buf[current_recursion_context.cb + 3] & 8) == 8;
+          bool fcomment = (current_recursion_context.in_buf[current_recursion_context.cb + 3] & 16) == 16;
 
           int header_length = 10;
 
-          saved_input_file_pos = input_file_pos;
-          saved_cb = cb;
+          current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+          current_recursion_context.saved_cb = current_recursion_context.cb;
 
           bool dont_compress = false;
 
@@ -3800,7 +3708,7 @@ bool compress_file(float min_percent, float max_percent) {
             int act_checkbuf_pos = 10;
 
             if (fextra) {
-              int xlen = in_buf[cb + act_checkbuf_pos] + (in_buf[cb + act_checkbuf_pos + 1] << 8);
+              int xlen = current_recursion_context.in_buf[current_recursion_context.cb + act_checkbuf_pos] + (current_recursion_context.in_buf[current_recursion_context.cb + act_checkbuf_pos + 1] << 8);
               if ((act_checkbuf_pos + xlen) > CHECKBUF_SIZE) {
                 dont_compress = true;
               } else {
@@ -3815,14 +3723,14 @@ bool compress_file(float min_percent, float max_percent) {
                 act_checkbuf_pos ++;
                 dont_compress = (act_checkbuf_pos == CHECKBUF_SIZE);
                 header_length++;
-              } while ((in_buf[cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
+              } while ((current_recursion_context.in_buf[current_recursion_context.cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
             }
             if ((fcomment) && (!dont_compress)) {
               do {
                 act_checkbuf_pos ++;
                 dont_compress = (act_checkbuf_pos == CHECKBUF_SIZE);
                 header_length++;
-              } while ((in_buf[cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
+              } while ((current_recursion_context.in_buf[current_recursion_context.cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
             }
             if ((fhcrc) && (!dont_compress)) {
               act_checkbuf_pos += 2;
@@ -3833,32 +3741,32 @@ bool compress_file(float min_percent, float max_percent) {
 
           if (!dont_compress) {
 
-            input_file_pos += header_length; // skip GZip header
+            current_recursion_context.input_file_pos += header_length; // skip GZip header
 
             try_decompression_gzip(header_length);
 
-            cb += header_length;
+            current_recursion_context.cb += header_length;
 
           }
 
-          if (!compressed_data_found) {
-            input_file_pos = saved_input_file_pos;
-            cb = saved_cb;
+          if (!current_recursion_context.compressed_data_found) {
+            current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+            current_recursion_context.cb = current_recursion_context.saved_cb;
           }
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_pdf)) { // no Gzip header -> PDF FlateDecode?
-      if (memcmp(in_buf + cb, "/FlateDecode", 12) == 0) {
-        saved_input_file_pos = input_file_pos;
-        saved_cb = cb;
+    if ((!current_recursion_context.compressed_data_found) && (use_pdf)) { // no Gzip header -> PDF FlateDecode?
+      if (memcmp(current_recursion_context.in_buf + current_recursion_context.cb, "/FlateDecode", 12) == 0) {
+        current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+        current_recursion_context.saved_cb = current_recursion_context.cb;
 
         long long act_search_pos = 12;
         bool found_stream = false;
         do {
-          if (in_buf[cb + act_search_pos] == 's') {
-            if (memcmp(in_buf + cb + act_search_pos, "stream", 6) == 0) {
+          if (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos] == 's') {
+            if (memcmp(current_recursion_context.in_buf + current_recursion_context.cb + act_search_pos, "stream", 6) == 0) {
               found_stream = true;
               break;
             }
@@ -3877,14 +3785,14 @@ bool compress_file(float min_percent, float max_percent) {
 
           type_buf[4096] = 0;
 
-          if ((input_file_pos + act_search_pos) >= 4096) {
-            seek_64(fin, (input_file_pos + act_search_pos) - 4096);
-            fread(type_buf, 1, 4096, fin);
+          if ((current_recursion_context.input_file_pos + act_search_pos) >= 4096) {
+            seek_64(current_recursion_context.fin, (current_recursion_context.input_file_pos + act_search_pos) - 4096);
+            fread(type_buf, 1, 4096, current_recursion_context.fin);
             type_buf_length = 4096;
           } else {
-            seek_64(fin, 0);
-            fread(type_buf, 1, input_file_pos + act_search_pos, fin);
-            type_buf_length = input_file_pos + act_search_pos;
+            seek_64(current_recursion_context.fin, 0);
+            fread(type_buf, 1, current_recursion_context.input_file_pos + act_search_pos, current_recursion_context.fin);
+            type_buf_length = current_recursion_context.input_file_pos + act_search_pos;
           }
 
           // find "<<"
@@ -3953,68 +3861,68 @@ bool compress_file(float min_percent, float max_percent) {
             }
           }
 
-          if ((in_buf[cb + act_search_pos + 6] == 13) || (in_buf[cb + act_search_pos + 6] == 10)) {
-            if ((in_buf[cb + act_search_pos + 7] == 13) || (in_buf[cb + act_search_pos + 7] == 10)) {
+          if ((current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 6] == 13) || (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 6] == 10)) {
+            if ((current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 7] == 13) || (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 7] == 10)) {
               // seems to be two byte EOL - zLib Header present?
-              if (((((in_buf[cb + act_search_pos + 8] << 8) + in_buf[cb + act_search_pos + 9]) % 31) == 0) &&
-                  ((in_buf[cb + act_search_pos + 9] & 32) == 0)) { // FDICT must not be set
-                int compression_method = (in_buf[cb + act_search_pos + 8] & 15);
+              if (((((current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 8] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 9]) % 31) == 0) &&
+                  ((current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 9] & 32) == 0)) { // FDICT must not be set
+                int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 8] & 15);
                 if (compression_method == 8) {
 
-                  int windowbits = (in_buf[cb + act_search_pos + 8] >> 4) + 8;
+                  int windowbits = (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 8] >> 4) + 8;
 
-                  input_file_pos += act_search_pos + 10; // skip PDF part
+                  current_recursion_context.input_file_pos += act_search_pos + 10; // skip PDF part
 
                   try_decompression_pdf(-windowbits, act_search_pos + 10, width_val, height_val, bpc_val);
 
-                  cb += act_search_pos + 10;
+                  current_recursion_context.cb += act_search_pos + 10;
                 }
               }
             } else {
               // seems to be one byte EOL - zLib Header present?
-              if ((((in_buf[cb + act_search_pos + 7] << 8) + in_buf[cb + act_search_pos + 8]) % 31) == 0) {
-                int compression_method = (in_buf[cb + act_search_pos + 7] & 15);
+              if ((((current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 7] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 8]) % 31) == 0) {
+                int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 7] & 15);
                 if (compression_method == 8) {
-                  int windowbits = (in_buf[cb + act_search_pos + 7] >> 4) + 8;
+                  int windowbits = (current_recursion_context.in_buf[current_recursion_context.cb + act_search_pos + 7] >> 4) + 8;
 
-                  input_file_pos += act_search_pos + 9; // skip PDF part
+                  current_recursion_context.input_file_pos += act_search_pos + 9; // skip PDF part
 
                   try_decompression_pdf(-windowbits, act_search_pos + 9, width_val, height_val, bpc_val);
 
-                  cb += act_search_pos + 9;
+                  current_recursion_context.cb += act_search_pos + 9;
                 }
               }
             }
           }
         }
 
-        if (!compressed_data_found) {
-          input_file_pos = saved_input_file_pos;
-          cb = saved_cb;
+        if (!current_recursion_context.compressed_data_found) {
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+          current_recursion_context.cb = current_recursion_context.saved_cb;
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_png)) { // no PDF header -> PNG IDAT?
-      if (memcmp(in_buf + cb, "IDAT", 4) == 0) {
+    if ((!current_recursion_context.compressed_data_found) && (use_png)) { // no PDF header -> PNG IDAT?
+      if (memcmp(current_recursion_context.in_buf + current_recursion_context.cb, "IDAT", 4) == 0) {
 
         // space for length and crc parts of IDAT chunks
         idat_lengths = (unsigned int*)(realloc(idat_lengths, 100 * sizeof(unsigned int)));
         idat_crcs = (unsigned int*)(realloc(idat_crcs, 100 * sizeof(unsigned int)));
 
-        saved_input_file_pos = input_file_pos;
-        saved_cb = cb;
+        current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+        current_recursion_context.saved_cb = current_recursion_context.cb;
 
         idat_count = 0;
         bool zlib_header_correct = false;
         int windowbits = 0;
 
         // get preceding length bytes
-        if (input_file_pos >= 4) {
-          seek_64(fin, input_file_pos - 4);
+        if (current_recursion_context.input_file_pos >= 4) {
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos - 4);
 
-         if (fread(in, 1, 10, fin) == 10) {
-          seek_64(fin, tell_64(fin) - 2);
+         if (fread(in, 1, 10, current_recursion_context.fin) == 10) {
+          seek_64(current_recursion_context.fin, tell_64(current_recursion_context.fin) - 2);
 
           idat_lengths[0] = (in[0] << 24) + (in[1] << 16) + (in[2] << 8) + in[3];
          if (idat_lengths[0] > 2) {
@@ -4037,8 +3945,8 @@ bool compress_file(float min_percent, float max_percent) {
 
             // go through additional IDATs
             for (;;) {
-              seek_64(fin, tell_64(fin) + idat_lengths[idat_count - 1]);
-              if (fread(in, 1, 12, fin) != 12) { // CRC, length, "IDAT"
+              seek_64(current_recursion_context.fin, tell_64(current_recursion_context.fin) + idat_lengths[idat_count - 1]);
+              if (fread(in, 1, 12, current_recursion_context.fin) != 12) { // CRC, length, "IDAT"
                 idat_count = 0;
                 break;
               }
@@ -4069,33 +3977,33 @@ bool compress_file(float min_percent, float max_percent) {
         if (idat_count == 1) {
 
           // try to recompress directly
-          input_file_pos += 6;
+          current_recursion_context.input_file_pos += 6;
           try_decompression_png(-windowbits);
-          cb += 6;
+          current_recursion_context.cb += 6;
         } else if (idat_count > 1) {
           // copy to temp0.dat before trying to recompress
-          remove(tempfile0);
-          fpng = tryOpen(tempfile0,"w+b");
+          remove(current_recursion_context.tempfile0);
+          current_recursion_context.fpng = tryOpen(current_recursion_context.tempfile0, "w+b");
 
-          seek_64(fin, input_file_pos + 6); // start after zLib header
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos + 6); // start after zLib header
 
           idat_lengths[0] -= 2; // zLib header length
           for (int i = 0; i < idat_count; i++) {
-            fast_copy(fin, fpng, idat_lengths[i]);
-            seek_64(fin, tell_64(fin) + 12);
+            fast_copy(current_recursion_context.fin, current_recursion_context.fpng, idat_lengths[i]);
+            seek_64(current_recursion_context.fin, tell_64(current_recursion_context.fin) + 12);
           }
           idat_lengths[0] += 2;
 
-          input_file_pos += 6;
-          try_decompression_png_multi(fpng, -windowbits);
-          cb += 6;
+          current_recursion_context.input_file_pos += 6;
+          try_decompression_png_multi(current_recursion_context.fpng, -windowbits);
+          current_recursion_context.cb += 6;
 
-          safe_fclose(&fpng);
+          safe_fclose(&current_recursion_context.fpng);
         }
 
-        if (!compressed_data_found) {
-          input_file_pos = saved_input_file_pos;
-          cb = saved_cb;
+        if (!current_recursion_context.compressed_data_found) {
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+          current_recursion_context.cb = current_recursion_context.saved_cb;
         }
 
         free(idat_lengths);
@@ -4106,46 +4014,46 @@ bool compress_file(float min_percent, float max_percent) {
 
     }
 
-    if ((!compressed_data_found) && (use_gif)) { // no PNG header -> GIF header?
-      if ((in_buf[cb] == 'G') && (in_buf[cb + 1] == 'I') && (in_buf[cb + 2] == 'F')) {
-        if ((in_buf[cb + 3] == '8') && (in_buf[cb + 5] == 'a')) {
-          if ((in_buf[cb + 4] == '7') || (in_buf[cb + 4] == '9')) {
+    if ((!current_recursion_context.compressed_data_found) && (use_gif)) { // no PNG header -> GIF header?
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'G') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'I') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'F')) {
+        if ((current_recursion_context.in_buf[current_recursion_context.cb + 3] == '8') && (current_recursion_context.in_buf[current_recursion_context.cb + 5] == 'a')) {
+          if ((current_recursion_context.in_buf[current_recursion_context.cb + 4] == '7') || (current_recursion_context.in_buf[current_recursion_context.cb + 4] == '9')) {
 
             unsigned char version[5];
 
             for (int i = 0; i < 5; i++) {
-              version[i] = in_buf[cb + i];
+              version[i] = current_recursion_context.in_buf[current_recursion_context.cb + i];
             }
 
-            saved_input_file_pos = input_file_pos;
-            saved_cb = cb;
+            current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+            current_recursion_context.saved_cb = current_recursion_context.cb;
 
             try_decompression_gif(version);
 
-            if (!compressed_data_found) {
-              input_file_pos = saved_input_file_pos;
-              cb = saved_cb;
+            if (!current_recursion_context.compressed_data_found) {
+              current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+              current_recursion_context.cb = current_recursion_context.saved_cb;
             }
           }
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_jpg)) { // no GIF header -> JPG header?
-      if ((in_buf[cb] == 0xFF) && (in_buf[cb + 1] == 0xD8) && (in_buf[cb + 2] == 0xFF) && (
-           (in_buf[cb + 3] == 0xC0) || (in_buf[cb + 3] == 0xC2) || (in_buf[cb + 3] == 0xC4) || ((in_buf[cb + 3] >= 0xDB) && (in_buf[cb + 3] <= 0xFE))
+    if ((!current_recursion_context.compressed_data_found) && (use_jpg)) { // no GIF header -> JPG header?
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 0xFF) && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 0xD8) && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 0xFF) && (
+           (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC0) || (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC2) || (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC4) || ((current_recursion_context.in_buf[current_recursion_context.cb + 3] >= 0xDB) && (current_recursion_context.in_buf[current_recursion_context.cb + 3] <= 0xFE))
          )) { // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
-        saved_input_file_pos = input_file_pos;
-        saved_cb = cb;
+        current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+        current_recursion_context.saved_cb = current_recursion_context.cb;
 
         bool done = false, found = false;
-        bool hasQuantTable = (in_buf[cb + 3] == 0xDB);
-        bool progressive_flag = (in_buf[cb + 3] == 0xC2);
-        input_file_pos+=2;
+        bool hasQuantTable = (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xDB);
+        bool progressive_flag = (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC2);
+        current_recursion_context.input_file_pos+=2;
 
         do{
-          seek_64(fin, input_file_pos );
-          if ((fread(in, 1, 5, fin) != 5) || (in[0] != 0xFF))
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos );
+          if ((fread(in, 1, 5, current_recursion_context.fin) != 5) || (in[0] != 0xFF))
               break;
           int length = (int)in[2]*256+(int)in[3];
           switch (in[1]){
@@ -4157,7 +4065,7 @@ bool compress_file(float min_percent, float max_percent) {
               // bit 4..7: precision of QT, 0 = 8 bit, otherwise 16 bit               
               if (length<=262 && ((length-2)%65)==0 && in[4]<=3) {
                 hasQuantTable = true;
-                input_file_pos += length+2;
+                current_recursion_context.input_file_pos += length+2;
               }
               else
                 done = true;
@@ -4165,27 +4073,27 @@ bool compress_file(float min_percent, float max_percent) {
             }
             case 0xC4 : {
               done = ((in[4]&0xF)>3 || (in[4]>>4)>1);
-              input_file_pos += length+2;
+              current_recursion_context.input_file_pos += length+2;
               break;
             }
             case 0xDA : found = hasQuantTable;
             case 0xD9 : done = true; break; //EOI with no SOS?
             case 0xC2 : progressive_flag = true;
             case 0xC0 : done = (in[4] != 0x08);
-            default: input_file_pos += length+2;
+            default: current_recursion_context.input_file_pos += length+2;
           }
         }
         while (!done);
 
         if (found){
           found = done = false;
-          input_file_pos += 5;
+          current_recursion_context.input_file_pos += 5;
 
           bool isMarker = ( in[4] == 0xFF );
           size_t bytesRead = 0;
-          while (!done && (bytesRead = fread(in, sizeof(in[0]), CHUNK, fin))){
+          while (!done && (bytesRead = fread(in, sizeof(in[0]), CHUNK, current_recursion_context.fin))){
             for (size_t i = 0; !done && (i < bytesRead); i++){
-              input_file_pos++;
+              current_recursion_context.input_file_pos++;
               if (!isMarker){
                 isMarker = ( in[i] == 0xFF );
               }
@@ -4199,19 +4107,19 @@ bool compress_file(float min_percent, float max_percent) {
         }
 
         if (found){
-          long long jpg_length = input_file_pos - saved_input_file_pos;
-          input_file_pos = saved_input_file_pos;
+          long long jpg_length = current_recursion_context.input_file_pos - current_recursion_context.saved_input_file_pos;
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
           try_decompression_jpg(jpg_length, progressive_flag);
         }
-        if (!found || !compressed_data_found) {
-          input_file_pos = saved_input_file_pos;
-          cb = saved_cb;
+        if (!found || !current_recursion_context.compressed_data_found) {
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+          current_recursion_context.cb = current_recursion_context.saved_cb;
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_mp3)) { // no JPG header -> MP3 header?
-      if ((in_buf[cb] == 0xFF) && ((in_buf[cb + 1] & 0xE0) == 0xE0)) { // frame start
+    if ((!current_recursion_context.compressed_data_found) && (use_mp3)) { // no JPG header -> MP3 header?
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 0xFF) && ((current_recursion_context.in_buf[current_recursion_context.cb + 1] & 0xE0) == 0xE0)) { // frame start
         int mpeg = -1;
         int layer = -1;
         int samples = -1;
@@ -4228,14 +4136,14 @@ bool compress_file(float min_percent, float max_percent) {
 
         long long mp3_length = 0;
 
-        saved_input_file_pos = input_file_pos;
-        saved_cb = cb;
+        current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+        current_recursion_context.saved_cb = current_recursion_context.cb;
 
-        long long act_pos = input_file_pos;
+        long long act_pos = current_recursion_context.input_file_pos;
 
         // parse frames until first invalid frame is found or end-of-file
-        seek_64(fin, act_pos);
-        while (fread(in, 1, 4, fin) == 4) {
+        seek_64(current_recursion_context.fin, act_pos);
+        while (fread(in, 1, 4, current_recursion_context.fin) == 4) {
           // check syncword
           if ((in[0] != 0xFF) || ((in[1] & 0xE0) != 0xE0)) break;
           // compare data from header
@@ -4247,13 +4155,13 @@ bool compress_file(float min_percent, float max_percent) {
             channels    = (in[3] >> 6) & 0x3;
             type = MBITS( in[1], 5, 1 );
             // avoid slowdown and multiple verbose messages on unsupported types that have already been detected
-            if ((type != MPEG1_LAYER_III) && (saved_input_file_pos <= suppress_mp3_type_until[type])) {
+            if ((type != MPEG1_LAYER_III) && (current_recursion_context.saved_input_file_pos <= current_recursion_context.suppress_mp3_type_until[type])) {
                 break;
             }
           } else {
             if (n == 1) {
               mp3_parsing_cache_second_frame_candidate = act_pos;
-              mp3_parsing_cache_second_frame_candidate_size = act_pos - saved_input_file_pos;
+              mp3_parsing_cache_second_frame_candidate_size = act_pos - current_recursion_context.saved_input_file_pos;
             }
             if (type == MPEG1_LAYER_III) { // supported MP3 type, all header information must be identical to the first frame
               if (
@@ -4279,14 +4187,14 @@ bool compress_file(float min_percent, float max_percent) {
 
           // if this frame was part of a stream that already has been parsed, skip parsing
           if (n == 0) {
-            if (act_pos == mp3_parsing_cache_second_frame) {
-              n = mp3_parsing_cache_n;
-              mp3_length = mp3_parsing_cache_mp3_length;
+            if (act_pos == current_recursion_context.mp3_parsing_cache_second_frame) {
+              n = current_recursion_context.mp3_parsing_cache_n;
+              mp3_length = current_recursion_context.mp3_parsing_cache_mp3_length;
 
               // update values
-              mp3_parsing_cache_second_frame = act_pos + frame_size;
-              mp3_parsing_cache_n -= 1;
-              mp3_parsing_cache_mp3_length -= frame_size;
+              current_recursion_context.mp3_parsing_cache_second_frame = act_pos + frame_size;
+              current_recursion_context.mp3_parsing_cache_n -= 1;
+              current_recursion_context.mp3_parsing_cache_mp3_length -= frame_size;
 
               break;
             }
@@ -4300,7 +4208,7 @@ bool compress_file(float min_percent, float max_percent) {
           if ((type == MPEG1_LAYER_III) && (frame_size > 4)) {
             unsigned char header2 = in[2];
             unsigned char header3 = in[3];
-            if (fread(in, 1, frame_size - 4, fin) != (unsigned int)(frame_size - 4)) {
+            if (fread(in, 1, frame_size - 4, current_recursion_context.fin) != (unsigned int)(frame_size - 4)) {
               // discard incomplete frame
               n--;
               mp3_length -= frame_size;
@@ -4311,91 +4219,91 @@ bool compress_file(float min_percent, float max_percent) {
                 break;
             }
           } else {
-            seek_64(fin, act_pos);
+            seek_64(current_recursion_context.fin, act_pos);
           }
         }
 
         // conditions for proper first frame: 5 consecutive frames
         if (n >= 5) {
           if (mp3_parsing_cache_second_frame_candidate > -1) {
-            mp3_parsing_cache_second_frame = mp3_parsing_cache_second_frame_candidate;
-            mp3_parsing_cache_n = n - 1;
-            mp3_parsing_cache_mp3_length = mp3_length - mp3_parsing_cache_second_frame_candidate_size;
+            current_recursion_context.mp3_parsing_cache_second_frame = mp3_parsing_cache_second_frame_candidate;
+            current_recursion_context.mp3_parsing_cache_n = n - 1;
+            current_recursion_context.mp3_parsing_cache_mp3_length = mp3_length - mp3_parsing_cache_second_frame_candidate_size;
           }
 
-          long long position_length_sum = saved_input_file_pos + mp3_length;
+          long long position_length_sum = current_recursion_context.saved_input_file_pos + mp3_length;
 
           // type must be MPEG-1, Layer III, packMP3 won't process any other files
           if ( type == MPEG1_LAYER_III ) {
             // sums of position and length of last MP3 errors are suppressed to avoid slowdowns
-            if    ((suppress_mp3_big_value_pairs_sum != position_length_sum)
-               && (suppress_mp3_non_zero_padbits_sum != position_length_sum)
-               && (suppress_mp3_inconsistent_emphasis_sum != position_length_sum) 
-               && (suppress_mp3_inconsistent_original_bit != position_length_sum)) {
+            if    ((current_recursion_context.suppress_mp3_big_value_pairs_sum != position_length_sum)
+               && (current_recursion_context.suppress_mp3_non_zero_padbits_sum != position_length_sum)
+               && (current_recursion_context.suppress_mp3_inconsistent_emphasis_sum != position_length_sum)
+               && (current_recursion_context.suppress_mp3_inconsistent_original_bit != position_length_sum)) {
               try_decompression_mp3(mp3_length);
             }
           } else if (type > 0) {
-            suppress_mp3_type_until[type] = position_length_sum;
+            current_recursion_context.suppress_mp3_type_until[type] = position_length_sum;
             if (DEBUG_MODE) {
               print_debug_percent();
-              std::cout << "Unsupported MP3 type found at position " << saved_input_file_pos << ", length " << mp3_length << std::endl;
+              std::cout << "Unsupported MP3 type found at position " << current_recursion_context.saved_input_file_pos << ", length " << mp3_length << std::endl;
               printf ("Type: %s\n", filetype_description[type]);
             }
           }
         }
 
-        if (!compressed_data_found) {
-          input_file_pos = saved_input_file_pos;
-          cb = saved_cb;
+        if (!current_recursion_context.compressed_data_found) {
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+          current_recursion_context.cb = current_recursion_context.saved_cb;
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_swf)) { // no MP3 header -> SWF header?
+    if ((!current_recursion_context.compressed_data_found) && (use_swf)) { // no MP3 header -> SWF header?
       // CWS = Compressed SWF file
-      if ((in_buf[cb] == 'C') && (in_buf[cb + 1] == 'W') && (in_buf[cb + 2] == 'S')) {
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'C') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'W') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'S')) {
         // check zLib header
-        if (((((in_buf[cb + 8] << 8) + in_buf[cb + 9]) % 31) == 0) &&
-           ((in_buf[cb + 9] & 32) == 0)) { // FDICT must not be set
-          int compression_method = (in_buf[cb + 8] & 15);
+        if (((((current_recursion_context.in_buf[current_recursion_context.cb + 8] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 9]) % 31) == 0) &&
+           ((current_recursion_context.in_buf[current_recursion_context.cb + 9] & 32) == 0)) { // FDICT must not be set
+          int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb + 8] & 15);
           if (compression_method == 8) {
-            int windowbits = (in_buf[cb + 8] >> 4) + 8;
+            int windowbits = (current_recursion_context.in_buf[current_recursion_context.cb + 8] >> 4) + 8;
 
-            saved_input_file_pos = input_file_pos;
-            saved_cb = cb;
+            current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+            current_recursion_context.saved_cb = current_recursion_context.cb;
 
-            input_file_pos += 10; // skip CWS and zLib header
+            current_recursion_context.input_file_pos += 10; // skip CWS and zLib header
 
             try_decompression_swf(-windowbits);
 
-            cb += 10;
+            current_recursion_context.cb += 10;
 
-            if (!compressed_data_found) {
-              input_file_pos = saved_input_file_pos;
-              cb = saved_cb;
+            if (!current_recursion_context.compressed_data_found) {
+              current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+              current_recursion_context.cb = current_recursion_context.saved_cb;
             }
           }
         }
       }
     }
 
-    if ((!compressed_data_found) && (use_base64)) { // no SWF header -> Base64?
-    if ((in_buf[cb + 1] == 'o') && (in_buf[cb + 2] == 'n') && (in_buf[cb + 3] == 't') && (in_buf[cb + 4] == 'e')) {
+    if ((!current_recursion_context.compressed_data_found) && (use_base64)) { // no SWF header -> Base64?
+    if ((current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'o') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'n') && (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 't') && (current_recursion_context.in_buf[current_recursion_context.cb + 4] == 'e')) {
       unsigned char cte_detect[33];
       for (int i = 0; i < 33; i++) {
-        cte_detect[i] = tolower(in_buf[cb + i]);
+        cte_detect[i] = tolower(current_recursion_context.in_buf[current_recursion_context.cb + i]);
       }
       if (memcmp(cte_detect, "content-transfer-encoding: base64", 33) == 0) {
         // search for double CRLF, all between is "header"
         int base64_header_length = 33;
         bool found_double_crlf = false;
         do {
-          if ((in_buf[cb + base64_header_length] == 13) && (in_buf[cb + base64_header_length + 1] == 10)) {
-            if ((in_buf[cb + base64_header_length + 2] == 13) && (in_buf[cb + base64_header_length + 3] == 10)) {
+          if ((current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length] == 13) && (current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length + 1] == 10)) {
+            if ((current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length + 2] == 13) && (current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length + 3] == 10)) {
               found_double_crlf = true;
               base64_header_length += 4;
               // skip additional CRLFs
-              while ((in_buf[cb + base64_header_length] == 13) && (in_buf[cb + base64_header_length + 1] == 10)) {
+              while ((current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length] == 13) && (current_recursion_context.in_buf[current_recursion_context.cb + base64_header_length + 1] == 10)) {
                 base64_header_length += 2;
               }
               break;
@@ -4406,37 +4314,37 @@ bool compress_file(float min_percent, float max_percent) {
 
         if (found_double_crlf) {
 
-          saved_input_file_pos = input_file_pos;
-          saved_cb = cb;
+          current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+          current_recursion_context.saved_cb = current_recursion_context.cb;
 
-          input_file_pos += base64_header_length; // skip "header"
+          current_recursion_context.input_file_pos += base64_header_length; // skip "header"
 
           try_decompression_base64(base64_header_length);
 
-          cb += base64_header_length;
+          current_recursion_context.cb += base64_header_length;
 
-          if (!compressed_data_found) {
-            input_file_pos = saved_input_file_pos;
-            cb = saved_cb;
+          if (!current_recursion_context.compressed_data_found) {
+            current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+            current_recursion_context.cb = current_recursion_context.saved_cb;
           }
         }
       }
     }
     }
 
-    if ((!compressed_data_found) && (use_bzip2)) { // no Base64 header -> bZip2?
+    if ((!current_recursion_context.compressed_data_found) && (use_bzip2)) { // no Base64 header -> bZip2?
       // BZhx = header, x = compression level/blocksize (1-9)
-      if ((in_buf[cb] == 'B') && (in_buf[cb + 1] == 'Z') && (in_buf[cb + 2] == 'h')) {
-        int compression_level = in_buf[cb + 3] - '0';
+      if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'B') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'Z') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'h')) {
+        int compression_level = current_recursion_context.in_buf[current_recursion_context.cb + 3] - '0';
         if ((compression_level >= 1) && (compression_level <= 9)) {
-          saved_input_file_pos = input_file_pos;
-          saved_cb = cb;
+          current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+          current_recursion_context.saved_cb = current_recursion_context.cb;
 
           try_decompression_bzip2(compression_level);
 
-          if (!compressed_data_found) {
-            input_file_pos = saved_input_file_pos;
-            cb = saved_cb;
+          if (!current_recursion_context.compressed_data_found) {
+            current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+            current_recursion_context.cb = current_recursion_context.saved_cb;
           }
         }
       }
@@ -4445,44 +4353,44 @@ bool compress_file(float min_percent, float max_percent) {
 
    // nothing so far -> if intense mode is active, look for raw zLib header
    if (intense_mode_is_active()) {
-    if (!compressed_data_found) {
+    if (!current_recursion_context.compressed_data_found) {
       bool ignore_this_position = false;
-      if (intense_ignore_offsets->size() > 0) {
-        auto first = intense_ignore_offsets->begin();
-        while (*first < input_file_pos) {
-          intense_ignore_offsets->erase(first);
-          if (intense_ignore_offsets->size() == 0) break;
-          first = intense_ignore_offsets->begin();
+      if (current_recursion_context.intense_ignore_offsets->size() > 0) {
+        auto first = current_recursion_context.intense_ignore_offsets->begin();
+        while (*first < current_recursion_context.input_file_pos) {
+          current_recursion_context.intense_ignore_offsets->erase(first);
+          if (current_recursion_context.intense_ignore_offsets->size() == 0) break;
+          first = current_recursion_context.intense_ignore_offsets->begin();
         }
 
-        if (intense_ignore_offsets->size() > 0) {
-          if (*first == input_file_pos) {
+        if (current_recursion_context.intense_ignore_offsets->size() > 0) {
+          if (*first == current_recursion_context.input_file_pos) {
             ignore_this_position = true;
-            intense_ignore_offsets->erase(first);
+            current_recursion_context.intense_ignore_offsets->erase(first);
           }
         }
       }
 
       if (!ignore_this_position) {
-        if (((((in_buf[cb] << 8) + in_buf[cb + 1]) % 31) == 0) &&
-            ((in_buf[cb + 1] & 32) == 0)) { // FDICT must not be set
-          int compression_method = (in_buf[cb] & 15);
+        if (((((current_recursion_context.in_buf[current_recursion_context.cb] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 1]) % 31) == 0) &&
+            ((current_recursion_context.in_buf[current_recursion_context.cb + 1] & 32) == 0)) { // FDICT must not be set
+          int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb] & 15);
           if (compression_method == 8) {
-            int windowbits = (in_buf[cb] >> 4) + 8;
+            int windowbits = (current_recursion_context.in_buf[current_recursion_context.cb] >> 4) + 8;
 
-            if (check_inf_result(cb + 2, -windowbits)) {
-              saved_input_file_pos = input_file_pos;
-              saved_cb = cb;
+            if (check_inf_result(current_recursion_context.cb + 2, -windowbits)) {
+              current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+              current_recursion_context.saved_cb = current_recursion_context.cb;
 
-              input_file_pos += 2; // skip zLib header
+              current_recursion_context.input_file_pos += 2; // skip zLib header
 
               try_decompression_zlib(-windowbits);
 
-              cb += 2;
+              current_recursion_context.cb += 2;
 
-              if (!compressed_data_found) {
-                input_file_pos = saved_input_file_pos;
-                cb = saved_cb;
+              if (!current_recursion_context.compressed_data_found) {
+                current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+                current_recursion_context.cb = current_recursion_context.saved_cb;
               }
             }
           }
@@ -4493,35 +4401,35 @@ bool compress_file(float min_percent, float max_percent) {
 
    // nothing so far -> if brute mode is active, brute force for zLib streams
     if (brute_mode_is_active()) {
-    if (!compressed_data_found) {
+    if (!current_recursion_context.compressed_data_found) {
       bool ignore_this_position = false;
-      if (brute_ignore_offsets->size() > 0) {
-        auto first = brute_ignore_offsets->begin();
-        while (*first < input_file_pos) {
-          brute_ignore_offsets->erase(first);
-          if (brute_ignore_offsets->size() == 0) break;
-          first = brute_ignore_offsets->begin();
+      if (current_recursion_context.brute_ignore_offsets->size() > 0) {
+        auto first = current_recursion_context.brute_ignore_offsets->begin();
+        while (*first < current_recursion_context.input_file_pos) {
+          current_recursion_context.brute_ignore_offsets->erase(first);
+          if (current_recursion_context.brute_ignore_offsets->size() == 0) break;
+          first = current_recursion_context.brute_ignore_offsets->begin();
         }
 
-        if (brute_ignore_offsets->size() > 0) {
-          if (*first == input_file_pos) {
+        if (current_recursion_context.brute_ignore_offsets->size() > 0) {
+          if (*first == current_recursion_context.input_file_pos) {
             ignore_this_position = true;
-            brute_ignore_offsets->erase(first);
+            current_recursion_context.brute_ignore_offsets->erase(first);
           }
         }
       }
 
       if (!ignore_this_position) {
-        saved_input_file_pos = input_file_pos;
-        saved_cb = cb;
+        current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
+        current_recursion_context.saved_cb = current_recursion_context.cb;
 
-        if (check_inf_result(cb, -15, true)) {
+        if (check_inf_result(current_recursion_context.cb, -15, true)) {
           try_decompression_brute();
         }
 
-        if (!compressed_data_found) {
-          input_file_pos = saved_input_file_pos;
-          cb = saved_cb;
+        if (!current_recursion_context.compressed_data_found) {
+          current_recursion_context.input_file_pos = current_recursion_context.saved_input_file_pos;
+          current_recursion_context.cb = current_recursion_context.saved_cb;
         }
       }
     }
@@ -4529,12 +4437,12 @@ bool compress_file(float min_percent, float max_percent) {
 
   }
 
-    if (!compressed_data_found) {
-      if (uncompressed_length == -1) {
+    if (!current_recursion_context.compressed_data_found) {
+      if (current_recursion_context.uncompressed_length == -1) {
         start_uncompressed_data();
       }
-      uncompressed_length++;
-      uncompressed_bytes_total++;
+      current_recursion_context.uncompressed_length++;
+      current_recursion_context.uncompressed_bytes_total++;
     }
 
   }
@@ -4543,7 +4451,7 @@ bool compress_file(float min_percent, float max_percent) {
 
   denit_compress();
 
-  return (anything_was_used || non_zlib_was_used);
+  return (current_recursion_context.anything_was_used || current_recursion_context.non_zlib_was_used);
 }
 
 int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
@@ -4556,10 +4464,10 @@ void decompress_file() {
 
   long long fin_pos;
 
-  comp_decomp_state = P_DECOMPRESS;
+  current_recursion_context.comp_decomp_state = P_DECOMPRESS;
 
   init_temp_files();
-  if (compression_otf_method != OTF_NONE) {
+  if (current_recursion_context.compression_otf_method != OTF_NONE) {
     init_decompress_otf();
   }
 
@@ -4568,12 +4476,12 @@ void decompress_file() {
     read_header();
   }
 
-  fin_pos = tell_64(fin);
+  fin_pos = tell_64(current_recursion_context.fin);
 
-while (fin_pos < fin_length) {
+while (fin_pos < current_recursion_context.fin_length) {
 
   if ((recursion_depth == 0) && (!DEBUG_MODE)) {
-    float percent = (fin_pos / (float)fin_length) * 100;
+    float percent = (fin_pos / (float)current_recursion_context.fin_length) * 100;
     show_progress(percent, true, true);
   }
 
@@ -4588,7 +4496,7 @@ while (fin_pos < fin_length) {
     std::cout << "Uncompressed data, length=" << uncompressed_data_length << std::endl;
     }
 
-    fast_copy(fin, fout, uncompressed_data_length);
+    fast_copy(current_recursion_context.fin, current_recursion_context.fout, uncompressed_data_length);
 
   } else { // decompressed data, recompress
 
@@ -4599,7 +4507,7 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore PDF header
-      fprintf(fout, "/FlateDecode");
+      fprintf(current_recursion_context.fout, "/FlateDecode");
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, false);
       fin_fget_recon_data(rdres);
       int bmp_c = (header1 >> 6);
@@ -4615,10 +4523,10 @@ while (fin_pos < fin_length) {
 
       switch (bmp_c) {
         case 1:
-          own_fread(in, 1, 54+1024, fin);
+          own_fread(in, 1, 54+1024, current_recursion_context.fin);
           break;
         case 2:
-          own_fread(in, 1, 54, fin);
+          own_fread(in, 1, 54, current_recursion_context.fin);
           break;
       }
       if (bmp_c > 0) {
@@ -4636,7 +4544,7 @@ while (fin_pos < fin_length) {
         read_part = bmp_width;
         skip_part = (-bmp_width) & 3;
       }
-      if (!try_reconstructing_deflate_skip(fin, fout, rdres, read_part, skip_part)) {
+      if (!try_reconstructing_deflate_skip(current_recursion_context.fin, current_recursion_context.fout, rdres, read_part, skip_part)) {
         printf("Error recompressing data!");
         exit(0);
       }
@@ -4646,10 +4554,10 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('P', fout);
-      fputc('K', fout);
-      fputc(3, fout);
-      fputc(4, fout);
+      fputc('P', current_recursion_context.fout);
+      fputc('K', current_recursion_context.fout);
+      fputc(3, current_recursion_context.fout);
+      fputc(4, current_recursion_context.fout);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
@@ -4664,8 +4572,8 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc(31, fout);
-      fputc(139, fout);
+      fputc(31, current_recursion_context.fout);
+      fputc(139, current_recursion_context.fout);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
@@ -4680,7 +4588,7 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore IDAT
-      fprintf(fout, "IDAT");
+      fprintf(current_recursion_context.fout, "IDAT");
 
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
       fin_fget_recon_data(rdres);
@@ -4689,7 +4597,7 @@ while (fin_pos < fin_length) {
 
       debug_deflate_reconstruct(rdres, "PNG", hdr_length, 0);
 
-      if (!try_reconstructing_deflate(fin, fout, rdres)) {
+      if (!try_reconstructing_deflate(current_recursion_context.fin, current_recursion_context.fout, rdres)) {
         printf("Error recompressing data!");
         exit(0);
       }
@@ -4700,7 +4608,7 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore first IDAT
-      fprintf(fout, "IDAT");
+      fprintf(current_recursion_context.fout, "IDAT");
       
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
 
@@ -4725,7 +4633,7 @@ while (fin_pos < fin_length) {
 
       debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
 
-      if (!try_reconstructing_deflate_multipng(fin, fout, rdres, idat_count, idat_crcs, idat_lengths)) {
+      if (!try_reconstructing_deflate_multipng(current_recursion_context.fin, current_recursion_context.fout, rdres, idat_count, idat_crcs, idat_lengths)) {
         printf("Error recompressing data!");
         exit(0);
       }
@@ -4753,7 +4661,7 @@ while (fin_pos < fin_length) {
       // read diff bytes
       gDiff.GIFDiffIndex = fin_fget_vlint();
       gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
-      own_fread(gDiff.GIFDiff, 1, gDiff.GIFDiffIndex, fin);
+      own_fread(gDiff.GIFDiff, 1, gDiff.GIFDiffIndex, current_recursion_context.fin);
       if (DEBUG_MODE) {
         printf("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
       }
@@ -4763,8 +4671,8 @@ while (fin_pos < fin_length) {
 
       // read penalty bytes
       if (penalty_bytes_stored) {
-        penalty_bytes_len = fin_fget_vlint();
-        own_fread(penalty_bytes, 1, penalty_bytes_len, fin);
+        current_recursion_context.penalty_bytes_len = fin_fget_vlint();
+        own_fread(current_recursion_context.penalty_bytes.data(), 1, current_recursion_context.penalty_bytes_len, current_recursion_context.fin);
       }
 
       long long recompressed_data_length = fin_fget_vlint();
@@ -4774,25 +4682,25 @@ while (fin_pos < fin_length) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
-      remove(tempfile1);
-      ftempout = tryOpen(tempfile1,"wb");
+      remove(current_recursion_context.tempfile1);
+      current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
 
-      fast_copy(fin, ftempout, decompressed_data_length);
+      fast_copy(current_recursion_context.fin, current_recursion_context.ftempout, decompressed_data_length);
 
-      safe_fclose(&ftempout);
+      safe_fclose(&current_recursion_context.ftempout);
 
-      remove(tempfile2);
+      remove(current_recursion_context.tempfile2);
 
       bool recompress_success = false;
 
-      ftempout = tryOpen(tempfile1,"rb");
-      frecomp = tryOpen(tempfile2,"wb");
+      current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+      current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "wb");
 
       // recompress data
-      recompress_success = recompress_gif(ftempout, frecomp, block_size, NULL, &gDiff);
+      recompress_success = recompress_gif(current_recursion_context.ftempout, current_recursion_context.frecomp, block_size, NULL, &gDiff);
 
-      safe_fclose(&frecomp);
-      safe_fclose(&ftempout);
+      safe_fclose(&current_recursion_context.frecomp);
+      safe_fclose(&current_recursion_context.ftempout);
 
       if (recompress_success_needed) {
         if (!recompress_success) {
@@ -4802,34 +4710,34 @@ while (fin_pos < fin_length) {
         }
       }
 
-      long long old_fout_pos = tell_64(fout);
+      long long old_fout_pos = tell_64(current_recursion_context.fout);
 
-      frecomp = tryOpen(tempfile2,"rb");
+      current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "rb");
 
-      fast_copy(frecomp, fout, recompressed_data_length);
+      fast_copy(current_recursion_context.frecomp, current_recursion_context.fout, recompressed_data_length);
 
-      safe_fclose(&frecomp);
+      safe_fclose(&current_recursion_context.frecomp);
 
-      remove(tempfile2);
-      remove(tempfile1);
+      remove(current_recursion_context.tempfile2);
+      remove(current_recursion_context.tempfile1);
 
       if (penalty_bytes_stored) {
-        fflush(fout);
+        fflush(current_recursion_context.fout);
 
-        long long fsave_fout_pos = tell_64(fout);
+        long long fsave_fout_pos = tell_64(current_recursion_context.fout);
 
         int pb_pos = 0;
-        for (int pbc = 0; pbc < penalty_bytes_len; pbc += 5) {
-          pb_pos = ((unsigned char)penalty_bytes[pbc]) << 24;
-          pb_pos += ((unsigned char)penalty_bytes[pbc + 1]) << 16;
-          pb_pos += ((unsigned char)penalty_bytes[pbc + 2]) << 8;
-          pb_pos += (unsigned char)penalty_bytes[pbc + 3];
+        for (int pbc = 0; pbc < current_recursion_context.penalty_bytes_len; pbc += 5) {
+          pb_pos = ((unsigned char)current_recursion_context.penalty_bytes[pbc]) << 24;
+          pb_pos += ((unsigned char)current_recursion_context.penalty_bytes[pbc + 1]) << 16;
+          pb_pos += ((unsigned char)current_recursion_context.penalty_bytes[pbc + 2]) << 8;
+          pb_pos += (unsigned char)current_recursion_context.penalty_bytes[pbc + 3];
 
-          seek_64(fout, old_fout_pos + pb_pos);
-          own_fwrite(penalty_bytes + pbc + 4, 1, 1, fout);
+          seek_64(current_recursion_context.fout, old_fout_pos + pb_pos);
+          own_fwrite(current_recursion_context.penalty_bytes.data() + pbc + 4, 1, 1, current_recursion_context.fout);
         }
 
-        seek_64(fout, fsave_fout_pos);
+        seek_64(current_recursion_context.fout, fsave_fout_pos);
       }
 
       GifDiffFree(&gDiff);
@@ -4862,7 +4770,7 @@ while (fin_pos < fin_length) {
       if (in_memory) {
         jpg_mem_in = new unsigned char[decompressed_data_length];
 
-        fast_copy(fin, jpg_mem_in, decompressed_data_length);
+        fast_copy(current_recursion_context.fin, jpg_mem_in, decompressed_data_length);
 
 		if (brunsli_used) {
 			brunsli::JPEGData jpegData;
@@ -4886,16 +4794,16 @@ while (fin_pos < fin_length) {
 			recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
 		}
       } else {
-        remove(tempfile1);
-        ftempout = tryOpen(tempfile1,"wb");
+        remove(current_recursion_context.tempfile1);
+        current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
 
-        fast_copy(fin, ftempout, decompressed_data_length);
+        fast_copy(current_recursion_context.fin, current_recursion_context.ftempout, decompressed_data_length);
 
-        safe_fclose(&ftempout);
+        safe_fclose(&current_recursion_context.ftempout);
 
-        remove(tempfile2);
+        remove(current_recursion_context.tempfile2);
 
-        recompress_success = pjglib_convert_file2file(tempfile1, tempfile2, recompress_msg);
+        recompress_success = pjglib_convert_file2file(current_recursion_context.tempfile1, current_recursion_context.tempfile2, recompress_msg);
       }
 
       if (!recompress_success) {
@@ -4905,7 +4813,7 @@ while (fin_pos < fin_length) {
       }
 
       if (!in_memory) {
-        frecomp = tryOpen(tempfile2,"rb");
+        current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "rb");
       }
 
       if (mjpg_dht_used) {
@@ -4929,7 +4837,7 @@ while (fin_pos < fin_length) {
         } else {
           do {
             ffda_pos++;
-            if (fread(in, 1, 1, frecomp) != 1) break;
+            if (fread(in, 1, 1, current_recursion_context.frecomp) != 1) break;
             if (found_ff) {
               found_ffda = (in[0] == 0xDA);
               if (found_ffda) break;
@@ -4947,21 +4855,21 @@ while (fin_pos < fin_length) {
 
         // remove motion JPG huffman table
         if (in_memory) {
-          fast_copy(jpg_mem_out, fout, ffda_pos - 1 - MJPGDHT_LEN);
-          fast_copy(jpg_mem_out + (ffda_pos - 1), fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
+          fast_copy(jpg_mem_out, current_recursion_context.fout, ffda_pos - 1 - MJPGDHT_LEN);
+          fast_copy(jpg_mem_out + (ffda_pos - 1), current_recursion_context.fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
         } else {
-          seek_64(frecomp, frecomp_pos);
-          fast_copy(frecomp, fout, ffda_pos - 1 - MJPGDHT_LEN);
+          seek_64(current_recursion_context.frecomp, frecomp_pos);
+          fast_copy(current_recursion_context.frecomp, current_recursion_context.fout, ffda_pos - 1 - MJPGDHT_LEN);
 
           frecomp_pos += ffda_pos - 1;
-          seek_64(frecomp, frecomp_pos);
-          fast_copy(frecomp, fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
+          seek_64(current_recursion_context.frecomp, frecomp_pos);
+          fast_copy(current_recursion_context.frecomp, current_recursion_context.fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
         }
       } else {
         if (in_memory) {
-          fast_copy(jpg_mem_out, fout, recompressed_data_length);
+          fast_copy(jpg_mem_out, current_recursion_context.fout, recompressed_data_length);
         } else {
-          fast_copy(frecomp, fout, recompressed_data_length);
+          fast_copy(current_recursion_context.frecomp, current_recursion_context.fout, recompressed_data_length);
         }
       }
 
@@ -4969,10 +4877,10 @@ while (fin_pos < fin_length) {
         if (jpg_mem_in != NULL) delete[] jpg_mem_in;
         if (jpg_mem_out != NULL) delete[] jpg_mem_out;
       } else {
-        safe_fclose(&frecomp);
+        safe_fclose(&current_recursion_context.frecomp);
 
-        remove(tempfile2);
-        remove(tempfile1);
+        remove(current_recursion_context.tempfile2);
+        remove(current_recursion_context.tempfile1);
       }
       break;
     }
@@ -4980,9 +4888,9 @@ while (fin_pos < fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('C', fout);
-      fputc('W', fout);
-      fputc('S', fout);
+      fputc('C', current_recursion_context.fout);
+      fputc('W', current_recursion_context.fout);
+      fputc('S', current_recursion_context.fout);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
@@ -5008,9 +4916,9 @@ while (fin_pos < fin_length) {
       if (DEBUG_MODE) {
         printf("Base64 header length: %i\n", base64_header_length);
       }
-      own_fread(in, 1, base64_header_length, fin);
-      fputc(*(in) + 1, fout); // first char was decreased
-      own_fwrite(in + 1, 1, base64_header_length - 1, fout);
+      own_fread(in, 1, base64_header_length, current_recursion_context.fin);
+      fputc(*(in) + 1, current_recursion_context.fout); // first char was decreased
+      own_fwrite(in + 1, 1, base64_header_length - 1, current_recursion_context.fout);
 
       // read line length list
       int line_count = fin_fget_vlint();
@@ -5049,12 +4957,12 @@ while (fin_pos < fin_length) {
 
       if (recursion_used) {
         recursion_result r = recursion_decompress(recursion_data_length);
-        base64_reencode(r.frecurse, fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
+        base64_reencode(r.frecurse, current_recursion_context.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
         safe_fclose(&r.frecurse);
         remove(r.file_name);
         delete[] r.file_name;
       } else {
-        base64_reencode(fin, fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
+        base64_reencode(current_recursion_context.fin, current_recursion_context.fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
       }
 
       delete[] base64_line_len;
@@ -5078,8 +4986,8 @@ while (fin_pos < fin_length) {
 
       // read penalty bytes
       if (penalty_bytes_stored) {
-        penalty_bytes_len = fin_fget_vlint();
-        own_fread(penalty_bytes, 1, penalty_bytes_len, fin);
+        current_recursion_context.penalty_bytes_len = fin_fget_vlint();
+        own_fread(current_recursion_context.penalty_bytes.data(), 1, current_recursion_context.penalty_bytes_len, current_recursion_context.fin);
       }
 
       long long recompressed_data_length = fin_fget_vlint();
@@ -5098,40 +5006,40 @@ while (fin_pos < fin_length) {
         }
       }
 
-      long long old_fout_pos = tell_64(fout);
+      long long old_fout_pos = tell_64(current_recursion_context.fout);
 
       if (recursion_used) {
         recursion_result r = recursion_decompress(recursion_data_length);
-        retval = def_part_bzip2(r.frecurse, fout, level, decompressed_data_length, recompressed_data_length);
+        current_recursion_context.retval = def_part_bzip2(r.frecurse, current_recursion_context.fout, level, decompressed_data_length, recompressed_data_length);
         safe_fclose(&r.frecurse);
         remove(r.file_name);
         delete[] r.file_name;
       } else {
-        retval = def_part_bzip2(fin, fout, level, decompressed_data_length, recompressed_data_length);
+        current_recursion_context.retval = def_part_bzip2(current_recursion_context.fin, current_recursion_context.fout, level, decompressed_data_length, recompressed_data_length);
       }
 
-      if (retval != BZ_OK) {
+      if (current_recursion_context.retval != BZ_OK) {
         printf("Error recompressing data!");
-        std::cout << "retval = " << retval << std::endl;
+        std::cout << "retval = " << current_recursion_context.retval << std::endl;
         exit(0);
       }
 
       if (penalty_bytes_stored) {
-        fflush(fout);
+        fflush(current_recursion_context.fout);
 
-        long long fsave_fout_pos = tell_64(fout);
+        long long fsave_fout_pos = tell_64(current_recursion_context.fout);
         int pb_pos = 0;
-        for (int pbc = 0; pbc < penalty_bytes_len; pbc += 5) {
-          pb_pos = ((unsigned char)penalty_bytes[pbc]) << 24;
-          pb_pos += ((unsigned char)penalty_bytes[pbc + 1]) << 16;
-          pb_pos += ((unsigned char)penalty_bytes[pbc + 2]) << 8;
-          pb_pos += (unsigned char)penalty_bytes[pbc + 3];
+        for (int pbc = 0; pbc < current_recursion_context.penalty_bytes_len; pbc += 5) {
+          pb_pos = ((unsigned char)current_recursion_context.penalty_bytes[pbc]) << 24;
+          pb_pos += ((unsigned char)current_recursion_context.penalty_bytes[pbc + 1]) << 16;
+          pb_pos += ((unsigned char)current_recursion_context.penalty_bytes[pbc + 2]) << 8;
+          pb_pos += (unsigned char)current_recursion_context.penalty_bytes[pbc + 3];
 
-          seek_64(fout, old_fout_pos + pb_pos);
-          own_fwrite(penalty_bytes + pbc + 4, 1, 1, fout);
+          seek_64(current_recursion_context.fout, old_fout_pos + pb_pos);
+          own_fwrite(current_recursion_context.penalty_bytes.data() + pbc + 4, 1, 1, current_recursion_context.fout);
         }
 
-        seek_64(fout, fsave_fout_pos);
+        seek_64(current_recursion_context.fout, fsave_fout_pos);
       }
       break;
     }
@@ -5159,21 +5067,21 @@ while (fin_pos < fin_length) {
       if (in_memory) {
         mp3_mem_in = new unsigned char[decompressed_data_length];
 
-        fast_copy(fin, mp3_mem_in, decompressed_data_length);
+        fast_copy(current_recursion_context.fin, mp3_mem_in, decompressed_data_length);
 
         pmplib_init_streams(mp3_mem_in, 1, decompressed_data_length, mp3_mem_out, 1);
         recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
       } else {
-        remove(tempfile1);
-        ftempout = tryOpen(tempfile1,"wb");
+        remove(current_recursion_context.tempfile1);
+        current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
 
-        fast_copy(fin, ftempout, decompressed_data_length);
+        fast_copy(current_recursion_context.fin, current_recursion_context.ftempout, decompressed_data_length);
 
-        safe_fclose(&ftempout);
+        safe_fclose(&current_recursion_context.ftempout);
 
-        remove(tempfile2);
+        remove(current_recursion_context.tempfile2);
 
-        recompress_success = pmplib_convert_file2file(tempfile1, tempfile2, recompress_msg);
+        recompress_success = pmplib_convert_file2file(current_recursion_context.tempfile1, current_recursion_context.tempfile2, recompress_msg);
       }
 
       if (!recompress_success) {
@@ -5183,19 +5091,19 @@ while (fin_pos < fin_length) {
       }
 
       if (in_memory) {
-        fast_copy(mp3_mem_out, fout, recompressed_data_length);
+        fast_copy(mp3_mem_out, current_recursion_context.fout, recompressed_data_length);
 
         if (mp3_mem_in != NULL) delete[] mp3_mem_in;
         if (mp3_mem_out != NULL) delete[] mp3_mem_out;
       } else {
-        frecomp = tryOpen(tempfile2,"rb");
+        current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "rb");
 
-        fast_copy(frecomp, fout, recompressed_data_length);
+        fast_copy(current_recursion_context.frecomp, current_recursion_context.fout, recompressed_data_length);
 
-        safe_fclose(&frecomp);
+        safe_fclose(&current_recursion_context.frecomp);
 
-        remove(tempfile2);
-        remove(tempfile1);
+        remove(current_recursion_context.tempfile2);
+        remove(current_recursion_context.tempfile1);
       }
       break;
     }
@@ -5234,10 +5142,10 @@ while (fin_pos < fin_length) {
 
   }
 
-  fin_pos = tell_64(fin);
-  if (compression_otf_method != OTF_NONE) {
-    if (decompress_otf_end) break;
-    if (fin_pos >= fin_length) fin_pos = fin_length - 1;
+  fin_pos = tell_64(current_recursion_context.fin);
+  if (current_recursion_context.compression_otf_method != OTF_NONE) {
+    if (current_recursion_context.decompress_otf_end) break;
+    if (fin_pos >= current_recursion_context.fin_length) fin_pos = current_recursion_context.fin_length - 1;
   }
 }
 
@@ -5249,7 +5157,7 @@ void convert_file() {
   unsigned char convbuf[COPY_BUF_SIZE];
   int conv_bytes = -1;
 
-  comp_decomp_state = P_CONVERT;
+  current_recursion_context.comp_decomp_state = P_CONVERT;
 
   init_compress_otf();
   init_decompress_otf();
@@ -5257,7 +5165,7 @@ void convert_file() {
   if (!DEBUG_MODE) show_progress(0, false, false);
 
   for (;;) {
-    bytes_read = own_fread(copybuf, 1, COPY_BUF_SIZE, fin);
+    bytes_read = own_fread(copybuf, 1, COPY_BUF_SIZE, current_recursion_context.fin);
     // truncate by 9 bytes (Precomp on-the-fly delimiter) if converting from compressed data
     if ((conversion_from_method > OTF_NONE) && (bytes_read < COPY_BUF_SIZE)) {
       bytes_read -= 9;
@@ -5266,7 +5174,7 @@ void convert_file() {
         bytes_read = 0;
       }
     }
-    if (conv_bytes > -1) own_fwrite(convbuf, 1, conv_bytes, fout);
+    if (conv_bytes > -1) own_fwrite(convbuf, 1, conv_bytes, current_recursion_context.fout);
     for (int i = 0; i < bytes_read; i++) {
       convbuf[i] = copybuf[i];
     }
@@ -5275,14 +5183,14 @@ void convert_file() {
       break;
     }
 
-    input_file_pos = tell_64(fin);
+    current_recursion_context.input_file_pos = tell_64(current_recursion_context.fin);
     print_work_sign(true);
     if (!DEBUG_MODE) {
-      float percent = (input_file_pos / (float)fin_length) * 100;
+      float percent = (current_recursion_context.input_file_pos / (float)current_recursion_context.fin_length) * 100;
       show_progress(percent, true, true);
     }
   }
-  own_fwrite(convbuf, 1, conv_bytes, fout);
+  own_fwrite(convbuf, 1, conv_bytes, current_recursion_context.fout);
 
   denit_compress_otf();
   denit_decompress_otf();
@@ -5295,17 +5203,17 @@ long long try_to_decompress_bzip2(FILE* file, int compression_level, long long& 
 
   print_work_sign(true);
 
-  remove(tempfile1);
-  ftempout = tryOpen(tempfile1,"wb");
+  remove(current_recursion_context.tempfile1);
+  current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
 
-  if (file == fin) {
-    seek_64(file, input_file_pos);
+  if (file == current_recursion_context.fin) {
+    seek_64(file, current_recursion_context.input_file_pos);
   } else {
     seek_64(file, 0);
   }
 
-  r = inf_bzip2(file, ftempout, compressed_stream_size, decompressed_stream_size);
-  safe_fclose(&ftempout);
+  r = inf_bzip2(file, current_recursion_context.ftempout, compressed_stream_size, decompressed_stream_size);
+  safe_fclose(&current_recursion_context.ftempout);
   if (r == BZ_OK) return decompressed_stream_size;
 
   return r;
@@ -5315,13 +5223,13 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
             print_work_sign(true);
 
             long long decomp_bytes_total;
-            identical_bytes = file_recompress_bzip2(origfile, level, identical_bytes_decomp, decomp_bytes_total);
-            if (identical_bytes > -1) { // successfully recompressed?
-              if ((identical_bytes > best_identical_bytes)  || ((identical_bytes == best_identical_bytes) && (penalty_bytes_len < best_penalty_bytes_len))) {
-                if (identical_bytes > min_ident_size) {
+            current_recursion_context.identical_bytes = file_recompress_bzip2(origfile, level, current_recursion_context.identical_bytes_decomp, decomp_bytes_total);
+            if (current_recursion_context.identical_bytes > -1) { // successfully recompressed?
+              if ((current_recursion_context.identical_bytes > current_recursion_context.best_identical_bytes)  || ((current_recursion_context.identical_bytes == current_recursion_context.best_identical_bytes) && (current_recursion_context.penalty_bytes_len < current_recursion_context.best_penalty_bytes_len))) {
+                if (current_recursion_context.identical_bytes > min_ident_size) {
                   if (DEBUG_MODE) {
-                  std::cout << "Identical recompressed bytes: " << identical_bytes << " of " << compressed_stream_size << std::endl;
-                  std::cout << "Identical decompressed bytes: " << identical_bytes_decomp << " of " << decomp_bytes_total << std::endl;
+                  std::cout << "Identical recompressed bytes: " << current_recursion_context.identical_bytes << " of " << compressed_stream_size << std::endl;
+                  std::cout << "Identical decompressed bytes: " << current_recursion_context.identical_bytes_decomp << " of " << decomp_bytes_total << std::endl;
                   }
                 }
 
@@ -5334,16 +5242,16 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
 				// so the ratio is (1000/1000)/(5/1000) = 200 which is too high. With 5 of 1000 decompressed bytes or
 				// 1000 of 1000 identical recompressed bytes, ratio would've been 1 and we'd accept it.
 
-				float partial_ratio = ((float)identical_bytes_decomp / decomp_bytes_total) / ((float)identical_bytes / compressed_stream_size);
+				float partial_ratio = ((float)current_recursion_context.identical_bytes_decomp / decomp_bytes_total) / ((float)current_recursion_context.identical_bytes / compressed_stream_size);
 				if (partial_ratio < 3.0f) {
-					best_identical_bytes_decomp = identical_bytes_decomp;
-					best_identical_bytes = identical_bytes;
-					if (penalty_bytes_len > 0) {
-						memcpy(best_penalty_bytes, penalty_bytes, penalty_bytes_len);
-						best_penalty_bytes_len = penalty_bytes_len;
+                    current_recursion_context.best_identical_bytes_decomp = current_recursion_context.identical_bytes_decomp;
+                    current_recursion_context.best_identical_bytes = current_recursion_context.identical_bytes;
+					if (current_recursion_context.penalty_bytes_len > 0) {
+						memcpy(current_recursion_context.best_penalty_bytes.data(), current_recursion_context.penalty_bytes.data(), current_recursion_context.penalty_bytes_len);
+            current_recursion_context.best_penalty_bytes_len = current_recursion_context.penalty_bytes_len;
 					}
 					else {
-						best_penalty_bytes_len = 0;
+            current_recursion_context.best_penalty_bytes_len = 0;
 					}
 				} else {
 					if (DEBUG_MODE) {
@@ -5358,15 +5266,15 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
 void write_header() {
   char* input_file_name_without_path = new char[current_recursion_context.input_file_name.length() + 1];
 
-  fprintf(fout, "PCF");
+  fprintf(current_recursion_context.fout, "PCF");
 
   // version number
-  fputc(V_MAJOR, fout);
-  fputc(V_MINOR, fout);
-  fputc(V_MINOR2, fout);
+  fputc(V_MAJOR, current_recursion_context.fout);
+  fputc(V_MINOR, current_recursion_context.fout);
+  fputc(V_MINOR2, current_recursion_context.fout);
 
   // compression-on-the-fly method used
-  fputc(compression_otf_method, fout);
+  fputc(current_recursion_context.compression_otf_method, current_recursion_context.fout);
 
   // write input file name without path
   const char* last_backslash = strrchr(current_recursion_context.input_file_name.c_str(), PATH_DELIM);
@@ -5376,28 +5284,28 @@ void write_header() {
     strcpy(input_file_name_without_path, current_recursion_context.input_file_name.c_str());
   }
 
-  fprintf(fout, "%s", input_file_name_without_path);
-  fputc(0, fout);
+  fprintf(current_recursion_context.fout, "%s", input_file_name_without_path);
+  fputc(0, current_recursion_context.fout);
 
   delete[] input_file_name_without_path;
 
   // initialize compression-on-the-fly now
-  if (compression_otf_method != OTF_NONE) {
+  if (current_recursion_context.compression_otf_method != OTF_NONE) {
     init_compress_otf();
   }
 }
 
 #ifdef COMFORT
 bool check_for_pcf_file() {
-  seek_64(fin, 0);
+  seek_64(current_recursion_context.fin, 0);
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     return false;
   }
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", current_recursion_context.input_file_name.c_str());
@@ -5406,12 +5314,12 @@ bool check_for_pcf_file() {
   }
 
   // skip compression method
-  fread(in, 1, 1, fin);
+  fread(in, 1, 1, current_recursion_context.fin);
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(fin);
+    c = fgetc(current_recursion_context.fin);
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5432,16 +5340,16 @@ bool check_for_pcf_file() {
 #endif
 
 void read_header() {
-  seek_64(fin, 0);
+  seek_64(current_recursion_context.fin, 0);
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", current_recursion_context.input_file_name.c_str());
     exit(1);
   }
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", current_recursion_context.input_file_name.c_str());
@@ -5449,13 +5357,13 @@ void read_header() {
     exit(1);
   }
 
-  fread(in, 1, 1, fin);
-  compression_otf_method = in[0];
+  fread(in, 1, 1, current_recursion_context.fin);
+  current_recursion_context.compression_otf_method = in[0];
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(fin);
+    c = fgetc(current_recursion_context.fin);
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5465,51 +5373,51 @@ void read_header() {
 }
 
 void convert_header() {
-  seek_64(fin, 0);
+  seek_64(current_recursion_context.fin, 0);
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", current_recursion_context.input_file_name.c_str());
     exit(1);
   }
-  fwrite(in, 1, 3, fout);
+  fwrite(in, 1, 3, current_recursion_context.fout);
 
-  fread(in, 1, 3, fin);
+  fread(in, 1, 3, current_recursion_context.fin);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", current_recursion_context.input_file_name);
     printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
-  fwrite(in, 1, 3, fout);
+  fwrite(in, 1, 3, current_recursion_context.fout);
 
-  fread(in, 1, 1, fin);
+  fread(in, 1, 1, current_recursion_context.fin);
   conversion_from_method = in[0];
   if (conversion_from_method == conversion_to_method) {
     printf("Input file doesn't need to be converted\n");
     exit(1);
   }
   in[0] = conversion_to_method;
-  fwrite(in, 1, 1, fout);
+  fwrite(in, 1, 1, current_recursion_context.fout);
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(fin);
+    c = fgetc(current_recursion_context.fin);
     if (c != 0) header_filename += c;
   } while (c != 0);
-  fprintf(fout, "%s", header_filename.c_str());
-  fputc(0, fout);
+  fprintf(current_recursion_context.fout, "%s", header_filename.c_str());
+  fputc(0, current_recursion_context.fout);
 }
 
 void progress_update(long long bytes_written) {
-  float percent = ((input_file_pos + uncompressed_bytes_written + bytes_written) / ((float)fin_length + uncompressed_bytes_total)) * (global_max_percent - global_min_percent) + global_min_percent;
+  float percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written + bytes_written) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (current_recursion_context.global_max_percent - current_recursion_context.global_min_percent) + current_recursion_context.global_min_percent;
   show_progress(percent, true, true);
 }
 
 void lzma_progress_update() {
-  float percent = ((input_file_pos + uncompressed_bytes_written) / ((float)fin_length + uncompressed_bytes_total)) * (global_max_percent - global_min_percent) + global_min_percent;
+  float percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (current_recursion_context.global_max_percent - current_recursion_context.global_min_percent) + current_recursion_context.global_min_percent;
 
   uint64_t progress_in = 0, progress_out = 0;
 
@@ -5541,7 +5449,7 @@ void fast_copy(FILE* file1, FILE* file2, long long bytecount, bool update_progre
     own_fwrite(copybuf, 1, remaining_bytes, file2, false, update_progress);
   }
 
-  if ((update_progress) && (!DEBUG_MODE)) uncompressed_bytes_written += bytecount;
+  if ((update_progress) && (!DEBUG_MODE)) current_recursion_context.uncompressed_bytes_written += bytecount;
 }
 
 void fast_copy(FILE* file, unsigned char* mem, long long bytecount) {
@@ -5582,11 +5490,11 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
   size_t result = 0;
   bool use_otf = false;
 
-  if (comp_decomp_state == P_CONVERT) {
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) {
     use_otf = (conversion_to_method > OTF_NONE);
-    if (use_otf) compression_otf_method = conversion_to_method;
+    if (use_otf) current_recursion_context.compression_otf_method = conversion_to_method;
   } else {
-    if ((stream != fout) || (compression_otf_method == OTF_NONE) || (comp_decomp_state != P_COMPRESS)) {
+    if ((stream != current_recursion_context.fout) || (current_recursion_context.compression_otf_method == OTF_NONE) || (current_recursion_context.comp_decomp_state != P_COMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5599,7 +5507,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
       error(ERR_DISK_FULL);
     }
   } else {
-    switch (compression_otf_method) {
+    switch (current_recursion_context.compression_otf_method) {
       case OTF_BZIP2: { // bZip2
         int flush, ret;
         unsigned have;
@@ -5680,11 +5588,11 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
 size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
   bool use_otf = false;
 
-  if (comp_decomp_state == P_CONVERT) {
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) {
     use_otf = (conversion_from_method > OTF_NONE);
-    if (use_otf) compression_otf_method = conversion_from_method;
+    if (use_otf) current_recursion_context.compression_otf_method = conversion_from_method;
   } else {
-    if ((stream != fin) || (compression_otf_method == OTF_NONE) || (comp_decomp_state != P_DECOMPRESS)) {
+    if ((stream != current_recursion_context.fin) || (current_recursion_context.compression_otf_method == OTF_NONE) || (current_recursion_context.comp_decomp_state != P_DECOMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5694,7 +5602,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
   if (!use_otf) {
     return fread(ptr, size, count, stream);
   } else {
-    switch (compression_otf_method) {
+    switch (current_recursion_context.compression_otf_method) {
       case 1: { // bZip2
         int ret;
         int bytes_read = 0;
@@ -5707,7 +5615,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
         do {
 
           if (otf_bz2_stream_d.avail_in == 0) {
-            otf_bz2_stream_d.avail_in = fread(otf_in, 1, CHUNK, fin);
+            otf_bz2_stream_d.avail_in = fread(otf_in, 1, CHUNK, current_recursion_context.fin);
             otf_bz2_stream_d.next_in = (char*)otf_in;
             if (otf_bz2_stream_d.avail_in == 0) break;
           }
@@ -5719,7 +5627,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
             exit(1);
           }
 
-          if (ret == BZ_STREAM_END) decompress_otf_end = true;
+          if (ret == BZ_STREAM_END) current_recursion_context.decompress_otf_end = true;
 
         } while (otf_bz2_stream_d.avail_out > 0);
 
@@ -5736,11 +5644,11 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
 
         do {
           print_work_sign(true);
-          if ((otf_xz_stream_d.avail_in == 0) && !feof(fin)) {
+          if ((otf_xz_stream_d.avail_in == 0) && !feof(current_recursion_context.fin)) {
             otf_xz_stream_d.next_in = (uint8_t *)otf_in;
-            otf_xz_stream_d.avail_in = fread(otf_in, 1, CHUNK, fin);
+            otf_xz_stream_d.avail_in = fread(otf_in, 1, CHUNK, current_recursion_context.fin);
 
-            if (ferror(fin)) {
+            if (ferror(current_recursion_context.fin)) {
               printf("ERROR: Could not read input file\n");
               exit(1);
             }
@@ -5749,8 +5657,8 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
           ret = lzma_code(&otf_xz_stream_d, action);
 
           if (ret == LZMA_STREAM_END) {
-              decompress_otf_end = true;
-              break;
+            current_recursion_context.decompress_otf_end = true;
+            break;
           }
 
           if (ret != LZMA_OK) {
@@ -5837,7 +5745,7 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
   bool use_penalty_bytes = false;
 
   long long compare_end;
-  if (file1 == fin) {
+  if (file1 == current_recursion_context.fin) {
     fseek(file2, 0, SEEK_END);
     compare_end = ftell(file2);
   } else {
@@ -5874,12 +5782,12 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
 
         local_penalty_bytes_len += 5;
         // position
-        local_penalty_bytes[local_penalty_bytes_len-5] = (same_byte_count >> 24) % 256;
-        local_penalty_bytes[local_penalty_bytes_len-4] = (same_byte_count >> 16) % 256;
-        local_penalty_bytes[local_penalty_bytes_len-3] = (same_byte_count >> 8) % 256;
-        local_penalty_bytes[local_penalty_bytes_len-2] = same_byte_count % 256;
+        current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-5] = (same_byte_count >> 24) % 256;
+        current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-4] = (same_byte_count >> 16) % 256;
+        current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-3] = (same_byte_count >> 8) % 256;
+        current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-2] = same_byte_count % 256;
         // new byte
-        local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
+        current_recursion_context.local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
       } else {
         same_byte_count_penalty++;
       }
@@ -5899,10 +5807,10 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
   } while ((minsize == COMP_CHUNK) && (!endNow));
 
   if ((rek_penalty_bytes_len > 0) && (use_penalty_bytes)) {
-    memcpy(penalty_bytes, local_penalty_bytes, rek_penalty_bytes_len);
-    penalty_bytes_len = rek_penalty_bytes_len;
+    memcpy(current_recursion_context.penalty_bytes.data(), current_recursion_context.local_penalty_bytes.data(), rek_penalty_bytes_len);
+    current_recursion_context.penalty_bytes_len = rek_penalty_bytes_len;
   } else {
-    penalty_bytes_len = 0;
+    current_recursion_context.penalty_bytes_len = 0;
   }
 
   return rek_same_byte_count;
@@ -5910,7 +5818,7 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
 
 void try_decompression_gzip(int gzip_header_length) {
   try_decompression_deflate_type(decompressed_gzip_count, recompressed_gzip_count, 
-                                 D_GZIP, in_buf + cb + 2, gzip_header_length - 2, false,
+                                 D_GZIP, current_recursion_context.in_buf + current_recursion_context.cb + 2, gzip_header_length - 2, false,
                                  "in GZIP");
 }
 
@@ -5918,7 +5826,7 @@ void try_decompression_png (int windowbits) {
   init_decompression_variables();
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(fin);
+  recompress_deflate_result rdres = try_recompression_deflate(current_recursion_context.fin);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -5931,12 +5839,12 @@ void try_decompression_png (int windowbits) {
       recompressed_streams_count++;
       recompressed_png_count++;
 
-      non_zlib_was_used = true;
+      current_recursion_context.non_zlib_was_used = true;
 
       debug_sums(rdres);
 
       // end uncompressed data
-      compressed_data_found = true;
+      current_recursion_context.compressed_data_found = true;
       end_uncompressed_data();
 
       debug_pos();
@@ -5950,12 +5858,12 @@ void try_decompression_png (int windowbits) {
 
       debug_pos();
       // set input file pointer after recompressed data
-      input_file_pos += rdres.compressed_stream_size - 1;
-      cb += rdres.compressed_stream_size - 1;
+      current_recursion_context.input_file_pos += rdres.compressed_stream_size - 1;
+      current_recursion_context.cb += rdres.compressed_stream_size - 1;
 
     } else {
-      if (intense_mode_is_active()) intense_ignore_offsets->insert(input_file_pos - 2);
-      if (brute_mode_is_active()) brute_ignore_offsets->insert(input_file_pos);
+      if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
+      if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
       if (DEBUG_MODE) {
         printf("No matches\n");
       }
@@ -5980,12 +5888,12 @@ void try_decompression_png_multi(FILE* fpng, int windowbits) {
       recompressed_streams_count++;
       recompressed_png_multi_count++;
 
-      non_zlib_was_used = true;
+      current_recursion_context.non_zlib_was_used = true;
 
       debug_sums(rdres);
 
       // end uncompressed data
-      compressed_data_found = true;
+      current_recursion_context.compressed_data_found = true;
       end_uncompressed_data();
 
       debug_pos();
@@ -6038,15 +5946,15 @@ void try_decompression_png_multi(FILE* fpng, int windowbits) {
       debug_pos();
 
       // set input file pointer after recompressed data
-      input_file_pos += rdres.compressed_stream_size - 1;
-      cb += rdres.compressed_stream_size - 1;
+      current_recursion_context.input_file_pos += rdres.compressed_stream_size - 1;
+      current_recursion_context.cb += rdres.compressed_stream_size - 1;
       // now add IDAT chunk overhead
-      input_file_pos += (idat_pairs_written_count * 12);
-      cb += (idat_pairs_written_count * 12);
+      current_recursion_context.input_file_pos += (idat_pairs_written_count * 12);
+      current_recursion_context.cb += (idat_pairs_written_count * 12);
 
     } else {
-      if (intense_mode_is_active()) intense_ignore_offsets->insert(input_file_pos - 2);
-      if (brute_mode_is_active()) brute_ignore_offsets->insert(input_file_pos);
+      if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
+      if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
       if (DEBUG_MODE) {
         printf("No matches\n");
       }
@@ -6416,17 +6324,17 @@ void try_decompression_gif(unsigned char version[5]) {
 
   if (DEBUG_MODE) {
   print_debug_percent();
-  std::cout << "Possible GIF found at position " << input_file_pos << std::endl;;
+  std::cout << "Possible GIF found at position " << current_recursion_context.input_file_pos << std::endl;;
   }
 
-  seek_64(fin, input_file_pos);
+  seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
 
   // read GIF file
-  ftempout = tryOpen(tempfile1, "wb");
+  current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
 
-  if (!decompress_gif(fin, ftempout, input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
-    safe_fclose(&ftempout);
-    remove(tempfile1);
+  if (!decompress_gif(current_recursion_context.fin, current_recursion_context.ftempout, current_recursion_context.input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
+    safe_fclose(&current_recursion_context.ftempout);
+    remove(current_recursion_context.tempfile1);
     GifDiffFree(&gDiff);
     GifCodeFree(&gCode);
     return;
@@ -6436,23 +6344,23 @@ void try_decompression_gif(unsigned char version[5]) {
   std::cout << "Can be decompressed to " << decomp_length << " bytes" << std::endl;
   }
 
-  safe_fclose(&ftempout);
+  safe_fclose(&current_recursion_context.ftempout);
 
   decompressed_streams_count++;
   decompressed_gif_count++;
 
-  ftempout = tryOpen(tempfile1, "rb");
-  frecomp = tryOpen(tempfile2,"wb");
-  if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
+  current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+  current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "wb");
+  if (recompress_gif(current_recursion_context.ftempout, current_recursion_context.frecomp, block_size, &gCode, &gDiff)) {
 
-    safe_fclose(&frecomp);
-    safe_fclose(&ftempout);
+    safe_fclose(&current_recursion_context.frecomp);
+    safe_fclose(&current_recursion_context.ftempout);
 
-    frecomp = tryOpen(tempfile2,"rb");
-    best_identical_bytes = compare_files_penalty(fin, frecomp, input_file_pos, 0);
-    safe_fclose(&frecomp);
+    current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "rb");
+    current_recursion_context.best_identical_bytes = compare_files_penalty(current_recursion_context.fin, current_recursion_context.frecomp, current_recursion_context.input_file_pos, 0);
+    safe_fclose(&current_recursion_context.frecomp);
 
-    if (best_identical_bytes < gif_length) {
+    if (current_recursion_context.best_identical_bytes < gif_length) {
       if (DEBUG_MODE) {
       printf ("Recompression failed\n");
       }
@@ -6462,26 +6370,26 @@ void try_decompression_gif(unsigned char version[5]) {
       }
       recompress_success_needed = true;
 
-      if (best_identical_bytes > min_ident_size) {
+      if (current_recursion_context.best_identical_bytes > min_ident_size) {
         recompressed_streams_count++;
         recompressed_gif_count++;
-        non_zlib_was_used = true;
+        current_recursion_context.non_zlib_was_used = true;
 
-        if (penalty_bytes != NULL) {
-          memcpy(best_penalty_bytes, penalty_bytes, penalty_bytes_len);
-          best_penalty_bytes_len = penalty_bytes_len;
+        if (!current_recursion_context.penalty_bytes.empty()) {
+          memcpy(current_recursion_context.best_penalty_bytes.data(), current_recursion_context.penalty_bytes.data(), current_recursion_context.penalty_bytes_len);
+          current_recursion_context.best_penalty_bytes_len = current_recursion_context.penalty_bytes_len;
         } else {
-          best_penalty_bytes_len = 0;
+          current_recursion_context.best_penalty_bytes_len = 0;
         }
 
         // end uncompressed data
 
-        compressed_data_found = true;
+        current_recursion_context.compressed_data_found = true;
         end_uncompressed_data();
 
         // write compressed data header (GIF)
         unsigned char add_bits = 0;
-        if (best_penalty_bytes_len != 0) add_bits += 2;
+        if (current_recursion_context.best_penalty_bytes_len != 0) add_bits += 2;
         if (block_size == 254) add_bits += 4;
         if (recompress_success_needed) add_bits += 128;
 
@@ -6499,29 +6407,29 @@ void try_decompression_gif(unsigned char version[5]) {
         }
 
         // store penalty bytes, if any
-        if (best_penalty_bytes_len != 0) {
+        if (current_recursion_context.best_penalty_bytes_len != 0) {
           if (DEBUG_MODE) {
-            printf("Penalty bytes were used: %i bytes\n", best_penalty_bytes_len);
+            printf("Penalty bytes were used: %i bytes\n", current_recursion_context.best_penalty_bytes_len);
           }
 
-          fout_fput_vlint(best_penalty_bytes_len);
+          fout_fput_vlint(current_recursion_context.best_penalty_bytes_len);
 
-          for (int pbc = 0; pbc < best_penalty_bytes_len; pbc++) {
-            fout_fputc(best_penalty_bytes[pbc]);
+          for (int pbc = 0; pbc < current_recursion_context.best_penalty_bytes_len; pbc++) {
+            fout_fputc(current_recursion_context.best_penalty_bytes[pbc]);
           }
         }
 
-        fout_fput_vlint(best_identical_bytes);
+        fout_fput_vlint(current_recursion_context.best_identical_bytes);
         fout_fput_vlint(decomp_length);
 
         // write decompressed data
-        write_decompressed_data(decomp_length);
+        write_decompressed_data(decomp_length, current_recursion_context.tempfile1);
 
         // start new uncompressed data
 
         // set input file pointer after recompressed data
-        input_file_pos += gif_length - 1;
-        cb += gif_length - 1;
+        current_recursion_context.input_file_pos += gif_length - 1;
+        current_recursion_context.cb += gif_length - 1;
       }
     }
 
@@ -6532,16 +6440,16 @@ void try_decompression_gif(unsigned char version[5]) {
     printf ("No matches\n");
     }
 
-    safe_fclose(&frecomp);
-    safe_fclose(&ftempout);
+    safe_fclose(&current_recursion_context.frecomp);
+    safe_fclose(&current_recursion_context.ftempout);
 
   }
 
   GifDiffFree(&gDiff);
   GifCodeFree(&gCode);
 
-  remove(tempfile2);
-  remove(tempfile1);
+  remove(current_recursion_context.tempfile2);
+  remove(current_recursion_context.tempfile1);
 
 }
 
@@ -6565,7 +6473,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           } else {
             printf ("Possible JPG found at position ");
           }
-          std::cout << saved_input_file_pos << ", length " << jpg_length << std::endl;
+          std::cout << current_recursion_context.saved_input_file_pos << ", length " << jpg_length << std::endl;
           // do not recompress non-progressive JPGs when prog_only is set
           if ((!progressive_jpg) && (prog_only)) {
             printf("Skipping (only progressive JPGs mode set)\n");
@@ -6588,8 +6496,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 
         if (in_memory) { // small stream => do everything in memory
           jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
-          seek_64(fin, input_file_pos);
-          fast_copy(fin, jpg_mem_in, jpg_length);
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
+          fast_copy(current_recursion_context.fin, jpg_mem_in, jpg_length);
 
 		  bool brunsli_success = false;
 
@@ -6682,19 +6590,19 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 			printf("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
-          fjpg = tryOpen(tempfile0,"wb");
-          seek_64(fin, input_file_pos);
-          fast_copy(fin, fjpg, jpg_length);
-          safe_fclose(&fjpg);
-          remove(tempfile1);
+          current_recursion_context.fjpg = tryOpen(current_recursion_context.tempfile0, "wb");
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
+          fast_copy(current_recursion_context.fin, current_recursion_context.fjpg, jpg_length);
+          safe_fclose(&current_recursion_context.fjpg);
+          remove(current_recursion_context.tempfile1);
 
           // Workaround for JPG bugs. Sometimes tempfile1 is removed, but still
           // not accessible by packJPG, so we prevent that by opening it here
           // ourselves.
-          FILE* fworkaround = tryOpen(tempfile1,"wb");
+          FILE* fworkaround = tryOpen(current_recursion_context.tempfile1, "wb");
           safe_fclose(&fworkaround);
 
-          recompress_success = pjglib_convert_file2file(tempfile0, tempfile1, recompress_msg);
+          recompress_success = pjglib_convert_file2file(current_recursion_context.tempfile0, current_recursion_context.tempfile1, recompress_msg);
 		  brunsli_used = false;
 		  brotli_used = false;
         }
@@ -6726,10 +6634,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
                 recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
             }
           } else {
-            fjpg = tryOpen(tempfile0,"rb");
+            current_recursion_context.fjpg = tryOpen(current_recursion_context.tempfile0, "rb");
             do {
               ffda_pos++;
-              if (fread(in, 1, 1, fjpg) != 1) break;
+              if (fread(in, 1, 1, current_recursion_context.fjpg) != 1) break;
               if (found_ff) {
                 found_ffda = (in[0] == 0xDA);
                 if (found_ffda) break;
@@ -6739,17 +6647,17 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
               }
             } while (!found_ffda);
             if (found_ffda) {
-              fdecomp = tryOpen(tempfile3,"wb");
-              seek_64(fjpg, 0);
-              fast_copy(fjpg, fdecomp, ffda_pos - 1);
+              current_recursion_context.fdecomp = tryOpen(current_recursion_context.tempfile3, "wb");
+              seek_64(current_recursion_context.fjpg, 0);
+              fast_copy(current_recursion_context.fjpg, current_recursion_context.fdecomp, ffda_pos - 1);
               // insert MJPGDHT
-              own_fwrite(MJPGDHT, 1, MJPGDHT_LEN, fdecomp);
-              seek_64(fjpg, ffda_pos - 1);
-              fast_copy(fjpg, fdecomp, jpg_length - (ffda_pos - 1));
-              safe_fclose(&fdecomp);
+              own_fwrite(MJPGDHT, 1, MJPGDHT_LEN, current_recursion_context.fdecomp);
+              seek_64(current_recursion_context.fjpg, ffda_pos - 1);
+              fast_copy(current_recursion_context.fjpg, current_recursion_context.fdecomp, jpg_length - (ffda_pos - 1));
+              safe_fclose(&current_recursion_context.fdecomp);
             }
-            safe_fclose(&fjpg);
-            recompress_success = pjglib_convert_file2file(tempfile3, tempfile1, recompress_msg);
+            safe_fclose(&current_recursion_context.fjpg);
+            recompress_success = pjglib_convert_file2file(current_recursion_context.tempfile3, current_recursion_context.tempfile1, recompress_msg);
           }
 
           mjpg_dht_used = recompress_success;
@@ -6767,7 +6675,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
         }
 
         if (!in_memory) {
-          remove(tempfile0);
+          remove(current_recursion_context.tempfile0);
         }
 
         if (recompress_success) {
@@ -6776,10 +6684,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           if (in_memory) {
             jpg_new_length = jpg_mem_out_size;
           } else {
-            ftempout = tryOpen(tempfile1,"rb");
-            fseek(ftempout, 0, SEEK_END);
-            jpg_new_length = ftell(ftempout);
-            safe_fclose(&ftempout);
+            current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+            fseek(current_recursion_context.ftempout, 0, SEEK_END);
+            jpg_new_length = ftell(current_recursion_context.ftempout);
+            safe_fclose(&current_recursion_context.ftempout);
           }
 
           if (jpg_new_length > 0) {
@@ -6789,10 +6697,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
             } else {
               recompressed_jpg_count++;
             }
-            non_zlib_was_used = true;
+            current_recursion_context.non_zlib_was_used = true;
 
-            best_identical_bytes = jpg_length;
-            best_identical_bytes_decomp = jpg_new_length;
+            current_recursion_context.best_identical_bytes = jpg_length;
+            current_recursion_context.best_identical_bytes_decomp = jpg_new_length;
             jpg_success = true;
           }
         }
@@ -6800,12 +6708,12 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
         if (jpg_success) {
 
           if (DEBUG_MODE) {
-          std::cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
+          std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, recompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
           // end uncompressed data
 
-          compressed_data_found = true;
+          current_recursion_context.compressed_data_found = true;
           end_uncompressed_data();
 
           // write compressed data header (JPG)
@@ -6817,21 +6725,21 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 		  fout_fputc(jpg_flags);
           fout_fputc(D_JPG); // JPG
 
-          fout_fput_vlint(best_identical_bytes);
-          fout_fput_vlint(best_identical_bytes_decomp);
+          fout_fput_vlint(current_recursion_context.best_identical_bytes);
+          fout_fput_vlint(current_recursion_context.best_identical_bytes_decomp);
 
           // write compressed JPG
           if (in_memory) {
-            fast_copy(jpg_mem_out, fout, best_identical_bytes_decomp);
+            fast_copy(jpg_mem_out, current_recursion_context.fout, current_recursion_context.best_identical_bytes_decomp);
           } else {
-            write_decompressed_data(best_identical_bytes_decomp);
+            write_decompressed_data(current_recursion_context.best_identical_bytes_decomp, current_recursion_context.tempfile1);
           }
 
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          input_file_pos += best_identical_bytes - 1;
-          cb += best_identical_bytes - 1;
+          current_recursion_context.input_file_pos += current_recursion_context.best_identical_bytes - 1;
+          current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
         } else {
           if (DEBUG_MODE) {
@@ -6847,7 +6755,7 @@ void try_decompression_mp3 (long long mp3_length) {
 
         if (DEBUG_MODE) {
           print_debug_percent();
-          std::cout << "Possible MP3 found at position " << saved_input_file_pos << ", length " << mp3_length << std::endl;
+          std::cout << "Possible MP3 found at position " << current_recursion_context.saved_input_file_pos << ", length " << mp3_length << std::endl;
         }
 
         bool mp3_success = false;
@@ -6860,24 +6768,24 @@ void try_decompression_mp3 (long long mp3_length) {
 
         if (in_memory) { // small stream => do everything in memory
           mp3_mem_in = new unsigned char[mp3_length];
-          seek_64(fin, input_file_pos);
-          fast_copy(fin, mp3_mem_in, mp3_length);
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
+          fast_copy(current_recursion_context.fin, mp3_mem_in, mp3_length);
 
           pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
           recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
         } else { // large stream => use temporary files
           // try to decompress at current position
-          fmp3 = tryOpen(tempfile0,"wb");
-          seek_64(fin, input_file_pos);
-          fast_copy(fin, fmp3, mp3_length);
-          safe_fclose(&fmp3);
-          remove(tempfile1);
+          current_recursion_context.fmp3 = tryOpen(current_recursion_context.tempfile0, "wb");
+          seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
+          fast_copy(current_recursion_context.fin, current_recursion_context.fmp3, mp3_length);
+          safe_fclose(&current_recursion_context.fmp3);
+          remove(current_recursion_context.tempfile1);
 
           // workaround for bugs, similar to packJPG
-          FILE* fworkaround = tryOpen(tempfile1,"wb");
+          FILE* fworkaround = tryOpen(current_recursion_context.tempfile1, "wb");
           safe_fclose(&fworkaround);
 
-          recompress_success = pmplib_convert_file2file(tempfile0, tempfile1, recompress_msg);
+          recompress_success = pmplib_convert_file2file(current_recursion_context.tempfile0, current_recursion_context.tempfile1, recompress_msg);
         }
 
         if ((!recompress_success) && (strncmp(recompress_msg, "synching failure", 16) == 0)) {
@@ -6893,38 +6801,38 @@ void try_decompression_mp3 (long long mp3_length) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
                 recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
               } else {
-                fmp3 = tryOpen(tempfile0, "r+b");
-                ftruncate(fileno(fmp3), pos);
-                safe_fclose(&fmp3);
-                remove(tempfile1);
+                current_recursion_context.fmp3 = tryOpen(current_recursion_context.tempfile0, "r+b");
+                ftruncate(fileno(current_recursion_context.fmp3), pos);
+                safe_fclose(&current_recursion_context.fmp3);
+                remove(current_recursion_context.tempfile1);
 
                 // workaround for bugs, similar to packJPG
-                FILE* fworkaround = tryOpen(tempfile1,"wb");
+                FILE* fworkaround = tryOpen(current_recursion_context.tempfile1, "wb");
                 safe_fclose(&fworkaround);
 
-                recompress_success = pmplib_convert_file2file(tempfile0, tempfile1, recompress_msg);
+                recompress_success = pmplib_convert_file2file(current_recursion_context.tempfile0, current_recursion_context.tempfile1, recompress_msg);
               }
             }
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "big value pairs out of bounds", 29) == 0)) {
-          suppress_mp3_big_value_pairs_sum = saved_input_file_pos + mp3_length;
+          current_recursion_context.suppress_mp3_big_value_pairs_sum = current_recursion_context.saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << std::endl;
+            std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "non-zero padbits found", 22) == 0)) {
-          suppress_mp3_non_zero_padbits_sum = saved_input_file_pos + mp3_length;
+          current_recursion_context.suppress_mp3_non_zero_padbits_sum = current_recursion_context.saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << std::endl;
+            std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent use of emphasis", 28) == 0)) {
-          suppress_mp3_inconsistent_emphasis_sum = saved_input_file_pos + mp3_length;
+          current_recursion_context.suppress_mp3_inconsistent_emphasis_sum = current_recursion_context.saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << std::endl;
+            std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent original bit", 25) == 0)) {
-          suppress_mp3_inconsistent_original_bit = saved_input_file_pos + mp3_length;
+          current_recursion_context.suppress_mp3_inconsistent_original_bit = current_recursion_context.saved_input_file_pos + mp3_length;
           if (DEBUG_MODE) {
-            std::cout << "Ignoring following streams with position/length sum " << suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << std::endl;
+            std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << std::endl;
           }
         }
 
@@ -6936,7 +6844,7 @@ void try_decompression_mp3 (long long mp3_length) {
         }
 
         if (!in_memory) {
-          remove(tempfile0);
+          remove(current_recursion_context.tempfile0);
         }
 
         if (recompress_success) {
@@ -6945,19 +6853,19 @@ void try_decompression_mp3 (long long mp3_length) {
           if (in_memory) {
             mp3_new_length = mp3_mem_out_size;
           } else {
-            ftempout = tryOpen(tempfile1,"rb");
-            fseek(ftempout, 0, SEEK_END);
-            mp3_new_length = ftell(ftempout);
-            safe_fclose(&ftempout);
+            current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+            fseek(current_recursion_context.ftempout, 0, SEEK_END);
+            mp3_new_length = ftell(current_recursion_context.ftempout);
+            safe_fclose(&current_recursion_context.ftempout);
           }
 
           if (mp3_new_length > 0) {
             recompressed_streams_count++;
             recompressed_mp3_count++;
-            non_zlib_was_used = true;
+            current_recursion_context.non_zlib_was_used = true;
 
-            best_identical_bytes = mp3_length;
-            best_identical_bytes_decomp = mp3_new_length;
+            current_recursion_context.best_identical_bytes = mp3_length;
+            current_recursion_context.best_identical_bytes_decomp = mp3_new_length;
             mp3_success = true;
           }
         }
@@ -6965,12 +6873,12 @@ void try_decompression_mp3 (long long mp3_length) {
         if (mp3_success) {
 
           if (DEBUG_MODE) {
-          std::cout << "Best match: " << best_identical_bytes << " bytes, recompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
+          std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, recompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
           // end uncompressed data
 
-          compressed_data_found = true;
+          current_recursion_context.compressed_data_found = true;
           end_uncompressed_data();
 
           // write compressed data header (MP3)
@@ -6978,21 +6886,21 @@ void try_decompression_mp3 (long long mp3_length) {
           fout_fputc(1); // no penalty bytes
           fout_fputc(D_MP3); // MP3
 
-          fout_fput_vlint(best_identical_bytes);
-          fout_fput_vlint(best_identical_bytes_decomp);
+          fout_fput_vlint(current_recursion_context.best_identical_bytes);
+          fout_fput_vlint(current_recursion_context.best_identical_bytes_decomp);
 
           // write compressed MP3
           if (in_memory) {
-            fast_copy(mp3_mem_out, fout, best_identical_bytes_decomp);
+            fast_copy(mp3_mem_out, current_recursion_context.fout, current_recursion_context.best_identical_bytes_decomp);
           } else {
-            write_decompressed_data(best_identical_bytes_decomp);
+            write_decompressed_data(current_recursion_context.best_identical_bytes_decomp, current_recursion_context.tempfile1);
           }
 
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          input_file_pos += best_identical_bytes - 1;
-          cb += best_identical_bytes - 1;
+          current_recursion_context.input_file_pos += current_recursion_context.best_identical_bytes - 1;
+          current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
         } else {
           if (DEBUG_MODE) {
@@ -7076,19 +6984,19 @@ inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char h
 
 void try_decompression_zlib(int windowbits) {
   try_decompression_deflate_type(decompressed_zlib_count, recompressed_zlib_count, 
-                                 D_RAW, in_buf + cb, 2, true,
+                                 D_RAW, current_recursion_context.in_buf + current_recursion_context.cb, 2, true,
                                  "(intense mode)");
 }
 
 void try_decompression_brute() {
   try_decompression_deflate_type(decompressed_brute_count, recompressed_brute_count, 
-                                 D_BRUTE, in_buf + cb, 0, false,
+                                 D_BRUTE, current_recursion_context.in_buf + current_recursion_context.cb, 0, false,
                                  "(brute mode)");
 }
 
 void try_decompression_swf(int windowbits) {
   try_decompression_deflate_type(decompressed_swf_count, recompressed_swf_count, 
-                                 D_SWF, in_buf + cb + 3, 7, true,
+                                 D_SWF, current_recursion_context.in_buf + current_recursion_context.cb + 3, 7, true,
                                  "in SWF");
 }
 
@@ -7097,48 +7005,48 @@ void try_decompression_bzip2(int compression_level) {
 
         // try to decompress at current position
         long long compressed_stream_size = -1;
-        retval = try_to_decompress_bzip2(fin, compression_level, compressed_stream_size);
+        current_recursion_context.retval = try_to_decompress_bzip2(current_recursion_context.fin, compression_level, compressed_stream_size);
 
-        if (retval > 0) { // seems to be a zLib-Stream
+        if (current_recursion_context.retval > 0) { // seems to be a zLib-Stream
 
           decompressed_streams_count++;
           decompressed_bzip2_count++;
 
           if (DEBUG_MODE) {
           print_debug_percent();
-          std::cout << "Possible bZip2-Stream found at position " << saved_input_file_pos << ", compression level = " << compression_level << std::endl;
+          std::cout << "Possible bZip2-Stream found at position " << current_recursion_context.saved_input_file_pos << ", compression level = " << compression_level << std::endl;
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
 
-          ftempout = tryOpen(tempfile1, "rb");
-          fseek(ftempout, 0, SEEK_END);
-          std::cout << "Can be decompressed to " << tell_64(ftempout) << " bytes" << std::endl;
-          safe_fclose(&ftempout);
+          current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+          fseek(current_recursion_context.ftempout, 0, SEEK_END);
+          std::cout << "Can be decompressed to " << tell_64(current_recursion_context.ftempout) << " bytes" << std::endl;
+          safe_fclose(&current_recursion_context.ftempout);
           }
 
-          try_recompress_bzip2(fin, compression_level, compressed_stream_size);
+          try_recompress_bzip2(current_recursion_context.fin, compression_level, compressed_stream_size);
 
-          if ((best_identical_bytes > min_ident_size) && (best_identical_bytes < best_identical_bytes_decomp)) {
+          if ((current_recursion_context.best_identical_bytes > min_ident_size) && (current_recursion_context.best_identical_bytes < current_recursion_context.best_identical_bytes_decomp)) {
             recompressed_streams_count++;
             recompressed_bzip2_count++;
 
             if (DEBUG_MODE) {
-            std::cout << "Best match: " << best_identical_bytes << " bytes, decompressed to " << best_identical_bytes_decomp << " bytes" << std::endl;
+            std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, decompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
             }
 
-            non_zlib_was_used = true;
+            current_recursion_context.non_zlib_was_used = true;
 
             // end uncompressed data
 
-            compressed_data_found = true;
+            current_recursion_context.compressed_data_found = true;
             end_uncompressed_data();
 
             // check recursion
-            recursion_result r = recursion_compress(best_identical_bytes, best_identical_bytes_decomp);
+            recursion_result r = recursion_compress(current_recursion_context.best_identical_bytes, current_recursion_context.best_identical_bytes_decomp);
 
             // write compressed data header (bZip2)
 
             int header_byte = 1;
-            if (best_penalty_bytes_len != 0) {
+            if (current_recursion_context.best_penalty_bytes_len != 0) {
               header_byte += 2;
             }
             if (r.success) {
@@ -7149,18 +7057,18 @@ void try_decompression_bzip2(int compression_level) {
             fout_fputc(compression_level);
 
             // store penalty bytes, if any
-            if (best_penalty_bytes_len != 0) {
+            if (current_recursion_context.best_penalty_bytes_len != 0) {
               if (DEBUG_MODE) {
-                printf("Penalty bytes were used: %i bytes\n", best_penalty_bytes_len);
+                printf("Penalty bytes were used: %i bytes\n", current_recursion_context.best_penalty_bytes_len);
               }
-              fout_fput_vlint(best_penalty_bytes_len);
-              for (int pbc = 0; pbc < best_penalty_bytes_len; pbc++) {
-                fout_fputc(best_penalty_bytes[pbc]);
+              fout_fput_vlint(current_recursion_context.best_penalty_bytes_len);
+              for (int pbc = 0; pbc < current_recursion_context.best_penalty_bytes_len; pbc++) {
+                fout_fputc(current_recursion_context.best_penalty_bytes[pbc]);
               }
             }
 
-            fout_fput_vlint(best_identical_bytes);
-            fout_fput_vlint(best_identical_bytes_decomp);
+            fout_fput_vlint(current_recursion_context.best_identical_bytes);
+            fout_fput_vlint(current_recursion_context.best_identical_bytes_decomp);
 
             if (r.success) {
               fout_fput_vlint(r.file_length);
@@ -7172,14 +7080,14 @@ void try_decompression_bzip2(int compression_level) {
               remove(r.file_name);
               delete[] r.file_name;
             } else {
-              write_decompressed_data(best_identical_bytes_decomp);
+              write_decompressed_data(current_recursion_context.best_identical_bytes_decomp, current_recursion_context.tempfile1);
             }
 
             // start new uncompressed data
 
             // set input file pointer after recompressed data
-            input_file_pos += best_identical_bytes - 1;
-            cb += best_identical_bytes - 1;
+            current_recursion_context.input_file_pos += current_recursion_context.best_identical_bytes - 1;
+            current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
           } else {
             if (DEBUG_MODE) {
@@ -7297,9 +7205,9 @@ void try_decompression_base64(int base64_header_length) {
   init_decompression_variables();
 
         // try to decode at current position
-        remove(tempfile1);
-        ftempout = tryOpen(tempfile1,"wb");
-        seek_64(fin, input_file_pos);
+        remove(current_recursion_context.tempfile1);
+        current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
+        seek_64(current_recursion_context.fin, current_recursion_context.input_file_pos);
 
         unsigned char base64_data[CHUNK >> 2];
         unsigned int* base64_line_len = new unsigned int[65536];
@@ -7317,7 +7225,7 @@ void try_decompression_base64(int base64_header_length) {
         unsigned int act_line_len = 0;
 
         do {
-          avail_in = fread(in, 1, CHUNK, fin);
+          avail_in = fread(in, 1, CHUNK, current_recursion_context.fin);
           for (i = 0; i < (avail_in >> 2); i++) {
             // are these valid base64 chars?
             for (j = (i << 2); j < ((i << 2) + 4); j++) {
@@ -7370,9 +7278,9 @@ void try_decompression_base64(int base64_header_length) {
               b = base64_data[(j << 2) + 1];
               c = base64_data[(j << 2) + 2];
               d = base64_data[(j << 2) + 3];
-              fputc((a << 2) | (b >> 4), ftempout);
-              fputc(((b << 4) & 0xFF) | (c >> 2), ftempout);
-              fputc(((c << 6) & 0xFF) | d, ftempout);
+              fputc((a << 2) | (b >> 4), current_recursion_context.ftempout);
+              fputc(((b << 4) & 0xFF) | (c >> 2), current_recursion_context.ftempout);
+              fputc(((c << 6) & 0xFF) | d, current_recursion_context.ftempout);
             }
             if (stream_finished) break;
             for (j = 0; j < (k % 4); j++) {
@@ -7391,7 +7299,7 @@ void try_decompression_base64(int base64_header_length) {
           }
         }
 
-        safe_fclose(&ftempout);
+        safe_fclose(&current_recursion_context.ftempout);
 
         if (!decoding_failed) {
           int line_case = -1;
@@ -7418,50 +7326,50 @@ void try_decompression_base64(int base64_header_length) {
           decompressed_streams_count++;
           decompressed_base64_count++;
 
-          ftempout = tryOpen(tempfile1, "rb");
-          fseek(ftempout, 0, SEEK_END);
-          identical_bytes = ftell(ftempout);
-          safe_fclose(&ftempout);
+          current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
+          fseek(current_recursion_context.ftempout, 0, SEEK_END);
+          current_recursion_context.identical_bytes = ftell(current_recursion_context.ftempout);
+          safe_fclose(&current_recursion_context.ftempout);
 
 
           if (DEBUG_MODE) {
           print_debug_percent();
-          std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << saved_input_file_pos << std::endl;
-          std::cout << "Can be decoded to " << identical_bytes << " bytes" << std::endl;
+          std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << current_recursion_context.saved_input_file_pos << std::endl;
+          std::cout << "Can be decoded to " << current_recursion_context.identical_bytes << " bytes" << std::endl;
           }
 
           // try to re-encode Base64 data
 
-          ftempout = fopen(tempfile1,"rb");
-          if (ftempout == NULL) {
+          current_recursion_context.ftempout = fopen(current_recursion_context.tempfile1, "rb");
+          if (current_recursion_context.ftempout == NULL) {
             error(ERR_TEMP_FILE_DISAPPEARED);
           }
 
-          remove(tempfile2);
-          frecomp = tryOpen(tempfile2,"w+b");
+          remove(current_recursion_context.tempfile2);
+          current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "w+b");
 
-          base64_reencode(ftempout, frecomp, line_count, base64_line_len);
+          base64_reencode(current_recursion_context.ftempout, current_recursion_context.frecomp, line_count, base64_line_len);
 
-          safe_fclose(&ftempout);
+          safe_fclose(&current_recursion_context.ftempout);
 
-          identical_bytes_decomp = compare_files(fin, frecomp, input_file_pos, 0);
+          current_recursion_context.identical_bytes_decomp = compare_files(current_recursion_context.fin, current_recursion_context.frecomp, current_recursion_context.input_file_pos, 0);
 
-          safe_fclose(&frecomp);
+          safe_fclose(&current_recursion_context.frecomp);
 
-          if (identical_bytes_decomp > min_ident_size) {
+          if (current_recursion_context.identical_bytes_decomp > min_ident_size) {
             recompressed_streams_count++;
             recompressed_base64_count++;
             if (DEBUG_MODE) {
-            std::cout << "Match: encoded to " << identical_bytes_decomp << " bytes" << std::endl;
+            std::cout << "Match: encoded to " << current_recursion_context.identical_bytes_decomp << " bytes" << std::endl;
             }
 
             // end uncompressed data
 
-            compressed_data_found = true;
+            current_recursion_context.compressed_data_found = true;
             end_uncompressed_data();
 
             // check recursion
-            recursion_result r = recursion_compress(identical_bytes_decomp, identical_bytes);
+            recursion_result r = recursion_compress(current_recursion_context.identical_bytes_decomp, current_recursion_context.identical_bytes);
 
             // write compressed data header (Base64)
             int header_byte = 1 + (line_case << 2);
@@ -7474,8 +7382,8 @@ void try_decompression_base64(int base64_header_length) {
             fout_fput_vlint(base64_header_length);
 
             // write "header", but change first char to prevent re-detection
-            fout_fputc(in_buf[cb] - 1);
-            own_fwrite(in_buf + cb + 1, 1, base64_header_length - 1, fout);
+            fout_fputc(current_recursion_context.in_buf[current_recursion_context.cb] - 1);
+            own_fwrite(current_recursion_context.in_buf + current_recursion_context.cb + 1, 1, base64_header_length - 1, current_recursion_context.fout);
 
             fout_fput_vlint(line_count);
             if (line_case == 2) {
@@ -7489,8 +7397,8 @@ void try_decompression_base64(int base64_header_length) {
 
             delete[] base64_line_len;
 
-            fout_fput_vlint(identical_bytes);
-            fout_fput_vlint(identical_bytes_decomp);
+            fout_fput_vlint(current_recursion_context.identical_bytes);
+            fout_fput_vlint(current_recursion_context.identical_bytes_decomp);
 
             if (r.success) {
               fout_fput_vlint(r.file_length);
@@ -7502,14 +7410,14 @@ void try_decompression_base64(int base64_header_length) {
               remove(r.file_name);
               delete[] r.file_name;
             } else {
-              write_decompressed_data(identical_bytes);
+              write_decompressed_data(current_recursion_context.identical_bytes, current_recursion_context.tempfile1);
             }
 
             // start new uncompressed data
 
             // set input file pointer after recompressed data
-            input_file_pos += identical_bytes_decomp - 1;
-            cb += identical_bytes_decomp - 1;
+            current_recursion_context.input_file_pos += current_recursion_context.identical_bytes_decomp - 1;
+            current_recursion_context.cb += current_recursion_context.identical_bytes_decomp - 1;
           } else {
             if (DEBUG_MODE) {
               printf("No match\n");
@@ -7552,12 +7460,12 @@ void error(int error_nr) {
       printf("Please don't use a space between the -o switch and the output filename");
       break;
     case ERR_TEMP_FILE_DISAPPEARED:
-      printf("Temporary file %s disappeared", tempfile1);
+      printf("Temporary file %s disappeared", current_recursion_context.tempfile1);
       break;
     case ERR_DISK_FULL:
       printf("There is not enough space on disk");
       // delete output file
-      safe_fclose(&fout);
+      safe_fclose(&current_recursion_context.fout);
       remove(current_recursion_context.output_file_name.c_str());
       break;
     case ERR_RECURSION_DEPTH_TOO_BIG:
@@ -7665,11 +7573,11 @@ void init_temp_files() {
     do {
       k = i;
       for (j = 1; j >= 0; j--) {
-        metatempfile[5 + j] = '0' + (k % 10);
+        current_recursion_context.metatempfile[5 + j] = '0' + (k % 10);
         k /= 10;
       }
       i++;
-    } while (file_exists(metatempfile));
+    } while (file_exists(current_recursion_context.metatempfile));
     tempfile_instance = i - 1;
   }
 
@@ -7677,151 +7585,63 @@ void init_temp_files() {
   do {
     k = i;
     for (j = 7; j >= 2; j--) {
-      metatempfile[5+j] = '0' + (k % 10);
+      current_recursion_context.metatempfile[5+j] = '0' + (k % 10);
       k /= 10;
     }
     i++;
-  } while (file_exists(metatempfile));
+  } while (file_exists(current_recursion_context.metatempfile));
 
   k = i - 1;
   for (j = 7; j >= 2; j--) {
-    tempfile0[5+j] = '0' + (k % 10);
-    tempfile1[5+j] = '0' + (k % 10);
-    tempfile2[5+j] = '0' + (k % 10);
-    tempfile3[5+j] = '0' + (k % 10);
+    current_recursion_context.tempfile0[5+j] = '0' + (k % 10);
+    current_recursion_context.tempfile1[5+j] = '0' + (k % 10);
+    current_recursion_context.tempfile2[5+j] = '0' + (k % 10);
+    current_recursion_context.tempfile3[5+j] = '0' + (k % 10);
     k /= 10;
   }
   k = tempfile_instance;
   for (j = 1; j >= 0; j--) {
-    tempfile0[5 + j] = '0' + (k % 10);
-    tempfile1[5 + j] = '0' + (k % 10);
-    tempfile2[5 + j] = '0' + (k % 10);
-    tempfile3[5 + j] = '0' + (k % 10);
+    current_recursion_context.tempfile0[5 + j] = '0' + (k % 10);
+    current_recursion_context.tempfile1[5 + j] = '0' + (k % 10);
+    current_recursion_context.tempfile2[5 + j] = '0' + (k % 10);
+    current_recursion_context.tempfile3[5 + j] = '0' + (k % 10);
     k /= 10;
   }
 
   // create meta file
-  FILE* f = fopen(metatempfile, "wb");
+  FILE* f = fopen(current_recursion_context.metatempfile, "wb");
   safe_fclose(&f);
 
   // update temporary file list
   tempfilelist_count += 8;
   tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
-  strcpy(tempfilelist + (tempfilelist_count - 8) * 20, metatempfile);
-  strcpy(tempfilelist + (tempfilelist_count - 7) * 20, tempfile0);
-  strcpy(tempfilelist + (tempfilelist_count - 6) * 20, tempfile1);
+  strcpy(tempfilelist + (tempfilelist_count - 8) * 20, current_recursion_context.metatempfile);
+  strcpy(tempfilelist + (tempfilelist_count - 7) * 20, current_recursion_context.tempfile0);
+  strcpy(tempfilelist + (tempfilelist_count - 6) * 20, current_recursion_context.tempfile1);
 
   // recursion input file
-  strcpy(tempfilelist + (tempfilelist_count - 5) * 20, tempfile1);
+  strcpy(tempfilelist + (tempfilelist_count - 5) * 20, current_recursion_context.tempfile1);
   tempfilelist[(tempfilelist_count - 5) * 20 + 18] = '_';
   tempfilelist[(tempfilelist_count - 5) * 20 + 19] = 0;
 
-  strcpy(tempfilelist + (tempfilelist_count - 4) * 20, tempfile2);
-  strcpy(tempfilelist + (tempfilelist_count - 2) * 20, tempfile3);
+  strcpy(tempfilelist + (tempfilelist_count - 4) * 20, current_recursion_context.tempfile2);
+  strcpy(tempfilelist + (tempfilelist_count - 2) * 20, current_recursion_context.tempfile3);
 }
-
-void recursion_stack_push(void* var, int var_size) {
-  for (int i = 0; i < var_size; i++) {
-    recursion_stack.push_back(((unsigned char*)var)[i]);
-  }
-}
-
-void recursion_stack_pop(void* var, int var_size) {
-  for (int i = var_size - 1; i >= 0; i--) {
-    ((unsigned char*)var)[i] = recursion_stack.back();
-    recursion_stack.pop_back();
-  }
-  // We shrink the vector back logaritmically to mirror the exponential growth policy of the vector
-  // This should make it so we don't waste too much memory but we are also not resizing the vector every time
-  if (recursion_stack.size() <= recursion_stack.capacity() / 2)
-    recursion_stack.shrink_to_fit();
-}
-
-std::vector<std::tuple<void*, size_t>> recursion_stack_pack = {
-  std::make_tuple(&fin_length, sizeof(fin_length)),
-  std::make_tuple(&uncompressed_pos, sizeof(uncompressed_pos)),
-  std::make_tuple(&uncompressed_start, sizeof(uncompressed_start)),
-  std::make_tuple(&compressed_data_found, sizeof(compressed_data_found)),
-  std::make_tuple(&uncompressed_data_in_work, sizeof(uncompressed_data_in_work)),
-  std::make_tuple(&uncompressed_length, sizeof(uncompressed_length)),
-  std::make_tuple(&uncompressed_bytes_total, sizeof(uncompressed_bytes_total)),
-  std::make_tuple(&uncompressed_bytes_written, sizeof(uncompressed_bytes_written)),
-  std::make_tuple(&input_file_pos, sizeof(input_file_pos)),
-  std::make_tuple(&retval, sizeof(retval)),
-  std::make_tuple(&in_buf_pos, sizeof(in_buf_pos)),
-  std::make_tuple(&cb, sizeof(cb)),
-  std::make_tuple(&saved_input_file_pos, sizeof(saved_input_file_pos)),
-  std::make_tuple(&saved_cb, sizeof(saved_cb)),
-  std::make_tuple(&fin, sizeof(fin)),
-  std::make_tuple(&fout, sizeof(fout)),
-  std::make_tuple(&ftempout, sizeof(ftempout)),
-  std::make_tuple(&frecomp, sizeof(frecomp)),
-  std::make_tuple(&fdecomp, sizeof(fdecomp)),
-  std::make_tuple(&fpack, sizeof(fpack)),
-  std::make_tuple(&fpng, sizeof(fpng)),
-  std::make_tuple(&fjpg, sizeof(fjpg)),
-  std::make_tuple(&fmp3, sizeof(fmp3)),
-  std::make_tuple(&in_buf[0], sizeof(in_buf[0])* IN_BUF_SIZE),
-  std::make_tuple(&metatempfile[0], sizeof(metatempfile[0]) * 18),
-  std::make_tuple(&tempfile0[0], sizeof(tempfile0[0]) * 19),
-  std::make_tuple(&tempfile1[0], sizeof(tempfile1[0]) * 19),
-  std::make_tuple(&tempfile2[0], sizeof(tempfile2[0]) * 19),
-  std::make_tuple(&tempfile3[0], sizeof(tempfile3[0]) * 19),
-  std::make_tuple(&penalty_bytes, sizeof(penalty_bytes)),
-  std::make_tuple(&local_penalty_bytes, sizeof(penalty_bytes)),
-  std::make_tuple(&best_penalty_bytes, sizeof(penalty_bytes)),
-
-  std::make_tuple(&identical_bytes, sizeof(identical_bytes)),
-  std::make_tuple(&best_identical_bytes, sizeof(best_identical_bytes)),
-  std::make_tuple(&best_identical_bytes_decomp, sizeof(best_identical_bytes_decomp)),
-  std::make_tuple(&best_compression, sizeof(best_compression)),
-  std::make_tuple(&best_mem_level, sizeof(best_mem_level)),
-  std::make_tuple(&penalty_bytes_len, sizeof(penalty_bytes_len)),
-  std::make_tuple(&best_penalty_bytes_len, sizeof(best_penalty_bytes_len)),
-  std::make_tuple(&identical_bytes_decomp, sizeof(identical_bytes_decomp)),
-
-  std::make_tuple(&anything_was_used, sizeof(anything_was_used)),
-  std::make_tuple(&non_zlib_was_used, sizeof(non_zlib_was_used)),
-  std::make_tuple(&sec_time, sizeof(sec_time)),
-  std::make_tuple(&global_min_percent, sizeof(global_min_percent)),
-  std::make_tuple(&global_max_percent, sizeof(global_max_percent)),
-  std::make_tuple(&comp_decomp_state, sizeof(comp_decomp_state)),
-  std::make_tuple(&suppress_mp3_type_until[0], sizeof(suppress_mp3_type_until[0]) * 16),
-  std::make_tuple(&suppress_mp3_big_value_pairs_sum, sizeof(suppress_mp3_big_value_pairs_sum)),
-  std::make_tuple(&suppress_mp3_non_zero_padbits_sum, sizeof(suppress_mp3_non_zero_padbits_sum)),
-  std::make_tuple(&suppress_mp3_inconsistent_emphasis_sum, sizeof(suppress_mp3_inconsistent_emphasis_sum)),
-  std::make_tuple(&suppress_mp3_inconsistent_original_bit, sizeof(suppress_mp3_inconsistent_original_bit)),
-  std::make_tuple(&mp3_parsing_cache_second_frame, sizeof(mp3_parsing_cache_second_frame)),
-  std::make_tuple(&mp3_parsing_cache_n, sizeof(mp3_parsing_cache_n)),
-  std::make_tuple(&mp3_parsing_cache_mp3_length, sizeof(mp3_parsing_cache_mp3_length)),
-  std::make_tuple(&intense_ignore_offsets, sizeof(intense_ignore_offsets)),
-  std::make_tuple(&brute_ignore_offsets, sizeof(brute_ignore_offsets)),
-  std::make_tuple(&decomp_io_buf, sizeof(decomp_io_buf)),
-
-  std::make_tuple(&compression_otf_method, sizeof(compression_otf_method)),
-  std::make_tuple(&decompress_otf_end, sizeof(decompress_otf_end)),
-};
 
 void recursion_push() {
   recursion_contexts_stack.push_back(current_recursion_context);
-  for (auto iter = recursion_stack_pack.begin(); iter != recursion_stack_pack.end(); iter++) {
-    recursion_stack_push(std::get<0>(*iter), std::get<1>(*iter));
-  }
 }
 
 void recursion_pop() {
   current_recursion_context = std::move(recursion_contexts_stack.back());
   recursion_contexts_stack.pop_back();
-  for (auto iter = recursion_stack_pack.rbegin(); iter != recursion_stack_pack.rend(); iter++) {
-    recursion_stack_pop(std::get<0>(*iter), std::get<1>(*iter));
-  }
 }
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, bool leave_open) {
   if (in_memory) {
-    ftempout = tryOpen(tempfile1, "wb");
-    fast_copy(decomp_io_buf, ftempout, byte_count);
-    if (!leave_open) safe_fclose(&ftempout);
+    current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "wb");
+    fast_copy(current_recursion_context.decomp_io_buf, current_recursion_context.ftempout, byte_count);
+    if (!leave_open) safe_fclose(&current_recursion_context.ftempout);
   }
 }
 
@@ -7830,8 +7650,8 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   recursion_result tmp_r;
   tmp_r.success = false;
 
-  float recursion_min_percent = ((input_file_pos + uncompressed_bytes_written) / ((float)fin_length + uncompressed_bytes_total)) * (global_max_percent - global_min_percent) + global_min_percent;
-  float recursion_max_percent = ((input_file_pos + uncompressed_bytes_written +(compressed_bytes - 1)) / ((float)fin_length + uncompressed_bytes_total)) * (global_max_percent - global_min_percent) + global_min_percent;
+  float recursion_min_percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (current_recursion_context.global_max_percent - current_recursion_context.global_min_percent) + current_recursion_context.global_min_percent;
+  float recursion_max_percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written +(compressed_bytes - 1)) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (current_recursion_context.global_max_percent - current_recursion_context.global_min_percent) + current_recursion_context.global_min_percent;
 
   bool rescue_anything_was_used = false;
   bool rescue_non_zlib_was_used = false;
@@ -7849,46 +7669,42 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
-    FILE* ftempfile1 = fopen(tempfile1, "r+b");
+    FILE* ftempfile1 = fopen(current_recursion_context.tempfile1, "r+b");
     ftruncate(fileno(ftempfile1), decompressed_bytes);
     fclose(ftempfile1);
   }
 
-  fin_length = fileSize64(tempfile1);
-  fin = fopen(tempfile1, "rb");
-  if (fin == NULL) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tempfile1);
+  current_recursion_context.fin_length = fileSize64(current_recursion_context.tempfile1);
+  current_recursion_context.fin = fopen(current_recursion_context.tempfile1, "rb");
+  if (current_recursion_context.fin == NULL) {
+    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", current_recursion_context.tempfile1);
 
     exit(0);
   }
-  current_recursion_context.input_file_name = tempfile1;
-  current_recursion_context.output_file_name = tempfile1;
+  current_recursion_context.input_file_name = current_recursion_context.tempfile1;
+  current_recursion_context.output_file_name = current_recursion_context.tempfile1;
   current_recursion_context.output_file_name += '_';
-  tmp_r.file_name = new char[strlen(tempfile1)+2];
+  tmp_r.file_name = new char[strlen(current_recursion_context.tempfile1)+2];
   strcpy(tmp_r.file_name, current_recursion_context.output_file_name.c_str());
   recursion_fout = tryOpen(current_recursion_context.output_file_name.c_str(), "wb");
-  fout = recursion_fout;
+  current_recursion_context.fout = recursion_fout;
 
-  penalty_bytes = new char[MAX_PENALTY_BYTES];
-  local_penalty_bytes = new char[MAX_PENALTY_BYTES];
-  best_penalty_bytes = new char[MAX_PENALTY_BYTES];
-
-  intense_ignore_offsets = new std::set<long long>();
-  brute_ignore_offsets = new std::set<long long>();
+  current_recursion_context.intense_ignore_offsets = new std::set<long long>();
+  current_recursion_context.brute_ignore_offsets = new std::set<long long>();
 
   // init MP3 suppression
   for (int i = 0; i < 16; i++) {
-      suppress_mp3_type_until[i] = -1;
+    current_recursion_context.suppress_mp3_type_until[i] = -1;
   }
-  suppress_mp3_big_value_pairs_sum = -1;
-  suppress_mp3_non_zero_padbits_sum = -1;
-  suppress_mp3_inconsistent_emphasis_sum = -1;
-  suppress_mp3_inconsistent_original_bit = -1;
+  current_recursion_context.suppress_mp3_big_value_pairs_sum = -1;
+  current_recursion_context.suppress_mp3_non_zero_padbits_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_emphasis_sum = -1;
+  current_recursion_context.suppress_mp3_inconsistent_original_bit = -1;
 
-  mp3_parsing_cache_second_frame = -1;
+  current_recursion_context.mp3_parsing_cache_second_frame = -1;
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
-  compression_otf_method = OTF_NONE;
+  current_recursion_context.compression_otf_method = OTF_NONE;
 
   recursion_depth++;
   if (DEBUG_MODE) {
@@ -7896,27 +7712,24 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   }
   tmp_r.success = compress_file(recursion_min_percent, recursion_max_percent);
 
-  delete intense_ignore_offsets;
-  delete brute_ignore_offsets;
+  delete current_recursion_context.intense_ignore_offsets;
+  delete current_recursion_context.brute_ignore_offsets;
   // TODO CHECK: Delete current_recursion_context?
-  delete[] penalty_bytes;
-  delete[] local_penalty_bytes;
-  delete[] best_penalty_bytes;
 
-  if (anything_was_used)
+  if (current_recursion_context.anything_was_used)
     rescue_anything_was_used = true;
 
-  if (non_zlib_was_used)
+  if (current_recursion_context.non_zlib_was_used)
     rescue_non_zlib_was_used = true;
 
   recursion_depth--;
   recursion_pop();
 
   if (rescue_anything_was_used)
-    anything_was_used = true;
+    current_recursion_context.anything_was_used = true;
 
   if (rescue_non_zlib_was_used)
-    non_zlib_was_used = true;
+    current_recursion_context.non_zlib_was_used = true;
 
   if (DEBUG_MODE) {
     if (tmp_r.success) {
@@ -7952,34 +7765,30 @@ recursion_result recursion_decompress(long long recursion_data_length) {
 
   recursion_push();
 
-  remove(tempfile1);
-  recursion_fin = tryOpen(tempfile1,"wb");
+  remove(current_recursion_context.tempfile1);
+  recursion_fin = tryOpen(current_recursion_context.tempfile1,"wb");
 
-  fast_copy(fin, recursion_fin, recursion_data_length);
+  fast_copy(current_recursion_context.fin, recursion_fin, recursion_data_length);
 
   safe_fclose(&recursion_fin);
 
-  fin_length = fileSize64(tempfile1);
-  fin = fopen(tempfile1, "rb");
-  if (fin == NULL) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tempfile1);
+  current_recursion_context.fin_length = fileSize64(current_recursion_context.tempfile1);
+  current_recursion_context.fin = fopen(current_recursion_context.tempfile1, "rb");
+  if (current_recursion_context.fin == NULL) {
+    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", current_recursion_context.tempfile1);
 
     exit(0);
   }
-  current_recursion_context.input_file_name = tempfile1;
-  current_recursion_context.output_file_name = tempfile1;
+  current_recursion_context.input_file_name = current_recursion_context.tempfile1;
+  current_recursion_context.output_file_name = current_recursion_context.tempfile1;
   current_recursion_context.output_file_name += '_';
-  tmp_r.file_name = new char[strlen(tempfile1)+2];
+  tmp_r.file_name = new char[strlen(current_recursion_context.tempfile1)+2];
   strcpy(tmp_r.file_name, current_recursion_context.output_file_name.c_str());
   recursion_fout = tryOpen(current_recursion_context.output_file_name.c_str(), "wb");
-  fout = recursion_fout;
-
-  penalty_bytes = new char[MAX_PENALTY_BYTES];
-  local_penalty_bytes = new char[MAX_PENALTY_BYTES];
-  best_penalty_bytes = new char[MAX_PENALTY_BYTES];
+  current_recursion_context.fout = recursion_fout;
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
-  compression_otf_method = OTF_NONE;
+  current_recursion_context.compression_otf_method = OTF_NONE;
 
   recursion_depth++;
   if (DEBUG_MODE) {
@@ -7988,9 +7797,6 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   decompress_file();
 
   // TODO CHECK: Delete current_recursion_context?
-  delete[] penalty_bytes;
-  delete[] local_penalty_bytes;
-  delete[] best_penalty_bytes;
 
   recursion_depth--;
   recursion_pop();
@@ -8010,11 +7816,11 @@ recursion_result recursion_decompress(long long recursion_data_length) {
 void own_fputc(char c, FILE* f) {
   bool use_otf = false;
 
-  if (comp_decomp_state == P_CONVERT) {
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) {
     use_otf = (conversion_to_method > OTF_NONE);
-    if (use_otf) compression_otf_method = conversion_to_method;
+    if (use_otf) current_recursion_context.compression_otf_method = conversion_to_method;
   } else {
-    if ((f != fout) || (compression_otf_method == OTF_NONE)) {
+    if ((f != current_recursion_context.fout) || (current_recursion_context.compression_otf_method == OTF_NONE)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -8029,12 +7835,12 @@ void own_fputc(char c, FILE* f) {
 }
 
 void fout_fputc(char c) {
-  if (compression_otf_method == OTF_NONE) { // uncompressed
-    fputc(c, fout);
+  if (current_recursion_context.compression_otf_method == OTF_NONE) { // uncompressed
+    fputc(c, current_recursion_context.fout);
   } else {
     unsigned char temp_buf[1];
     temp_buf[0] = c;
-    own_fwrite(temp_buf, 1, 1, fout);
+    own_fwrite(temp_buf, 1, 1, current_recursion_context.fout);
   }
 }
 
@@ -8077,9 +7883,9 @@ void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags,
   }
   fout_fput_vlint(hdr_length);
   if (!inc_last_hdr_byte) {
-    own_fwrite(hdr, 1, hdr_length, fout);
+    own_fwrite(hdr, 1, hdr_length, current_recursion_context.fout);
   } else {
-    own_fwrite(hdr, 1, hdr_length - 1, fout);
+    own_fwrite(hdr, 1, hdr_length - 1, current_recursion_context.fout);
     fout_fputc(hdr[hdr_length - 1] + 1);
   }
 }
@@ -8095,17 +7901,17 @@ void fin_fget_deflate_hdr(recompress_deflate_result& rdres, const unsigned char 
   }
   hdr_length = fin_fget_vlint();
   if (!inc_last_hdr_byte) {
-    own_fread(hdr_data, 1, hdr_length, fin);
+    own_fread(hdr_data, 1, hdr_length, current_recursion_context.fin);
   } else {
-    own_fread(hdr_data, 1, hdr_length - 1, fin);
+    own_fread(hdr_data, 1, hdr_length - 1, current_recursion_context.fin);
     hdr_data[hdr_length - 1] = fin_fgetc() - 1;
   }
-  own_fwrite(hdr_data, 1, hdr_length, fout);
+  own_fwrite(hdr_data, 1, hdr_length, current_recursion_context.fout);
 }
 void fout_fput_recon_data(const recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     fout_fput_vlint(rdres.recon_data.size());
-    own_fwrite(rdres.recon_data.data(), 1, rdres.recon_data.size(), fout);
+    own_fwrite(rdres.recon_data.data(), 1, rdres.recon_data.size(), current_recursion_context.fout);
   }
 
   fout_fput_vlint(rdres.compressed_stream_size);
@@ -8115,14 +7921,14 @@ void fin_fget_recon_data(recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     size_t sz = fin_fget_vlint();
     rdres.recon_data.resize(sz);
-    own_fread(rdres.recon_data.data(), 1, rdres.recon_data.size(), fin);
+    own_fread(rdres.recon_data.data(), 1, rdres.recon_data.size(), current_recursion_context.fin);
   }
 
   rdres.compressed_stream_size = fin_fget_vlint();
   rdres.uncompressed_stream_size = fin_fget_vlint();
 }
 void fout_fput_uncompressed(const recompress_deflate_result& rdres) {
-    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory);
+    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, current_recursion_context.tempfile1);
 }
 void fin_fget_uncompressed(const recompress_deflate_result&) {
 }
@@ -8156,7 +7962,7 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
     recursion_length = fin_fget_vlint();
     recursion_result r = recursion_decompress(recursion_length);
     debug_pos();
-    bool result = try_reconstructing_deflate(r.frecurse, fout, rdres);
+    bool result = try_reconstructing_deflate(r.frecurse, current_recursion_context.fout, rdres);
     debug_pos();
     safe_fclose(&r.frecurse);
     remove(r.file_name);
@@ -8165,20 +7971,20 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
   } else {
     recursion_length = 0;
     debug_pos();
-    bool result = try_reconstructing_deflate(fin, fout, rdres);
+    bool result = try_reconstructing_deflate(current_recursion_context.fin, current_recursion_context.fout, rdres);
     debug_pos();
     return result;
   }
 }
 
 unsigned char fin_fgetc() {
-  if (comp_decomp_state == P_CONVERT) compression_otf_method = conversion_from_method;
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) current_recursion_context.compression_otf_method = conversion_from_method;
 
-  if (compression_otf_method == OTF_NONE) {
-    return fgetc(fin);
+  if (current_recursion_context.compression_otf_method == OTF_NONE) {
+    return fgetc(current_recursion_context.fin);
   } else {
     unsigned char temp_buf[1];
-    own_fread(temp_buf, 1, 1, fin);
+    own_fread(temp_buf, 1, 1, current_recursion_context.fin);
     return temp_buf[0];
   }
 }
@@ -8211,9 +8017,9 @@ long long fin_fget_vlint() {
 
 
 void init_compress_otf() {
-  if (comp_decomp_state == P_CONVERT) compression_otf_method = conversion_to_method;
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) current_recursion_context.compression_otf_method = conversion_to_method;
 
-  switch (compression_otf_method) {
+  switch (current_recursion_context.compression_otf_method) {
     case OTF_BZIP2: { // bZip2
       otf_bz2_stream_c.bzalloc = NULL;
       otf_bz2_stream_c.bzfree = NULL;
@@ -8273,19 +8079,19 @@ int lzma_max_memory_default() {
 }
 
 void denit_compress_otf() {
-  if (comp_decomp_state == P_CONVERT) compression_otf_method = conversion_to_method;
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) current_recursion_context.compression_otf_method = conversion_to_method;
 
-  if (compression_otf_method > OTF_NONE) {
+  if (current_recursion_context.compression_otf_method > OTF_NONE) {
 
       // uncompressed data of length 0 ends compress-on-the-fly data
       char final_buf[9];
       for (int i = 0; i < 9; i++) {
         final_buf[i] = 0;
       }
-      own_fwrite(final_buf, 1, 9, fout, true, true);
+      own_fwrite(final_buf, 1, 9, current_recursion_context.fout, true, true);
   }
 
-  switch (compression_otf_method) {
+  switch (current_recursion_context.compression_otf_method) {
     case OTF_BZIP2: { // bZip2
 
       (void)BZ2_bzCompressEnd(&otf_bz2_stream_c);
@@ -8299,9 +8105,9 @@ void denit_compress_otf() {
 }
 
 void init_decompress_otf() {
-  if (comp_decomp_state == P_CONVERT) compression_otf_method = conversion_from_method;
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) current_recursion_context.compression_otf_method = conversion_from_method;
 
-  switch (compression_otf_method) {
+  switch (current_recursion_context.compression_otf_method) {
     case OTF_BZIP2: {
       otf_bz2_stream_d.bzalloc = NULL;
       otf_bz2_stream_d.bzfree = NULL;
@@ -8321,13 +8127,13 @@ void init_decompress_otf() {
       }
     }
   }
-  decompress_otf_end = false;
+  current_recursion_context.decompress_otf_end = false;
 }
 
 void denit_decompress_otf() {
-  if (comp_decomp_state == P_CONVERT) compression_otf_method = conversion_from_method;
+  if (current_recursion_context.comp_decomp_state == P_CONVERT) current_recursion_context.compression_otf_method = conversion_from_method;
 
-  switch (compression_otf_method) {
+  switch (current_recursion_context.compression_otf_method) {
     case OTF_BZIP2: { // bZip2
 
       (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
@@ -8397,17 +8203,17 @@ void print_work_sign(bool with_backspace) {
 }
 
 void print_debug_percent() {
-  printf("(%.2f%%) ", (input_file_pos / (float)fin_length) * (global_max_percent - global_min_percent) + global_min_percent);
+  printf("(%.2f%%) ", (current_recursion_context.input_file_pos / (float)current_recursion_context.fin_length) * (current_recursion_context.global_max_percent - current_recursion_context.global_min_percent) + current_recursion_context.global_min_percent);
 }
 
 void show_progress(float percent, bool use_backspaces, bool check_time) {
-  if (!check_time || ((get_time_ms() - sec_time) >= 250)) {
+  if (!check_time || ((get_time_ms() - current_recursion_context.sec_time) >= 250)) {
     if (use_backspaces) {
       printf("%s", std::string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
     }
 
     bool new_lzma_text = false;
-    if ((show_lzma_progress) && ((comp_decomp_state == P_COMPRESS) || ((comp_decomp_state == P_CONVERT) && (conversion_to_method == OTF_XZ_MT)))) {
+    if ((show_lzma_progress) && ((current_recursion_context.comp_decomp_state == P_COMPRESS) || ((current_recursion_context.comp_decomp_state == P_CONVERT) && (conversion_to_method == OTF_XZ_MT)))) {
       int snprintf_ret = snprintf(lzma_progress_text, 70, "lzma total/written/left: %i/%i/%i MiB ", lzma_mib_total, lzma_mib_written, lzma_mib_total - lzma_mib_written);
       if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
         new_lzma_text = true;
@@ -8428,7 +8234,7 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
     }
 
     print_work_sign(false);
-    sec_time = get_time_ms();
+    current_recursion_context.sec_time = get_time_ms();
   }
 }
 

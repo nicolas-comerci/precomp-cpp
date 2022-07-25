@@ -20,8 +20,8 @@ int inf_bzip2(FILE *source, FILE *dest, long long& compressed_stream_size, long 
 int def_bzip2(FILE *source, FILE *dest, int level);
 long long file_recompress(FILE* origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
 long long file_recompress_bzip2(FILE* origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total);
-void write_decompressed_data(long long byte_count, char* decompressed_file_name = tempfile1);
-void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* decompressed_file_name = tempfile1);
+void write_decompressed_data(long long byte_count, char* decompressed_file_name);
+void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* decompressed_file_name);
 unsigned long long compare_files(FILE* file1, FILE* file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(FILE* file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
 long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long long pos2);
@@ -162,8 +162,86 @@ void denit_decompress_otf();
 int auto_detected_thread_count();
 int lzma_max_memory_default();
 
+#define P_NONE 0
+#define P_COMPRESS 1
+#define P_DECOMPRESS 2
+#define P_CONVERT 3
+
 class RecursionContext {
   public:
+    long long fin_length;
     std::string input_file_name;
     std::string output_file_name;
+
+    std::set<long long>* intense_ignore_offsets = new std::set<long long>();
+    std::set<long long>* brute_ignore_offsets = new std::set<long long>();
+    int compression_otf_method = OTF_XZ_MT;
+    bool decompress_otf_end = false;
+    unsigned char* decomp_io_buf = NULL;
+
+    FILE* fin = NULL;
+    FILE* fout = NULL;
+    FILE* ftempout = NULL;
+    FILE* frecomp = NULL;
+    FILE* fdecomp = NULL;
+    FILE* fpack = NULL;
+    FILE* fpng = NULL;
+    FILE* fjpg = NULL;
+    FILE* fmp3 = NULL;
+
+    // name of temporary files
+    char metatempfile[18] = "~temp00000000.dat";
+    char tempfile0[19] = "~temp000000000.dat";
+    char tempfile1[19] = "~temp000000001.dat";
+    char tempfile2[19] = "~temp000000002.dat";
+    char tempfile3[19] = "~temp000000003.dat";
+
+    float global_min_percent = 0;
+    float global_max_percent = 100;
+    int comp_decomp_state = P_NONE;
+
+    long long input_file_pos;
+    unsigned char in_buf[IN_BUF_SIZE];
+    int cb; // "checkbuf"
+    long long saved_input_file_pos;
+    long long saved_cb;
+
+    bool compressed_data_found;
+
+    // Uncompressed data info
+    long long uncompressed_pos;
+    bool uncompressed_data_in_work;
+    long long uncompressed_length = -1;
+    long long uncompressed_bytes_total = 0;
+    long long uncompressed_bytes_written = 0;
+
+    long long retval;
+
+    // penalty bytes
+#define MAX_PENALTY_BYTES 16384
+    std::array<char, MAX_PENALTY_BYTES> penalty_bytes;
+    int penalty_bytes_len = 0;
+    std::array<char, MAX_PENALTY_BYTES> best_penalty_bytes;
+    int best_penalty_bytes_len = 0;
+    std::array<char, MAX_PENALTY_BYTES> local_penalty_bytes;
+
+    long long identical_bytes = -1;
+    long long identical_bytes_decomp = -1;
+    long long best_identical_bytes = -1;
+    long long best_identical_bytes_decomp = -1;
+
+    bool anything_was_used;
+    bool non_zlib_was_used;
+    long long sec_time;
+
+    // Mp3 stuff
+    long long suppress_mp3_type_until[16];
+    long long suppress_mp3_big_value_pairs_sum;
+    long long suppress_mp3_non_zero_padbits_sum;
+    long long suppress_mp3_inconsistent_emphasis_sum;
+    long long suppress_mp3_inconsistent_original_bit;
+    long long mp3_parsing_cache_second_frame;
+    long long mp3_parsing_cache_n;
+    long long mp3_parsing_cache_mp3_length;
+
 };
