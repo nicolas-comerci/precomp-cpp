@@ -295,3 +295,12 @@ public:
   unsigned int decompressed_zlib_count = 0;    // intense mode
   unsigned int decompressed_brute_count = 0;   // brute mode
 };
+
+class Precomp {
+public:
+  ObsoleteData obsolete;
+  Switches switches;
+  ResultStatistics statistics;
+  RecursionContext ctx;
+  std::vector<RecursionContext> recursion_contexts_stack;
+};
