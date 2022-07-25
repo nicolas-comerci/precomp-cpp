@@ -137,6 +137,8 @@ int recursion_depth = 0;
 int max_recursion_depth = 10;
 int max_recursion_depth_used = 0;
 bool max_recursion_depth_reached = false;
+ObsoleteData g_obsolete;
+Switches g_switches;
 RecursionContext current_recursion_context = RecursionContext();
 std::vector<RecursionContext> recursion_contexts_stack;
 void recursion_push();
@@ -151,24 +153,16 @@ lzma_stream otf_xz_stream_c = LZMA_STREAM_INIT, otf_xz_stream_d = LZMA_STREAM_IN
 lzma_init_mt_extra_parameters otf_xz_extra_params;
 int otf_xz_filter_used_count = 0;
 
-uint64_t compression_otf_max_memory = 0;
-int compression_otf_thread_count = 0;
 int conversion_from_method;
 int conversion_to_method;
 bz_stream otf_bz2_stream_c, otf_bz2_stream_d;
 
-bool DEBUG_MODE = false;
-
 long long start_time;
-bool show_lzma_progress = true;
 char lzma_progress_text[70];
 int old_lzma_progress_text_length = -1;
 int lzma_mib_total = 0, lzma_mib_written = 0;
 
-int comp_mem_level_count[81];
 zLibMTF MTF;
-bool zlib_level_was_used[81];
-bool level_switch_used = false;
 
 // preflate config
 size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
@@ -211,10 +205,6 @@ unsigned int decompressed_bzip2_count = 0;
 unsigned int decompressed_zlib_count = 0;    // intense mode
 unsigned int decompressed_brute_count = 0;   // brute mode
 
-long long* ignore_list = NULL; // positions to ignore
-int ignore_list_len = 0;
-
-int min_ident_size = 4;
 int min_ident_size_intense_brute_mode = 64;
 
 unsigned char zlib_header[2];
@@ -222,30 +212,8 @@ unsigned int* idat_lengths = NULL;
 unsigned int* idat_crcs = NULL;
 int idat_count;
 
-bool fast_mode = false;
-bool intense_mode = false;
-bool brute_mode = false;
-bool pdf_bmp_mode = false;
-bool prog_only = false;
-bool use_mjpeg = true;
-bool use_brunsli = true;
-bool use_brotli = false;
-bool use_packjpg_fallback = true;
-
 int intense_mode_depth_limit = -1;
 int brute_mode_depth_limit = -1;
-
-// compression type bools
-bool use_pdf = true;
-bool use_zip = true;
-bool use_gzip = true;
-bool use_png = true;
-bool use_gif = true;
-bool use_jpg = true;
-bool use_mp3 = true;
-bool use_swf = true;
-bool use_base64 = true;
-bool use_bzip2 = true;
 
 enum {
   D_PDF      = 0,
@@ -265,9 +233,6 @@ enum {
 
 // Precomp DLL things
 #ifdef PRECOMPDLL
-
-#include "precomp_dll.h"
-
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 DLL void get_copyright_msg(char* msg) {
@@ -279,45 +244,17 @@ DLL void get_copyright_msg(char* msg) {
 }
 
 void setSwitches(Switches switches) {
+  g_switches = switches;
   current_recursion_context.compression_otf_method = switches.compression_method;
-  show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
-  ignore_list = switches.ignore_list;
-  ignore_list_len = switches.ignore_list_len;
-  intense_mode = switches.intense_mode;
-  fast_mode = switches.fast_mode;
-  brute_mode = switches.brute_mode;
-  pdf_bmp_mode = switches.pdf_bmp_mode;
-  prog_only = switches.prog_only;
-  use_brunsli = switches.use_brunsli;
-  use_brotli = switches.use_brotli;
-  use_packjpg_fallback = switches.use_packjpg_fallback;
-  DEBUG_MODE = switches.debug_mode;
-  min_ident_size = switches.min_ident_size;
-  compression_otf_max_memory = switches.compression_otf_max_memory;
-  compression_otf_thread_count = switches.compression_otf_thread_count;
-  use_pdf = switches.use_pdf;
-  use_zip = switches.use_zip;
-  use_gzip = switches.use_gzip;
-  use_png = switches.use_png;
-  use_gif = switches.use_gif;
-  use_jpg = switches.use_jpg;
-  use_mp3 = switches.use_mp3;
-  use_swf = switches.use_swf;
-  use_base64 = switches.use_base64;
-  use_bzip2 = switches.use_bzip2;
-  use_mjpeg = switches.use_mjpeg;
-  if (switches.level_switch) {
+  if (switches.level_switch_used) {
 
     for (int i = 0; i < 81; i++) {
       if (switches.use_zlib_level[i]) {
-        comp_mem_level_count[i] = 0;
+        g_obsolete.comp_mem_level_count[i] = 0;
       } else {
-        comp_mem_level_count[i] = -1;
+        g_obsolete.comp_mem_level_count[i] = -1;
       }
     }
-
-    level_switch_used = true;
-
   }
 }
 
@@ -329,8 +266,8 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
 
   // init compression and memory level count
   for (int i = 0; i < 81; i++) {
-    comp_mem_level_count[i] = 0;
-    zlib_level_was_used[i] = false;
+    g_obsolete.comp_mem_level_count[i] = 0;
+    g_obsolete.zlib_level_was_used[i] = false;
   }
 
   current_recursion_context.fin_length = fileSize64(in_file);
@@ -369,8 +306,8 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
 
   // init compression and memory level count
   for (int i = 0; i < 81; i++) {
-    comp_mem_level_count[i] = 0;
-    zlib_level_was_used[i] = false;
+    g_obsolete.comp_mem_level_count[i] = 0;
+    g_obsolete.zlib_level_was_used[i] = false;
   }
 
   current_recursion_context.fin_length = fileSize64(in_file);
@@ -554,8 +491,8 @@ int init(int argc, char* argv[]) {
   // init compression and memory level count
   bool use_zlib_level[81];
   for (i = 0; i < 81; i++) {
-    comp_mem_level_count[i] = 0;
-    zlib_level_was_used[i] = false;
+    g_obsolete.comp_mem_level_count[i] = 0;
+    g_obsolete.zlib_level_was_used[i] = false;
     use_zlib_level[i] = true;
   }
 
@@ -603,15 +540,13 @@ int init(int argc, char* argv[]) {
         case 'I':
           {
             if (parsePrefixText(argv[i] + 1, "intense")) { // intense mode
-              intense_mode = true;
+              g_switches.intense_mode = true;
               if (strlen(argv[i]) > 8) {
                 intense_mode_depth_limit = parseIntUntilEnd(argv[i] + 8, "intense mode level limit", ERR_INTENSE_MODE_LIMIT_TOO_BIG);
               }
             } else {
               long long ignore_pos = parseInt64UntilEnd(argv[i] + 2, "ignore position", ERR_IGNORE_POS_TOO_BIG);
-              ignore_list = (long long*)realloc(ignore_list, (ignore_list_len + 1) * sizeof(long long));
-              ignore_list[ignore_list_len] = ignore_pos;
-              ignore_list_len++;
+              g_switches.ignore_list.push_back(ignore_pos);
             }
             break;
           }
@@ -629,20 +564,20 @@ int init(int argc, char* argv[]) {
             if (min_ident_size_set) {
               error(ERR_ONLY_SET_MIN_SIZE_ONCE);
             }
-            min_ident_size = parseIntUntilEnd(argv[i] + 2, "minimal identical byte size", ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
+            g_switches.min_ident_size = parseIntUntilEnd(argv[i] + 2, "minimal identical byte size", ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
             min_ident_size_set = true;
             break;
           }
         case 'B':
           {
 			if (parsePrefixText(argv[i] + 1, "brute")) { // brute mode
-			  brute_mode = true;
+        g_switches.brute_mode = true;
 			  if (strlen(argv[i]) > 6) {
 			    brute_mode_depth_limit = parseIntUntilEnd(argv[i] + 6, "brute mode level limit", ERR_BRUTE_MODE_LIMIT_TOO_BIG);
 			  }
 			}
-			else if (!parseSwitch(use_brunsli, argv[i] + 1, "brunsli")
-				  && !parseSwitch(use_brotli, argv[i] + 1, "brotli")) {
+			else if (!parseSwitch(g_switches.use_brunsli, argv[i] + 1, "brunsli")
+				  && !parseSwitch(g_switches.use_brotli, argv[i] + 1, "brotli")) {
 			  printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
 			  exit(1);
 			}
@@ -656,13 +591,13 @@ int init(int argc, char* argv[]) {
               if (lzma_max_memory_set) {
                 error(ERR_ONLY_SET_LZMA_MEMORY_ONCE);
               }
-              compression_otf_max_memory = parseIntUntilEnd(argv[i] + 3, "LZMA maximal memory");
+              g_switches.compression_otf_max_memory = parseIntUntilEnd(argv[i] + 3, "LZMA maximal memory");
               lzma_max_memory_set = true;
             } else if (toupper(argv[i][2]) == 'T') { // LZMA thread count
               if (lzma_thread_count_set) {
                 error(ERR_ONLY_SET_LZMA_THREAD_ONCE);
               }
-              compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
+              g_switches.compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
               lzma_thread_count_set = true;
             } else if (toupper(argv[i][2]) == 'L') {
               if (toupper(argv[i][3]) == 'C') {
@@ -788,10 +723,10 @@ int init(int argc, char* argv[]) {
           }
         case 'P':
           {
-            if (!parseSwitch(pdf_bmp_mode, argv[i] + 1, "pdfbmp")
-                && !parseSwitch(prog_only, argv[i] + 1, "progonly")
+            if (!parseSwitch(g_switches.pdf_bmp_mode, argv[i] + 1, "pdfbmp")
+                && !parseSwitch(g_switches.prog_only, argv[i] + 1, "progonly")
                 && !parseSwitch(preflate_verify, argv[i] + 1, "pfverify")
-				&& !parseSwitch(use_packjpg_fallback, argv[i] + 1, "packjpg")) {
+				&& !parseSwitch(g_switches.use_packjpg_fallback, argv[i] + 1, "packjpg")) {
               if (parsePrefixText(argv[i] + 1, "pfmeta")) {
                 int mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
                 if (mbsize >= INT_MAX / 1024) {
@@ -811,29 +746,29 @@ int init(int argc, char* argv[]) {
             bool set_to;
             switch (argv[i][2]) {
               case '+':
-                use_pdf = false;
-                use_zip = false;
-                use_gzip = false;
-                use_png = false;
-                use_gif = false;
-                use_jpg = false;
-                use_mp3 = false;
-                use_swf = false;
-                use_base64 = false;
-                use_bzip2 = false;
+                g_switches.use_pdf = false;
+                g_switches.use_zip = false;
+                g_switches.use_gzip = false;
+                g_switches.use_png = false;
+                g_switches.use_gif = false;
+                g_switches.use_jpg = false;
+                g_switches.use_mp3 = false;
+                g_switches.use_swf = false;
+                g_switches.use_base64 = false;
+                g_switches.use_bzip2 = false;
                 set_to = true;
                 break;
               case '-':
-                use_pdf = true;
-                use_zip = true;
-                use_gzip = true;
-                use_png = true;
-                use_gif = true;
-                use_jpg = true;
-                use_mp3 = true;
-                use_swf = true;
-                use_base64 = true;
-                use_bzip2 = true;
+                g_switches.use_pdf = true;
+                g_switches.use_zip = true;
+                g_switches.use_gzip = true;
+                g_switches.use_png = true;
+                g_switches.use_gif = true;
+                g_switches.use_jpg = true;
+                g_switches.use_mp3 = true;
+                g_switches.use_swf = true;
+                g_switches.use_base64 = true;
+                g_switches.use_bzip2 = true;
                 set_to = false;
                 break;
               default:
@@ -844,34 +779,34 @@ int init(int argc, char* argv[]) {
             for (j = 3; j < (int)strlen(argv[i]); j++) {
               switch (toupper(argv[i][j])) {
                 case 'P': // PDF
-                  use_pdf = set_to;
+                  g_switches.use_pdf = set_to;
                   break;
                 case 'Z': // ZIP
-                  use_zip = set_to;
+                  g_switches.use_zip = set_to;
                   break;
                 case 'G': // GZip
-                  use_gzip = set_to;
+                  g_switches.use_gzip = set_to;
                   break;
                 case 'N': // PNG
-                  use_png = set_to;
+                  g_switches.use_png = set_to;
                   break;
                 case 'F': // GIF
-                  use_gif = set_to;
+                  g_switches.use_gif = set_to;
                   break;
                 case 'J': // JPG
-                  use_jpg = set_to;
+                  g_switches.use_jpg = set_to;
                   break;
                 case '3': // MP3
-                  use_mp3 = set_to;
+                  g_switches.use_mp3 = set_to;
                   break;
                 case 'S': // SWF
-                  use_swf = set_to;
+                  g_switches.use_swf = set_to;
                   break;
                 case 'M': // MIME Base64
-                  use_base64 = set_to;
+                  g_switches.use_base64 = set_to;
                   break;
                 case 'B': // bZip2
-                  use_bzip2 = set_to;
+                  g_switches.use_bzip2 = set_to;
                   break;
                 default:
                   printf("ERROR: Invalid compression type %c\n", argv[i][j]);
@@ -902,7 +837,6 @@ int init(int argc, char* argv[]) {
                 printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
-            show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
             break;
           }
         case 'N':
@@ -931,7 +865,7 @@ int init(int argc, char* argv[]) {
           }
         case 'V':
           {
-            DEBUG_MODE = true;
+            g_switches.DEBUG_MODE = true;
             if (argv[i][2] != 0) { // Extra Parameters?
                 printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
@@ -1011,7 +945,7 @@ int init(int argc, char* argv[]) {
 
         case 'M':
           {
-            if (!parseSwitch(use_mjpeg, argv[i] + 1, "mjpeg")) {
+            if (!parseSwitch(g_switches.use_mjpeg, argv[i] + 1, "mjpeg")) {
               printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
               exit(1);
             }
@@ -1020,7 +954,7 @@ int init(int argc, char* argv[]) {
 
         case 'F':
           {
-            fast_mode = true;
+             g_switches.fast_mode = true;
              if (argv[i][2] != 0) { // Extra Parameters?
                 printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
@@ -1190,16 +1124,16 @@ int init(int argc, char* argv[]) {
 
     printf("Input file: %s\n", current_recursion_context.input_file_name.c_str());
     printf("Output file: %s\n\n", current_recursion_context.output_file_name.c_str());
-    if (DEBUG_MODE) {
+    if (g_switches.DEBUG_MODE) {
       if (min_ident_size_set) {
         printf("\n");
-        printf("Minimal ident size set to %i bytes\n", min_ident_size);
+        printf("Minimal ident size set to %i bytes\n", g_switches.min_ident_size);
       }
-      if (ignore_list_len > 0) {
+      if (!g_switches.ignore_list.empty()) {
         printf("\n");
         printf("Ignore position list:\n");
-        for (j = 0; j < ignore_list_len; j++) {
-          std::cout << ignore_list[j] << std::endl;
+        for (auto ignore_pos : g_switches.ignore_list) {
+          std::cout << ignore_pos << std::endl;
         }
         printf("\n");
       }
@@ -1212,13 +1146,13 @@ int init(int argc, char* argv[]) {
 
     for (i = 0; i < 81; i++) {
       if (use_zlib_level[i]) {
-        comp_mem_level_count[i] = 0;
+        g_obsolete.comp_mem_level_count[i] = 0;
       } else {
-        comp_mem_level_count[i] = -1;
+        g_obsolete.comp_mem_level_count[i] = -1;
       }
     }
 
-    level_switch_used = true;
+    g_switches.level_switch_used = true;
 
   }
 
@@ -1251,8 +1185,8 @@ int init_comfort(int argc, char* argv[]) {
   // init compression and memory level count
   bool use_zlib_level[81];
   for (i = 0; i < 81; i++) {
-    comp_mem_level_count[i] = 0;
-    zlib_level_was_used[i] = false;
+    g_obsolete.comp_mem_level_count[i] = 0;
+    g_obsolete.zlib_level_was_used[i] = false;
     use_zlib_level[i] = true;
   }
 
@@ -1372,9 +1306,9 @@ int init_comfort(int argc, char* argv[]) {
       fprintf(fnewini,";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
       fprintf(fnewini,"; Ignore_Positions=0\n");
       safe_fclose(&fnewini);
-      min_ident_size = 4;
+      g_switches.min_ident_size = 4;
       min_ident_size_set = true;
-      compression_otf_max_memory = 2048;
+      g_switches.compression_otf_max_memory = 2048;
       lzma_max_memory_set = true;
       lzma_thread_count_set = true;
       parse_ini_file = false;
@@ -1469,10 +1403,10 @@ int init_comfort(int argc, char* argv[]) {
             }
             multiplicator *= 10;
           }
-          min_ident_size = ident_size;
+          g_switches.min_ident_size = ident_size;
           min_ident_size_set = true;
 
-          printf("INI: Set minimal identical byte size to %i\n", min_ident_size);
+          printf("INI: Set minimal identical byte size to %i\n", g_switches.min_ident_size);
 
           valid_param = true;
         }
@@ -1485,7 +1419,7 @@ int init_comfort(int argc, char* argv[]) {
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled verbose mode\n");
-            DEBUG_MODE = true;
+            g_switches.DEBUG_MODE = true;
             valid_param = true;
           }
 
@@ -1515,8 +1449,6 @@ int init_comfort(int argc, char* argv[]) {
             valid_param = true;
           }
 
-          show_lzma_progress = (current_recursion_context.compression_otf_method == OTF_XZ_MT);
-
           if (!valid_param) {
             printf("ERROR: Invalid compression method value: %s\n", value);
             wait_for_key();
@@ -1530,7 +1462,7 @@ int init_comfort(int argc, char* argv[]) {
           }
           unsigned int multiplicator = 1;
           for (j = (strlen(value)-1); j >= 0; j--) {
-            compression_otf_max_memory += ((unsigned int)(value[j])-'0') * multiplicator;
+            g_switches.compression_otf_max_memory += ((unsigned int)(value[j])-'0') * multiplicator;
             if ((multiplicator * 10) < multiplicator) {
               exit(1);
             }
@@ -1538,8 +1470,8 @@ int init_comfort(int argc, char* argv[]) {
           }
           lzma_max_memory_set = true;
 
-          if (compression_otf_max_memory > 0) {
-            printf("INI: Set LZMA maximal memory to %i MiB\n", (int)compression_otf_max_memory);
+          if (g_switches.compression_otf_max_memory > 0) {
+            printf("INI: Set LZMA maximal memory to %i MiB\n", (int)g_switches.compression_otf_max_memory);
           }
 
           valid_param = true;
@@ -1551,7 +1483,7 @@ int init_comfort(int argc, char* argv[]) {
           }
           unsigned int multiplicator = 1;
           for (j = (strlen(value)-1); j >= 0; j--) {
-            compression_otf_thread_count += ((unsigned int)(value[j])-'0') * multiplicator;
+            g_switches.compression_otf_thread_count += ((unsigned int)(value[j])-'0') * multiplicator;
             if ((multiplicator * 10) < multiplicator) {
               exit(1);
             }
@@ -1559,8 +1491,8 @@ int init_comfort(int argc, char* argv[]) {
           }
           lzma_thread_count_set = true;
 
-          if (compression_otf_thread_count > 0) {
-            printf("INI: Set LZMA thread count to %i\n", compression_otf_thread_count);
+          if (g_switches.compression_otf_thread_count > 0) {
+            printf("INI: Set LZMA thread count to %i\n", g_switches.compression_otf_thread_count);
           }
 
           valid_param = true;
@@ -1643,7 +1575,7 @@ int init_comfort(int argc, char* argv[]) {
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled fast mode\n");
-            fast_mode = true;
+            g_switches.fast_mode = true;
             valid_param = true;
           }
 
@@ -1677,7 +1609,7 @@ int init_comfort(int argc, char* argv[]) {
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled intense mode\n");
-            intense_mode = true;
+            g_switches.intense_mode = true;
             valid_param = true;
           }
 
@@ -1696,7 +1628,7 @@ int init_comfort(int argc, char* argv[]) {
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled brute mode\n");
-            brute_mode = true;
+            g_switches.brute_mode = true;
             valid_param = true;
           }
 
@@ -1710,13 +1642,13 @@ int init_comfort(int argc, char* argv[]) {
         if (strcmp(param, "pdf_bmp_mode") == 0) {
           if (strcmp(value, "off") == 0) {
             printf("INI: Disabled PDF BMP mode\n");
-            pdf_bmp_mode = false;
+            g_switches.pdf_bmp_mode = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled PDF BMP mode\n");
-            pdf_bmp_mode = true;
+            g_switches.pdf_bmp_mode = true;
             valid_param = true;
           }
 
@@ -1730,13 +1662,13 @@ int init_comfort(int argc, char* argv[]) {
         if (strcmp(param, "jpg_progressive_only") == 0) {
           if (strcmp(value, "off") == 0) {
             printf("INI: Disabled progressive only JPG mode\n");
-            prog_only = false;
+            g_switches.prog_only = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled progressive only JPG mode\n");
-            prog_only = true;
+            g_switches.prog_only = true;
             valid_param = true;
           }
 
@@ -1750,13 +1682,13 @@ int init_comfort(int argc, char* argv[]) {
         if (strcmp(param, "mjpeg_recompression") == 0) {
           if (strcmp(value, "off") == 0) {
             printf("INI: Disabled MJPEG recompression\n");
-            use_mjpeg = false;
+            g_switches.use_mjpeg = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
             printf("INI: Enabled MJPEG recompression\n");
-            use_mjpeg = true;
+            g_switches.use_mjpeg = true;
             valid_param = true;
           }
 
@@ -1770,13 +1702,13 @@ int init_comfort(int argc, char* argv[]) {
 		if (strcmp(param, "jpg_brunsli") == 0) {
 			if (strcmp(value, "off") == 0) {
 				printf("INI: Disabled brunsli for JPG commpression\n");
-				use_brunsli = false;
+        g_switches.use_brunsli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
 				printf("INI: Enabled brunsli for JPG compression\n");
-				use_brunsli = true;
+        g_switches.use_brunsli = true;
 				valid_param = true;
 			}
 
@@ -1790,13 +1722,13 @@ int init_comfort(int argc, char* argv[]) {
 		if (strcmp(param, "jpg_brotli") == 0) {
 			if (strcmp(value, "off") == 0) {
 				printf("INI: Disabled brotli for JPG metadata compression\n");
-				use_brotli = false;
+        g_switches.use_brotli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
 				printf("INI: Enabled brotli for JPG metadata compression\n");
-				use_brotli = true;
+        g_switches.use_brotli = true;
 				valid_param = true;
 			}
 
@@ -1810,13 +1742,13 @@ int init_comfort(int argc, char* argv[]) {
 		if (strcmp(param, "jpg_packjpg") == 0) {
 			if (strcmp(value, "off") == 0) {
 				printf("INI: Disabled packJPG for JPG compression\n");
-				use_brotli = false;
+        g_switches.use_brotli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
 				printf("INI: Enabled packJPG for JPG compression\n");
-				use_brotli = true;
+        g_switches.use_brotli = true;
 				valid_param = true;
 			}
 
@@ -1835,48 +1767,48 @@ int init_comfort(int argc, char* argv[]) {
           }
           compression_type_line_used = true;
 
-          use_pdf = false;
-          use_zip = false;
-          use_gzip = false;
-          use_png = false;
-          use_gif = false;
-          use_jpg = false;
-          use_mp3 = false;
-          use_swf = false;
-          use_base64 = false;
-          use_bzip2 = false;
+          g_switches.use_pdf = false;
+          g_switches.use_zip = false;
+          g_switches.use_gzip = false;
+          g_switches.use_png = false;
+          g_switches.use_gif = false;
+          g_switches.use_jpg = false;
+          g_switches.use_mp3 = false;
+          g_switches.use_swf = false;
+          g_switches.use_base64 = false;
+          g_switches.use_bzip2 = false;
 
           for (j = 0; j < (int)strlen(value); j++) {
               switch (toupper(value[j])) {
                 case 'P': // PDF
-                  use_pdf = true;
+                  g_switches.use_pdf = true;
                   break;
                 case 'Z': // ZIP
-                  use_zip = true;
+                  g_switches.use_zip = true;
                   break;
                 case 'G': // GZip
-                  use_gzip = true;
+                  g_switches.use_gzip = true;
                   break;
                 case 'N': // PNG
-                  use_png = true;
+                  g_switches.use_png = true;
                   break;
                 case 'F': // GIF
-                  use_gif = true;
+                  g_switches.use_gif = true;
                   break;
                 case 'J': // JPG
-                  use_jpg = true;
+                  g_switches.use_jpg = true;
                   break;
                 case '3': // MP3
-                  use_mp3 = true;
+                  g_switches.use_mp3 = true;
                   break;
                 case 'S': // SWF
-                  use_swf = true;
+                  g_switches.use_swf = true;
                   break;
                 case 'M': // MIME Base64
-                  use_base64 = true;
+                  g_switches.use_base64 = true;
                   break;
                 case 'B': // bZip2
-                  use_bzip2 = true;
+                  g_switches.use_bzip2 = true;
                   break;
                 default:
                   printf("ERROR: Invalid compression type %c\n", value[j]);
@@ -1885,61 +1817,61 @@ int init_comfort(int argc, char* argv[]) {
               }
           }
 
-          if (use_pdf) {
+          if (g_switches.use_pdf) {
             printf("INI: PDF compression enabled\n");
           } else {
             printf("INI: PDF compression disabled\n");
           }
 
-          if (use_zip) {
+          if (g_switches.use_zip) {
             printf("INI: ZIP compression enabled\n");
           } else {
             printf("INI: ZIP compression disabled\n");
           }
 
-          if (use_gzip) {
+          if (g_switches.use_gzip) {
             printf("INI: GZip compression enabled\n");
           } else {
             printf("INI: GZip compression disabled\n");
           }
 
-          if (use_png) {
+          if (g_switches.use_png) {
             printf("INI: PNG compression enabled\n");
           } else {
             printf("INI: PNG compression disabled\n");
           }
 
-          if (use_gif) {
+          if (g_switches.use_gif) {
             printf("INI: GIF compression enabled\n");
           } else {
             printf("INI: GIF compression disabled\n");
           }
 
-          if (use_jpg) {
+          if (g_switches.use_jpg) {
             printf("INI: JPG compression enabled\n");
           } else {
             printf("INI: JPG compression disabled\n");
           }
 
-          if (use_mp3) {
+          if (g_switches.use_mp3) {
             printf("INI: MP3 compression enabled\n");
           } else {
             printf("INI: MP3 compression disabled\n");
           }
 
-          if (use_swf) {
+          if (g_switches.use_swf) {
             printf("INI: SWF compression enabled\n");
           } else {
             printf("INI: SWF compression disabled\n");
           }
 
-          if (use_base64) {
+          if (g_switches.use_base64) {
             printf("INI: Base64 compression enabled\n");
           } else {
             printf("INI: Base64 compression disabled\n");
           }
 
-          if (use_bzip2) {
+          if (g_switches.use_bzip2) {
             printf("INI: bZip2 compression enabled\n");
           } else {
             printf("INI: bZip2 compression disabled\n");
@@ -1956,48 +1888,48 @@ int init_comfort(int argc, char* argv[]) {
           }
           compression_type_line_used = true;
 
-          use_pdf = true;
-          use_zip = true;
-          use_gzip = true;
-          use_png = true;
-          use_gif = true;
-          use_jpg = true;
-          use_mp3 = true;
-          use_swf = true;
-          use_base64 = true;
-          use_bzip2 = true;
+          g_switches.use_pdf = true;
+          g_switches.use_zip = true;
+          g_switches.use_gzip = true;
+          g_switches.use_png = true;
+          g_switches.use_gif = true;
+          g_switches.use_jpg = true;
+          g_switches.use_mp3 = true;
+          g_switches.use_swf = true;
+          g_switches.use_base64 = true;
+          g_switches.use_bzip2 = true;
 
           for (j = 0; j < (int)strlen(value); j++) {
               switch (toupper(value[j])) {
                 case 'P': // PDF
-                  use_pdf = false;
+                  g_switches.use_pdf = false;
                   break;
                 case 'Z': // ZIP
-                  use_zip = false;
+                  g_switches.use_zip = false;
                   break;
                 case 'G': // GZip
-                  use_gzip = false;
+                  g_switches.use_gzip = false;
                   break;
                 case 'N': // PNG
-                  use_png = false;
+                  g_switches.use_png = false;
                   break;
                 case 'F': // GIF
-                  use_gif = false;
+                  g_switches.use_gif = false;
                   break;
                 case 'J': // JPG
-                  use_jpg = false;
+                  g_switches.use_jpg = false;
                   break;
                 case '3': // MP3
-                  use_mp3 = false;
+                  g_switches.use_mp3 = false;
                   break;
                 case 'S': // SWF
-                  use_swf = false;
+                  g_switches.use_swf = false;
                   break;
                 case 'M': // MIME Base64
-                  use_base64 = false;
+                  g_switches.use_base64 = false;
                   break;
                 case 'B': // bZip2
-                  use_bzip2 = false;
+                  g_switches.use_bzip2 = false;
                   break;
                 default:
                   printf("ERROR: Invalid compression type %c\n", value[j]);
@@ -2006,61 +1938,61 @@ int init_comfort(int argc, char* argv[]) {
               }
           }
 
-          if (use_pdf) {
+          if (g_switches.use_pdf) {
             printf("INI: PDF compression enabled\n");
           } else {
             printf("INI: PDF compression disabled\n");
           }
 
-          if (use_zip) {
+          if (g_switches.use_zip) {
             printf("INI: ZIP compression enabled\n");
           } else {
             printf("INI: ZIP compression disabled\n");
           }
 
-          if (use_gzip) {
+          if (g_switches.use_gzip) {
             printf("INI: GZip compression enabled\n");
           } else {
             printf("INI: GZip compression disabled\n");
           }
 
-          if (use_png) {
+          if (g_switches.use_png) {
             printf("INI: PNG compression enabled\n");
           } else {
             printf("INI: PNG compression disabled\n");
           }
 
-          if (use_gif) {
+          if (g_switches.use_gif) {
             printf("INI: GIF compression enabled\n");
           } else {
             printf("INI: GIF compression disabled\n");
           }
 
-          if (use_jpg) {
+          if (g_switches.use_jpg) {
             printf("INI: JPG compression enabled\n");
           } else {
             printf("INI: JPG compression disabled\n");
           }
 
-          if (use_mp3) {
+          if (g_switches.use_mp3) {
             printf("INI: MP3 compression enabled\n");
           } else {
             printf("INI: MP3 compression disabled\n");
           }
 
-          if (use_swf) {
+          if (g_switches.use_swf) {
             printf("INI: SWF compression enabled\n");
           } else {
             printf("INI: SWF compression disabled\n");
           }
 
-          if (use_base64) {
+          if (g_switches.use_base64) {
             printf("INI: Base64 compression enabled\n");
           } else {
             printf("INI: Base64 compression disabled\n");
           }
 
-          if (use_bzip2) {
+          if (g_switches.use_bzip2) {
             printf("INI: bZip2 compression enabled\n");
           } else {
             printf("INI: bZip2 compression disabled\n");
@@ -2154,9 +2086,7 @@ int init_comfort(int argc, char* argv[]) {
                 break;
               case ',':
                 if (act_ignore_pos != -1) {
-                  ignore_list = (long long*)realloc(ignore_list, (ignore_list_len + 1) * sizeof(long long));
-                  ignore_list[ignore_list_len] = act_ignore_pos;
-                  ignore_list_len++;
+                  g_switches.ignore_list.push_back(act_ignore_pos);
                   act_ignore_pos = -1;
                 }
                 break;
@@ -2169,9 +2099,7 @@ int init_comfort(int argc, char* argv[]) {
             }
           }
           if (act_ignore_pos != -1) {
-            ignore_list = (long long*)realloc(ignore_list, (ignore_list_len + 1) * sizeof(long long));
-            ignore_list[ignore_list_len] = act_ignore_pos;
-            ignore_list_len++;
+            g_switches.ignore_list.push_back(act_ignore_pos);
           }
 
           if (print_ignore_positions_message) {
@@ -2240,16 +2168,16 @@ int init_comfort(int argc, char* argv[]) {
 
   printf("Input file: %s\n", current_recursion_context.input_file_name.c_str());
   printf("Output file: %s\n\n", current_recursion_context.output_file_name.c_str());
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     if (min_ident_size_set) {
       printf("\n");
-      printf("Minimal ident size set to %i bytes\n", min_ident_size);
+      printf("Minimal ident size set to %i bytes\n", g_switches.min_ident_size);
     }
-    if (ignore_list_len > 0) {
+    if (!g_switches.ignore_list.empty()) {
       printf("\n");
       printf("Ignore position list:\n");
-      for (i = 0; i < ignore_list_len; i++) {
-        std::cout << ignore_list[j] << std::endl;
+      for (auto ignore_pos : g_switches.ignore_list) {
+        std::cout << ignore_pos << std::endl;
       }
       printf("\n");
     }
@@ -2259,13 +2187,13 @@ int init_comfort(int argc, char* argv[]) {
 
     for (i = 0; i < 81; i++) {
       if (use_zlib_level[i]) {
-        comp_mem_level_count[i] = 0;
+        g_obsolete.comp_mem_level_count[i] = 0;
       } else {
-        comp_mem_level_count[i] = -1;
+        g_obsolete.comp_mem_level_count[i] = -1;
       }
     }
 
-    level_switch_used = true;
+    g_switches.level_switch_used = true;
 
   }
 
@@ -2285,14 +2213,14 @@ void denit_compress() {
   safe_fclose(&current_recursion_context.fin);
   safe_fclose(&current_recursion_context.fout);
 
-  if ((recursion_depth == 0) && (!DEBUG_MODE) && show_lzma_progress && (old_lzma_progress_text_length > -1)) {
+  if ((recursion_depth == 0) && (!g_switches.DEBUG_MODE) && current_recursion_context.is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   #ifndef PRECOMPDLL
    long long fout_length = fileSize64(current_recursion_context.output_file_name.c_str());
    if (recursion_depth == 0) {
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
     printf("%s", std::string(14,'\b').c_str());
     std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
     } else {
@@ -2301,7 +2229,7 @@ void denit_compress() {
    }
   #else
    if (recursion_depth == 0) {
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
     printf(std::string(14,'\b').c_str());
     printf("100.00%% - ");
     printf_time(get_time_ms() - start_time);
@@ -2318,27 +2246,27 @@ void denit_compress() {
     printf("\nRecompressed streams: %i/%i\n", recompressed_streams_count, decompressed_streams_count);
 
     if ((recompressed_streams_count > 0) || (decompressed_streams_count > 0)) {
-      if ((use_pdf) && ((recompressed_pdf_count > 0) || (decompressed_pdf_count > 0))) printf("PDF streams: %i/%i\n", recompressed_pdf_count, decompressed_pdf_count);
-      if (pdf_bmp_mode) {
-        if ((use_pdf) && ((recompressed_pdf_count_8_bit > 0) || (decompressed_pdf_count_8_bit > 0))) printf("PDF image streams (8-bit): %i/%i\n", recompressed_pdf_count_8_bit, decompressed_pdf_count_8_bit);
-        if ((use_pdf) && ((recompressed_pdf_count_24_bit > 0) || (decompressed_pdf_count_24_bit > 0))) printf("PDF image streams (24-bit): %i/%i\n", recompressed_pdf_count_24_bit, decompressed_pdf_count_24_bit);
+      if ((g_switches.use_pdf) && ((recompressed_pdf_count > 0) || (decompressed_pdf_count > 0))) printf("PDF streams: %i/%i\n", recompressed_pdf_count, decompressed_pdf_count);
+      if (g_switches.pdf_bmp_mode) {
+        if ((g_switches.use_pdf) && ((recompressed_pdf_count_8_bit > 0) || (decompressed_pdf_count_8_bit > 0))) printf("PDF image streams (8-bit): %i/%i\n", recompressed_pdf_count_8_bit, decompressed_pdf_count_8_bit);
+        if ((g_switches.use_pdf) && ((recompressed_pdf_count_24_bit > 0) || (decompressed_pdf_count_24_bit > 0))) printf("PDF image streams (24-bit): %i/%i\n", recompressed_pdf_count_24_bit, decompressed_pdf_count_24_bit);
       }
-      if ((use_zip) && ((recompressed_zip_count > 0) || (decompressed_zip_count > 0))) printf("ZIP streams: %i/%i\n", recompressed_zip_count, decompressed_zip_count);
-      if ((use_gzip) && ((recompressed_gzip_count > 0) || (decompressed_gzip_count > 0))) printf("GZip streams: %i/%i\n", recompressed_gzip_count, decompressed_gzip_count);
-      if ((use_png) && ((recompressed_png_count > 0) || (decompressed_png_count > 0))) printf("PNG streams: %i/%i\n", recompressed_png_count, decompressed_png_count);
-      if ((use_png) && ((recompressed_png_multi_count > 0) || (decompressed_png_multi_count > 0))) printf("PNG streams (multi): %i/%i\n", recompressed_png_multi_count, decompressed_png_multi_count);
-      if ((use_gif) && ((recompressed_gif_count > 0) || (decompressed_gif_count > 0))) printf("GIF streams: %i/%i\n", recompressed_gif_count, decompressed_gif_count);
-      if ((use_jpg) && ((recompressed_jpg_count > 0) || (decompressed_jpg_count > 0))) printf("JPG streams: %i/%i\n", recompressed_jpg_count, decompressed_jpg_count);
-      if ((use_jpg) && ((recompressed_jpg_prog_count > 0) || (decompressed_jpg_prog_count > 0))) printf("JPG streams (progressive): %i/%i\n", recompressed_jpg_prog_count, decompressed_jpg_prog_count);
-      if ((use_mp3) && ((recompressed_mp3_count > 0) || (decompressed_mp3_count > 0))) printf("MP3 streams: %i/%i\n", recompressed_mp3_count, decompressed_mp3_count);
-      if ((use_swf) && ((recompressed_swf_count > 0) || (decompressed_swf_count > 0))) printf("SWF streams: %i/%i\n", recompressed_swf_count, decompressed_swf_count);
-      if ((use_base64) && ((recompressed_base64_count > 0) || (decompressed_base64_count > 0))) printf("Base64 streams: %i/%i\n", recompressed_base64_count, decompressed_base64_count);
-      if ((use_bzip2) && ((recompressed_bzip2_count > 0) || (decompressed_bzip2_count > 0))) printf("bZip2 streams: %i/%i\n", recompressed_bzip2_count, decompressed_bzip2_count);
-      if ((intense_mode) && ((recompressed_zlib_count > 0) || (decompressed_zlib_count > 0))) printf("zLib streams (intense mode): %i/%i\n", recompressed_zlib_count, decompressed_zlib_count);
-      if ((brute_mode) && ((recompressed_brute_count > 0) || (decompressed_brute_count > 0))) printf("Brute mode streams: %i/%i\n", recompressed_brute_count, decompressed_brute_count);
+      if ((g_switches.use_zip) && ((recompressed_zip_count > 0) || (decompressed_zip_count > 0))) printf("ZIP streams: %i/%i\n", recompressed_zip_count, decompressed_zip_count);
+      if ((g_switches.use_gzip) && ((recompressed_gzip_count > 0) || (decompressed_gzip_count > 0))) printf("GZip streams: %i/%i\n", recompressed_gzip_count, decompressed_gzip_count);
+      if ((g_switches.use_png) && ((recompressed_png_count > 0) || (decompressed_png_count > 0))) printf("PNG streams: %i/%i\n", recompressed_png_count, decompressed_png_count);
+      if ((g_switches.use_png) && ((recompressed_png_multi_count > 0) || (decompressed_png_multi_count > 0))) printf("PNG streams (multi): %i/%i\n", recompressed_png_multi_count, decompressed_png_multi_count);
+      if ((g_switches.use_gif) && ((recompressed_gif_count > 0) || (decompressed_gif_count > 0))) printf("GIF streams: %i/%i\n", recompressed_gif_count, decompressed_gif_count);
+      if ((g_switches.use_jpg) && ((recompressed_jpg_count > 0) || (decompressed_jpg_count > 0))) printf("JPG streams: %i/%i\n", recompressed_jpg_count, decompressed_jpg_count);
+      if ((g_switches.use_jpg) && ((recompressed_jpg_prog_count > 0) || (decompressed_jpg_prog_count > 0))) printf("JPG streams (progressive): %i/%i\n", recompressed_jpg_prog_count, decompressed_jpg_prog_count);
+      if ((g_switches.use_mp3) && ((recompressed_mp3_count > 0) || (decompressed_mp3_count > 0))) printf("MP3 streams: %i/%i\n", recompressed_mp3_count, decompressed_mp3_count);
+      if ((g_switches.use_swf) && ((recompressed_swf_count > 0) || (decompressed_swf_count > 0))) printf("SWF streams: %i/%i\n", recompressed_swf_count, decompressed_swf_count);
+      if ((g_switches.use_base64) && ((recompressed_base64_count > 0) || (decompressed_base64_count > 0))) printf("Base64 streams: %i/%i\n", recompressed_base64_count, decompressed_base64_count);
+      if ((g_switches.use_bzip2) && ((recompressed_bzip2_count > 0) || (decompressed_bzip2_count > 0))) printf("bZip2 streams: %i/%i\n", recompressed_bzip2_count, decompressed_bzip2_count);
+      if ((g_switches.intense_mode) && ((recompressed_zlib_count > 0) || (decompressed_zlib_count > 0))) printf("zLib streams (intense mode): %i/%i\n", recompressed_zlib_count, decompressed_zlib_count);
+      if ((g_switches.brute_mode) && ((recompressed_brute_count > 0) || (decompressed_brute_count > 0))) printf("Brute mode streams: %i/%i\n", recompressed_brute_count, decompressed_brute_count);
     }
 
-    if (!level_switch_used) show_used_levels();
+    if (!g_switches.level_switch_used) show_used_levels();
 
    }
   #endif
@@ -2352,9 +2280,6 @@ void denit_compress() {
   tempfilelist_count -= 8;
   tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
 
-  if (recursion_depth == 0) {
-    free(ignore_list);
-  }
   if (current_recursion_context.decomp_io_buf != NULL) delete[] current_recursion_context.decomp_io_buf;
   current_recursion_context.decomp_io_buf = NULL;
 
@@ -2364,7 +2289,7 @@ void denit_compress() {
 void denit_decompress() {
   #ifndef PRECOMPDLL
    if (recursion_depth == 0) {
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
     printf("%s", std::string(14,'\b').c_str());
     printf("100.00%%\n");
     }
@@ -2373,7 +2298,7 @@ void denit_decompress() {
    }
   #else
    if (recursion_depth == 0) {
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
     printf(std::string(14,'\b').c_str());
     printf("100.00%% - ");
     printf_time(get_time_ms() - start_time);
@@ -2401,13 +2326,13 @@ void denit_convert() {
   safe_fclose(&current_recursion_context.fin);
   safe_fclose(&current_recursion_context.fout);
 
-  if ((!DEBUG_MODE) && show_lzma_progress && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
+  if ((!g_switches.DEBUG_MODE) && current_recursion_context.is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   long long fout_length = fileSize64(current_recursion_context.output_file_name.c_str());
   #ifndef PRECOMPDLL
-   if (!DEBUG_MODE) {
+   if (!g_switches.DEBUG_MODE) {
    printf("%s", std::string(14,'\b').c_str());
    std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
    } else {
@@ -2416,7 +2341,7 @@ void denit_convert() {
    printf("\nDone.\n");
    printf_time(get_time_ms() - start_time);
   #else
-   if (!DEBUG_MODE) {
+   if (!g_switches.DEBUG_MODE) {
    printf(std::string(14,'\b').c_str());
    std::cout << "100.00% - New size: " << fout_length << " instead of " << current_recursion_context.fin_length << "     " << std::endl;
    printf_time(get_time_ms() - start_time);
@@ -2436,14 +2361,14 @@ void denit() {
 // limit, so two helper functions make things easier to handle.
 
 bool intense_mode_is_active() {
-  if (!intense_mode) return false;
+  if (!g_switches.intense_mode) return false;
   if ((intense_mode_depth_limit == -1) || (recursion_depth <= intense_mode_depth_limit)) return true;
 
   return false;
 }
 
 bool brute_mode_is_active() {
-  if (!brute_mode) return false;
+  if (!g_switches.brute_mode) return false;
   if ((brute_mode_depth_limit == -1) || (recursion_depth <= brute_mode_depth_limit)) return true;
 
   return false;
@@ -2981,7 +2906,7 @@ struct recompress_deflate_result {
 };
 
 void debug_deflate_detected(const recompress_deflate_result& rdres, const char* type) {
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     print_debug_percent();
     std::cout << "Possible zLib-Stream " << type << " found at position " << current_recursion_context.saved_input_file_pos << std::endl;
     std::cout << "Compressed size: " << rdres.compressed_stream_size << std::endl;
@@ -2998,7 +2923,7 @@ void debug_deflate_detected(const recompress_deflate_result& rdres, const char* 
 }
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type,
                                const unsigned hdr_length, const uint64_t rec_length) {
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     std::cout << "Decompressed data - " << type << std::endl;
     std::cout << "Header length: " << hdr_length << std::endl;
     if (rdres.zlib_perfect) {
@@ -3215,7 +3140,7 @@ bool try_reconstructing_deflate_multipng(FILE* fin, FILE* fout, const recompress
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
 void debug_sums(const recompress_deflate_result& rdres) {
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     sum_compressed += rdres.compressed_stream_size;
     sum_uncompressed += rdres.uncompressed_stream_size;
     sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
@@ -3225,7 +3150,7 @@ void debug_sums(const recompress_deflate_result& rdres) {
   }
 }
 void debug_pos() {
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     //printf("deflate pos: i %I64d, o %I64d\n", (uint64_t)tell_64(fin), (uint64_t)tell_64(fout));
   }
 }
@@ -3258,14 +3183,14 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       if (img_bpc == 8) {
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
           bmp_header_type = 1;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             printf("Image size did match (8 bit)\n");
           }
           recompressed_pdf_count_8_bit++;
           recompressed_pdf_count--;
         } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
           bmp_header_type = 2;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             printf("Image size did match (24 bit)\n");
           }
           decompressed_pdf_count_8_bit--;
@@ -3273,7 +3198,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
           recompressed_pdf_count_24_bit++;
           recompressed_pdf_count--;
         } else {
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             printf("Image size didn't match with stream size\n");
           }
           decompressed_pdf_count_8_bit--;
@@ -3416,7 +3341,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
     } else {
       if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
       if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("No matches\n");
       }
     }
@@ -3480,7 +3405,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
     } else {
       if (type == D_SWF && intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
       if (type != D_BRUTE && brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("No matches\n");
       }
     }
@@ -3532,7 +3457,7 @@ void show_used_levels() {
   bool first_one = true;
   for (i = 0; i < 81; i++) {
    i_sort = (i % 9) * 9 + (i / 9); // to get the displayed levels sorted
-   if (zlib_level_was_used[i_sort]) {
+   if (g_obsolete.zlib_level_was_used[i_sort]) {
      if (!first_one) {
        printf(",");
      } else {
@@ -3544,16 +3469,16 @@ void show_used_levels() {
   }
 
   std::string disable_methods("");
-  if (((use_pdf) && ((recompressed_pdf_count == 0) && (decompressed_pdf_count > 0)))) disable_methods += 'p';
-  if (((use_zip) && ((recompressed_zip_count == 0) && (decompressed_zip_count > 0)))) disable_methods += 'z';
-  if (((use_gzip) && ((recompressed_gzip_count == 0) && (decompressed_gzip_count > 0)))) disable_methods += 'g';
-  if ((((use_png) && (((recompressed_png_count + recompressed_png_multi_count) == 0) && (decompressed_png_count + decompressed_png_multi_count > 0))))) disable_methods += 'n';
-  if (((use_gif) && ((recompressed_gif_count == 0) && (decompressed_gif_count > 0)))) disable_methods += 'f';
-  if (((use_jpg) && (((recompressed_jpg_count + recompressed_jpg_prog_count) == 0) && (decompressed_jpg_count + decompressed_jpg_prog_count > 0)))) disable_methods += 'j';
-  if (((use_swf) && ((recompressed_swf_count == 0) && (decompressed_swf_count > 0)))) disable_methods += 's';
-  if (((use_base64) && ((recompressed_base64_count == 0) && (decompressed_base64_count > 0)))) disable_methods += 'm';
-  if (((use_bzip2) && ((recompressed_bzip2_count == 0) && (decompressed_bzip2_count > 0)))) disable_methods += 'b';
-  if (((use_mp3) && ((recompressed_mp3_count == 0) && (decompressed_mp3_count > 0)))) disable_methods += '3';
+  if (((g_switches.use_pdf) && ((recompressed_pdf_count == 0) && (decompressed_pdf_count > 0)))) disable_methods += 'p';
+  if (((g_switches.use_zip) && ((recompressed_zip_count == 0) && (decompressed_zip_count > 0)))) disable_methods += 'z';
+  if (((g_switches.use_gzip) && ((recompressed_gzip_count == 0) && (decompressed_gzip_count > 0)))) disable_methods += 'g';
+  if ((((g_switches.use_png) && (((recompressed_png_count + recompressed_png_multi_count) == 0) && (decompressed_png_count + decompressed_png_multi_count > 0))))) disable_methods += 'n';
+  if (((g_switches.use_gif) && ((recompressed_gif_count == 0) && (decompressed_gif_count > 0)))) disable_methods += 'f';
+  if (((g_switches.use_jpg) && (((recompressed_jpg_count + recompressed_jpg_prog_count) == 0) && (decompressed_jpg_count + decompressed_jpg_prog_count > 0)))) disable_methods += 'j';
+  if (((g_switches.use_swf) && ((recompressed_swf_count == 0) && (decompressed_swf_count > 0)))) disable_methods += 's';
+  if (((g_switches.use_base64) && ((recompressed_base64_count == 0) && (decompressed_base64_count > 0)))) disable_methods += 'm';
+  if (((g_switches.use_bzip2) && ((recompressed_bzip2_count == 0) && (decompressed_bzip2_count > 0)))) disable_methods += 'b';
+  if (((g_switches.use_mp3) && ((recompressed_mp3_count == 0) && (decompressed_mp3_count > 0)))) disable_methods += '3';
   if ( disable_methods.length() > 0 ) {
     #ifdef COMFORT
       printf("\nCompression_Types_Disable=%s",disable_methods.c_str());
@@ -3573,7 +3498,7 @@ void show_used_levels() {
     printf("%i", max_recursion_depth_used);
   }
 
-  if ((level_count == 1) && (!fast_mode)) {
+  if ((level_count == 1) && (!g_switches.fast_mode)) {
     printf("\n\nFast mode does exactly the same for this file, only faster.\n");
   }
 
@@ -3595,7 +3520,7 @@ bool compress_file(float min_percent, float max_percent) {
   current_recursion_context.uncompressed_bytes_total = 0;
   current_recursion_context.uncompressed_bytes_written = 0;
 
-  if (!DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
+  if (!g_switches.DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
 
   seek_64(current_recursion_context.fin, 0);
   fread(current_recursion_context.in_buf, 1, IN_BUF_SIZE, current_recursion_context.fin);
@@ -3617,7 +3542,7 @@ bool compress_file(float min_percent, float max_percent) {
     in_buf_pos = current_recursion_context.input_file_pos;
     current_recursion_context.cb = 0;
 
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
       float percent = ((current_recursion_context.input_file_pos + current_recursion_context.uncompressed_bytes_written) / ((float)current_recursion_context.fin_length + current_recursion_context.uncompressed_bytes_total)) * (max_percent - min_percent) + min_percent;
       show_progress(percent, true, true);
     }
@@ -3625,8 +3550,8 @@ bool compress_file(float min_percent, float max_percent) {
     current_recursion_context.cb++;
   }
 
-  for (int j = 0; j < ignore_list_len; j++) {
-    ignore_this_pos = (ignore_list[j] == current_recursion_context.input_file_pos);
+  for (auto ignore_pos : g_switches.ignore_list) {
+    ignore_this_pos = (ignore_pos == current_recursion_context.input_file_pos);
     if (ignore_this_pos) {
       break;
     }
@@ -3635,10 +3560,10 @@ bool compress_file(float min_percent, float max_percent) {
   if (!ignore_this_pos) {
 
     // ZIP header?
-    if (((current_recursion_context.in_buf[current_recursion_context.cb] == 'P') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'K')) && (use_zip)) {
+    if (((current_recursion_context.in_buf[current_recursion_context.cb] == 'P') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'K')) && (g_switches.use_zip)) {
       // local file header?
       if ((current_recursion_context.in_buf[current_recursion_context.cb + 2] == 3) && (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 4)) {
-        if (DEBUG_MODE) {
+        if (g_switches.DEBUG_MODE) {
         printf("ZIP header detected\n");
         print_debug_percent();
         std::cout << "ZIP header detected at position " << current_recursion_context.input_file_pos << std::endl;
@@ -3647,7 +3572,7 @@ bool compress_file(float min_percent, float max_percent) {
         unsigned int uncompressed_size = (current_recursion_context.in_buf[current_recursion_context.cb + 25] << 24) + (current_recursion_context.in_buf[current_recursion_context.cb + 24] << 16) + (current_recursion_context.in_buf[current_recursion_context.cb + 23] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 22];
         unsigned int filename_length = (current_recursion_context.in_buf[current_recursion_context.cb + 27] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 26];
         unsigned int extra_field_length = (current_recursion_context.in_buf[current_recursion_context.cb + 29] << 8) + current_recursion_context.in_buf[current_recursion_context.cb + 28];
-        if (DEBUG_MODE) {
+        if (g_switches.DEBUG_MODE) {
         printf("compressed size: %i\n", compressed_size);
         printf("uncompressed size: %i\n", uncompressed_size);
         printf("file name length: %i\n", filename_length);
@@ -3677,7 +3602,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_gzip)) { // no ZIP header -> GZip header?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_gzip)) { // no ZIP header -> GZip header?
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 31) && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 139)) {
         // check zLib header in GZip header
         int compression_method = (current_recursion_context.in_buf[current_recursion_context.cb + 2] & 15);
@@ -3757,7 +3682,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_pdf)) { // no Gzip header -> PDF FlateDecode?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
       if (memcmp(current_recursion_context.in_buf + current_recursion_context.cb, "/FlateDecode", 12) == 0) {
         current_recursion_context.saved_input_file_pos = current_recursion_context.input_file_pos;
         current_recursion_context.saved_cb = current_recursion_context.cb;
@@ -3808,7 +3733,7 @@ bool compress_file(float min_percent, float max_percent) {
 
           int width_val = 0, height_val = 0, bpc_val = 0;
 
-          if ((start_pos > -1) && (pdf_bmp_mode)) {
+          if ((start_pos > -1) && (g_switches.pdf_bmp_mode)) {
 
             int width_pos, height_pos, bpc_pos;
 
@@ -3855,7 +3780,7 @@ bool compress_file(float min_percent, float max_percent) {
               }
 
             if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
-              if (DEBUG_MODE) {
+              if (g_switches.DEBUG_MODE) {
                 printf("Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
               }
             }
@@ -3903,7 +3828,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_png)) { // no PDF header -> PNG IDAT?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_png)) { // no PDF header -> PNG IDAT?
       if (memcmp(current_recursion_context.in_buf + current_recursion_context.cb, "IDAT", 4) == 0) {
 
         // space for length and crc parts of IDAT chunks
@@ -4014,7 +3939,7 @@ bool compress_file(float min_percent, float max_percent) {
 
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_gif)) { // no PNG header -> GIF header?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_gif)) { // no PNG header -> GIF header?
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'G') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'I') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'F')) {
         if ((current_recursion_context.in_buf[current_recursion_context.cb + 3] == '8') && (current_recursion_context.in_buf[current_recursion_context.cb + 5] == 'a')) {
           if ((current_recursion_context.in_buf[current_recursion_context.cb + 4] == '7') || (current_recursion_context.in_buf[current_recursion_context.cb + 4] == '9')) {
@@ -4039,7 +3964,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_jpg)) { // no GIF header -> JPG header?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_jpg)) { // no GIF header -> JPG header?
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 0xFF) && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 0xD8) && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 0xFF) && (
            (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC0) || (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC2) || (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 0xC4) || ((current_recursion_context.in_buf[current_recursion_context.cb + 3] >= 0xDB) && (current_recursion_context.in_buf[current_recursion_context.cb + 3] <= 0xFE))
          )) { // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
@@ -4118,7 +4043,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_mp3)) { // no JPG header -> MP3 header?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_mp3)) { // no JPG header -> MP3 header?
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 0xFF) && ((current_recursion_context.in_buf[current_recursion_context.cb + 1] & 0xE0) == 0xE0)) { // frame start
         int mpeg = -1;
         int layer = -1;
@@ -4244,7 +4169,7 @@ bool compress_file(float min_percent, float max_percent) {
             }
           } else if (type > 0) {
             current_recursion_context.suppress_mp3_type_until[type] = position_length_sum;
-            if (DEBUG_MODE) {
+            if (g_switches.DEBUG_MODE) {
               print_debug_percent();
               std::cout << "Unsupported MP3 type found at position " << current_recursion_context.saved_input_file_pos << ", length " << mp3_length << std::endl;
               printf ("Type: %s\n", filetype_description[type]);
@@ -4259,7 +4184,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_swf)) { // no MP3 header -> SWF header?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_swf)) { // no MP3 header -> SWF header?
       // CWS = Compressed SWF file
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'C') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'W') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'S')) {
         // check zLib header
@@ -4287,7 +4212,7 @@ bool compress_file(float min_percent, float max_percent) {
       }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_base64)) { // no SWF header -> Base64?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_base64)) { // no SWF header -> Base64?
     if ((current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'o') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'n') && (current_recursion_context.in_buf[current_recursion_context.cb + 3] == 't') && (current_recursion_context.in_buf[current_recursion_context.cb + 4] == 'e')) {
       unsigned char cte_detect[33];
       for (int i = 0; i < 33; i++) {
@@ -4332,7 +4257,7 @@ bool compress_file(float min_percent, float max_percent) {
     }
     }
 
-    if ((!current_recursion_context.compressed_data_found) && (use_bzip2)) { // no Base64 header -> bZip2?
+    if ((!current_recursion_context.compressed_data_found) && (g_switches.use_bzip2)) { // no Base64 header -> bZip2?
       // BZhx = header, x = compression level/blocksize (1-9)
       if ((current_recursion_context.in_buf[current_recursion_context.cb] == 'B') && (current_recursion_context.in_buf[current_recursion_context.cb + 1] == 'Z') && (current_recursion_context.in_buf[current_recursion_context.cb + 2] == 'h')) {
         int compression_level = current_recursion_context.in_buf[current_recursion_context.cb + 3] - '0';
@@ -4472,7 +4397,7 @@ void decompress_file() {
   }
 
   if (recursion_depth == 0) {
-    if (!DEBUG_MODE) show_progress(0, false, false);
+    if (!g_switches.DEBUG_MODE) show_progress(0, false, false);
     read_header();
   }
 
@@ -4480,7 +4405,7 @@ void decompress_file() {
 
 while (fin_pos < current_recursion_context.fin_length) {
 
-  if ((recursion_depth == 0) && (!DEBUG_MODE)) {
+  if ((recursion_depth == 0) && (!g_switches.DEBUG_MODE)) {
     float percent = (fin_pos / (float)current_recursion_context.fin_length) * 100;
     show_progress(percent, true, true);
   }
@@ -4492,7 +4417,7 @@ while (fin_pos < current_recursion_context.fin_length) {
 
     if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
 
-    if (DEBUG_MODE) {
+    if (g_switches.DEBUG_MODE) {
     std::cout << "Uncompressed data, length=" << uncompressed_data_length << std::endl;
     }
 
@@ -4513,7 +4438,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       int bmp_c = (header1 >> 6);
 
       debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         if (bmp_c == 1) printf("Skipping BMP header (8-Bit)\n");
         if (bmp_c == 2) printf("Skipping BMP header (24-Bit)\n");
       }
@@ -4646,7 +4571,7 @@ while (fin_pos < current_recursion_context.fin_length) {
     }
     case D_GIF: { // GIF recompression
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Decompressed data - GIF\n");
       }
 
@@ -4662,7 +4587,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       gDiff.GIFDiffIndex = fin_fget_vlint();
       gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
       own_fread(gDiff.GIFDiff, 1, gDiff.GIFDiffIndex, current_recursion_context.fin);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
       }
       gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
@@ -4678,7 +4603,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -4745,7 +4670,7 @@ while (fin_pos < current_recursion_context.fin_length) {
     }
     case D_JPG: { // JPG recompression
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Decompressed data - JPG\n");
       }
 
@@ -4756,7 +4681,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -4807,7 +4732,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       }
 
       if (!recompress_success) {
-        if (DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
+        if (g_switches.DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
         printf("Error recompressing data!");
         exit(1);
       }
@@ -4903,7 +4828,7 @@ while (fin_pos < current_recursion_context.fin_length) {
     }
     case D_BASE64: { // Base64 recompression
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Decompressed data - Base64\n");
       }
 
@@ -4913,7 +4838,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       // restore Base64 "header"
       int base64_header_length = fin_fget_vlint();
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("Base64 header length: %i\n", base64_header_length);
       }
       own_fread(in, 1, base64_header_length, current_recursion_context.fin);
@@ -4945,7 +4870,7 @@ while (fin_pos < current_recursion_context.fin_length) {
         recursion_data_length = fin_fget_vlint();
       }
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         if (recursion_used) {
           std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
@@ -4970,7 +4895,7 @@ while (fin_pos < current_recursion_context.fin_length) {
     }
     case D_BZIP2: { // bZip2 recompression
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Decompressed data - bZip2\n");
       }
 
@@ -4980,7 +4905,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       bool recursion_used = ((header1 & 128) == 128);
       int level = header2;
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Compression level: %i\n", level);
       }
 
@@ -4998,7 +4923,7 @@ while (fin_pos < current_recursion_context.fin_length) {
         recursion_data_length = fin_fget_vlint();
       }
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         if (recursion_used) {
           std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
@@ -5045,14 +4970,14 @@ while (fin_pos < current_recursion_context.fin_length) {
     }
     case D_MP3: { // MP3 recompression
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf("Decompressed data - MP3\n");
       }
 
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -5085,7 +5010,7 @@ while (fin_pos < current_recursion_context.fin_length) {
       }
 
       if (!recompress_success) {
-        if (DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
+        if (g_switches.DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
         printf("Error recompressing data!");
         exit(1);
       }
@@ -5162,7 +5087,7 @@ void convert_file() {
   init_compress_otf();
   init_decompress_otf();
 
-  if (!DEBUG_MODE) show_progress(0, false, false);
+  if (!g_switches.DEBUG_MODE) show_progress(0, false, false);
 
   for (;;) {
     bytes_read = own_fread(copybuf, 1, COPY_BUF_SIZE, current_recursion_context.fin);
@@ -5185,7 +5110,7 @@ void convert_file() {
 
     current_recursion_context.input_file_pos = tell_64(current_recursion_context.fin);
     print_work_sign(true);
-    if (!DEBUG_MODE) {
+    if (!g_switches.DEBUG_MODE) {
       float percent = (current_recursion_context.input_file_pos / (float)current_recursion_context.fin_length) * 100;
       show_progress(percent, true, true);
     }
@@ -5226,8 +5151,8 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
             current_recursion_context.identical_bytes = file_recompress_bzip2(origfile, level, current_recursion_context.identical_bytes_decomp, decomp_bytes_total);
             if (current_recursion_context.identical_bytes > -1) { // successfully recompressed?
               if ((current_recursion_context.identical_bytes > current_recursion_context.best_identical_bytes)  || ((current_recursion_context.identical_bytes == current_recursion_context.best_identical_bytes) && (current_recursion_context.penalty_bytes_len < current_recursion_context.best_penalty_bytes_len))) {
-                if (current_recursion_context.identical_bytes > min_ident_size) {
-                  if (DEBUG_MODE) {
+                if (current_recursion_context.identical_bytes > g_switches.min_ident_size) {
+                  if (g_switches.DEBUG_MODE) {
                   std::cout << "Identical recompressed bytes: " << current_recursion_context.identical_bytes << " of " << compressed_stream_size << std::endl;
                   std::cout << "Identical decompressed bytes: " << current_recursion_context.identical_bytes_decomp << " of " << decomp_bytes_total << std::endl;
                   }
@@ -5254,7 +5179,7 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
             current_recursion_context.best_penalty_bytes_len = 0;
 					}
 				} else {
-					if (DEBUG_MODE) {
+					if (g_switches.DEBUG_MODE) {
 					printf("Not enough identical recompressed bytes\n");
 					}
 				}
@@ -5441,7 +5366,7 @@ void fast_copy(FILE* file1, FILE* file2, long long bytecount, bool update_progre
 
     if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) {
       print_work_sign(true);
-      if ((update_progress) && (!DEBUG_MODE)) progress_update(i * COPY_BUF_SIZE);
+      if ((update_progress) && (!g_switches.DEBUG_MODE)) progress_update(i * COPY_BUF_SIZE);
     }
   }
   if (remaining_bytes != 0) {
@@ -5449,7 +5374,7 @@ void fast_copy(FILE* file1, FILE* file2, long long bytecount, bool update_progre
     own_fwrite(copybuf, 1, remaining_bytes, file2, false, update_progress);
   }
 
-  if ((update_progress) && (!DEBUG_MODE)) current_recursion_context.uncompressed_bytes_written += bytecount;
+  if ((update_progress) && (!g_switches.DEBUG_MODE)) current_recursion_context.uncompressed_bytes_written += bytecount;
 }
 
 void fast_copy(FILE* file, unsigned char* mem, long long bytecount) {
@@ -5574,7 +5499,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
 #endif // COMFORT
             exit(1);
           } // .avail_out == 0
-          if ((!DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
+          if ((!g_switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
         } while ((otf_xz_stream_c.avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
         result = size * count;
         break;
@@ -5864,7 +5789,7 @@ void try_decompression_png (int windowbits) {
     } else {
       if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
       if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("No matches\n");
       }
     }
@@ -5955,7 +5880,7 @@ void try_decompression_png_multi(FILE* fpng, int windowbits) {
     } else {
       if (intense_mode_is_active()) current_recursion_context.intense_ignore_offsets->insert(current_recursion_context.input_file_pos - 2);
       if (brute_mode_is_active()) current_recursion_context.brute_ignore_offsets->insert(current_recursion_context.input_file_pos);
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
         printf("No matches\n");
       }
     }
@@ -6322,7 +6247,7 @@ void try_decompression_gif(unsigned char version[5]) {
 
   bool recompress_success_needed = true;
 
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
   print_debug_percent();
   std::cout << "Possible GIF found at position " << current_recursion_context.input_file_pos << std::endl;;
   }
@@ -6340,7 +6265,7 @@ void try_decompression_gif(unsigned char version[5]) {
     return;
   }
 
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
   std::cout << "Can be decompressed to " << decomp_length << " bytes" << std::endl;
   }
 
@@ -6361,16 +6286,16 @@ void try_decompression_gif(unsigned char version[5]) {
     safe_fclose(&current_recursion_context.frecomp);
 
     if (current_recursion_context.best_identical_bytes < gif_length) {
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf ("Recompression failed\n");
       }
     } else {
-      if (DEBUG_MODE) {
+      if (g_switches.DEBUG_MODE) {
       printf ("Recompression successful\n");
       }
       recompress_success_needed = true;
 
-      if (current_recursion_context.best_identical_bytes > min_ident_size) {
+      if (current_recursion_context.best_identical_bytes > g_switches.min_ident_size) {
         recompressed_streams_count++;
         recompressed_gif_count++;
         current_recursion_context.non_zlib_was_used = true;
@@ -6398,7 +6323,7 @@ void try_decompression_gif(unsigned char version[5]) {
 
         // store diff bytes
         fout_fput_vlint(gDiff.GIFDiffIndex);
-        if(DEBUG_MODE) {
+        if(g_switches.DEBUG_MODE) {
           if (gDiff.GIFDiffIndex > 0)
             printf("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
         }
@@ -6408,7 +6333,7 @@ void try_decompression_gif(unsigned char version[5]) {
 
         // store penalty bytes, if any
         if (current_recursion_context.best_penalty_bytes_len != 0) {
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             printf("Penalty bytes were used: %i bytes\n", current_recursion_context.best_penalty_bytes_len);
           }
 
@@ -6436,7 +6361,7 @@ void try_decompression_gif(unsigned char version[5]) {
 
   } else {
 
-    if (DEBUG_MODE) {
+    if (g_switches.DEBUG_MODE) {
     printf ("No matches\n");
     }
 
@@ -6466,7 +6391,7 @@ void packjpg_mp3_dll_msg() {
 
 void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 
-        if (DEBUG_MODE) {
+        if (g_switches.DEBUG_MODE) {
           print_debug_percent();
           if (progressive_jpg) {
             printf ("Possible JPG (progressive) found at position ");
@@ -6475,19 +6400,19 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           }
           std::cout << current_recursion_context.saved_input_file_pos << ", length " << jpg_length << std::endl;
           // do not recompress non-progressive JPGs when prog_only is set
-          if ((!progressive_jpg) && (prog_only)) {
+          if ((!progressive_jpg) && (g_switches.prog_only)) {
             printf("Skipping (only progressive JPGs mode set)\n");
           }
         }
 
         // do not recompress non-progressive JPGs when prog_only is set
-        if ((!progressive_jpg) && (prog_only)) return;
+        if ((!progressive_jpg) && (g_switches.prog_only)) return;
 
         bool jpg_success = false;
         bool recompress_success = false;
         bool mjpg_dht_used = false;
 		bool brunsli_used = false;
-		bool brotli_used = use_brotli;
+		bool brotli_used = g_switches.use_brotli;
         char recompress_msg[256];
         unsigned char* jpg_mem_in = NULL;
         unsigned char* jpg_mem_out = NULL;
@@ -6501,15 +6426,15 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 
 		  bool brunsli_success = false;
 
-		  if (use_brunsli) {
-			  if (DEBUG_MODE) {
+		  if (g_switches.use_brunsli) {
+			  if (g_switches.DEBUG_MODE) {
 				  printf("Trying to compress using brunsli...\n");
 			  }
 			  brunsli::JPEGData jpegData;
 			  if (brunsli::ReadJpeg(jpg_mem_in, jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
 				  size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
 				  jpg_mem_out = new unsigned char[output_size];
-				  if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, use_brotli)) {
+				  if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, g_switches.use_brotli)) {
 					  recompress_success = true;
 					  brunsli_success = true;
 					  brunsli_used = true;
@@ -6521,7 +6446,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 			  }
 			  else {
 				  if (jpegData.error == brunsli::JPEGReadError::HUFFMAN_TABLE_NOT_FOUND) {
-					  if (DEBUG_MODE) printf("huffman table missing, trying to use Motion JPEG DHT\n");
+					  if (g_switches.DEBUG_MODE) printf("huffman table missing, trying to use Motion JPEG DHT\n");
 					  // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
 					  bool found_ffda = false;
 					  bool found_ff = false;
@@ -6550,7 +6475,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 						  if (brunsli::ReadJpeg(jpg_mem_in, jpg_length + MJPGDHT_LEN, brunsli::JPEG_READ_ALL, &jpegData)) {
 							  size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
 							  jpg_mem_out = new unsigned char[output_size];
-							  if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, use_brotli)) {
+							  if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, g_switches.use_brotli)) {
 								  recompress_success = true;
 								  brunsli_success = true;
 								  brunsli_used = true;
@@ -6570,8 +6495,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 					  }
 				  }
 			  }
-			  if (DEBUG_MODE && !brunsli_success) {
-				  if (use_packjpg_fallback) {
+			  if (g_switches.DEBUG_MODE && !brunsli_success) {
+				  if (g_switches.use_packjpg_fallback) {
 					  printf("Brunsli compression failed, using packJPG fallback...\n");
 				  } else {
 					  printf("Brunsli compression failed\n");
@@ -6579,14 +6504,14 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 			  }
 		  }
 
-		  if ((!use_brunsli || !brunsli_success) && use_packjpg_fallback) {
+		  if ((!g_switches.use_brunsli || !brunsli_success) && g_switches.use_packjpg_fallback) {
 			  pjglib_init_streams(jpg_mem_in, 1, jpg_length, jpg_mem_out, 1);
 			  recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
 			  brunsli_used = false;
 			  brotli_used = false;
 		  }
-        } else if (use_packjpg_fallback) { // large stream => use temporary files
-		  if (DEBUG_MODE) {
+        } else if (g_switches.use_packjpg_fallback) { // large stream => use temporary files
+		  if (g_switches.DEBUG_MODE) {
 			printf("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
@@ -6607,8 +6532,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 		  brotli_used = false;
         }
 
-        if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (use_mjpeg) && (use_packjpg_fallback)) {
-          if (DEBUG_MODE) printf ("huffman table missing, trying to use Motion JPEG DHT\n");
+        if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (g_switches.use_mjpeg) && (g_switches.use_packjpg_fallback)) {
+          if (g_switches.DEBUG_MODE) printf ("huffman table missing, trying to use Motion JPEG DHT\n");
           // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
           bool found_ffda = false;
           bool found_ff = false;
@@ -6670,8 +6595,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           decompressed_jpg_count++;
         }
 
-        if ((!recompress_success) && (use_packjpg_fallback)) {
-          if (DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
+        if ((!recompress_success) && (g_switches.use_packjpg_fallback)) {
+          if (g_switches.DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6707,7 +6632,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 
         if (jpg_success) {
 
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, recompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
@@ -6742,7 +6667,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
         } else {
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           printf("No matches\n");
           }
         }
@@ -6753,7 +6678,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 
 void try_decompression_mp3 (long long mp3_length) {
 
-        if (DEBUG_MODE) {
+        if (g_switches.DEBUG_MODE) {
           print_debug_percent();
           std::cout << "Possible MP3 found at position " << current_recursion_context.saved_input_file_pos << ", length " << mp3_length << std::endl;
         }
@@ -6795,7 +6720,7 @@ void try_decompression_mp3 (long long mp3_length) {
             if ((pos > 0) && (pos < mp3_length)) {
               mp3_length = pos;
 
-              if (DEBUG_MODE) printf ("Too much garbage data at the end, retry with new length %i\n", pos);
+              if (g_switches.DEBUG_MODE) printf ("Too much garbage data at the end, retry with new length %i\n", pos);
 
               if (in_memory) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
@@ -6816,22 +6741,22 @@ void try_decompression_mp3 (long long mp3_length) {
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "big value pairs out of bounds", 29) == 0)) {
           current_recursion_context.suppress_mp3_big_value_pairs_sum = current_recursion_context.saved_input_file_pos + mp3_length;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "non-zero padbits found", 22) == 0)) {
           current_recursion_context.suppress_mp3_non_zero_padbits_sum = current_recursion_context.saved_input_file_pos + mp3_length;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent use of emphasis", 28) == 0)) {
           current_recursion_context.suppress_mp3_inconsistent_emphasis_sum = current_recursion_context.saved_input_file_pos + mp3_length;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent original bit", 25) == 0)) {
           current_recursion_context.suppress_mp3_inconsistent_original_bit = current_recursion_context.saved_input_file_pos + mp3_length;
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << current_recursion_context.suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << std::endl;
           }
         }
@@ -6840,7 +6765,7 @@ void try_decompression_mp3 (long long mp3_length) {
         decompressed_mp3_count++;
 
         if (!recompress_success) {
-          if (DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
+          if (g_switches.DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6872,7 +6797,7 @@ void try_decompression_mp3 (long long mp3_length) {
 
         if (mp3_success) {
 
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, recompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
@@ -6903,7 +6828,7 @@ void try_decompression_mp3 (long long mp3_length) {
           current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
         } else {
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           printf("No matches\n");
           }
         }
@@ -7012,7 +6937,7 @@ void try_decompression_bzip2(int compression_level) {
           decompressed_streams_count++;
           decompressed_bzip2_count++;
 
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           print_debug_percent();
           std::cout << "Possible bZip2-Stream found at position " << current_recursion_context.saved_input_file_pos << ", compression level = " << compression_level << std::endl;
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
@@ -7025,11 +6950,11 @@ void try_decompression_bzip2(int compression_level) {
 
           try_recompress_bzip2(current_recursion_context.fin, compression_level, compressed_stream_size);
 
-          if ((current_recursion_context.best_identical_bytes > min_ident_size) && (current_recursion_context.best_identical_bytes < current_recursion_context.best_identical_bytes_decomp)) {
+          if ((current_recursion_context.best_identical_bytes > g_switches.min_ident_size) && (current_recursion_context.best_identical_bytes < current_recursion_context.best_identical_bytes_decomp)) {
             recompressed_streams_count++;
             recompressed_bzip2_count++;
 
-            if (DEBUG_MODE) {
+            if (g_switches.DEBUG_MODE) {
             std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, decompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
             }
 
@@ -7058,7 +6983,7 @@ void try_decompression_bzip2(int compression_level) {
 
             // store penalty bytes, if any
             if (current_recursion_context.best_penalty_bytes_len != 0) {
-              if (DEBUG_MODE) {
+              if (g_switches.DEBUG_MODE) {
                 printf("Penalty bytes were used: %i bytes\n", current_recursion_context.best_penalty_bytes_len);
               }
               fout_fput_vlint(current_recursion_context.best_penalty_bytes_len);
@@ -7090,7 +7015,7 @@ void try_decompression_bzip2(int compression_level) {
             current_recursion_context.cb += current_recursion_context.best_identical_bytes - 1;
 
           } else {
-            if (DEBUG_MODE) {
+            if (g_switches.DEBUG_MODE) {
             printf("No matches\n");
             }
           }
@@ -7332,7 +7257,7 @@ void try_decompression_base64(int base64_header_length) {
           safe_fclose(&current_recursion_context.ftempout);
 
 
-          if (DEBUG_MODE) {
+          if (g_switches.DEBUG_MODE) {
           print_debug_percent();
           std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << current_recursion_context.saved_input_file_pos << std::endl;
           std::cout << "Can be decoded to " << current_recursion_context.identical_bytes << " bytes" << std::endl;
@@ -7356,10 +7281,10 @@ void try_decompression_base64(int base64_header_length) {
 
           safe_fclose(&current_recursion_context.frecomp);
 
-          if (current_recursion_context.identical_bytes_decomp > min_ident_size) {
+          if (current_recursion_context.identical_bytes_decomp > g_switches.min_ident_size) {
             recompressed_streams_count++;
             recompressed_base64_count++;
-            if (DEBUG_MODE) {
+            if (g_switches.DEBUG_MODE) {
             std::cout << "Match: encoded to " << current_recursion_context.identical_bytes_decomp << " bytes" << std::endl;
             }
 
@@ -7419,7 +7344,7 @@ void try_decompression_base64(int base64_header_length) {
             current_recursion_context.input_file_pos += current_recursion_context.identical_bytes_decomp - 1;
             current_recursion_context.cb += current_recursion_context.identical_bytes_decomp - 1;
           } else {
-            if (DEBUG_MODE) {
+            if (g_switches.DEBUG_MODE) {
               printf("No match\n");
             }
           }
@@ -7517,7 +7442,7 @@ FILE* tryOpen(const char* filename, const char* mode) {
 
     exit(1);
   }
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     printf("Access problem for %s\n", filename);
     printf("Time for getting access: %li ms\n", (long)(get_time_ms() - timeoutstart));
   }
@@ -7707,7 +7632,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   current_recursion_context.compression_otf_method = OTF_NONE;
 
   recursion_depth++;
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     printf("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   tmp_r.success = compress_file(recursion_min_percent, recursion_max_percent);
@@ -7731,7 +7656,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   if (rescue_non_zlib_was_used)
     current_recursion_context.non_zlib_was_used = true;
 
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     if (tmp_r.success) {
       printf("Recursion streams found\n");
     } else {
@@ -7791,7 +7716,7 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   current_recursion_context.compression_otf_method = OTF_NONE;
 
   recursion_depth++;
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     printf("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   decompress_file();
@@ -7801,7 +7726,7 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   recursion_depth--;
   recursion_pop();
 
-  if (DEBUG_MODE) {
+  if (g_switches.DEBUG_MODE) {
     printf("Recursion end - back to recursion depth %i\n", recursion_depth);
   }
 
@@ -8033,8 +7958,8 @@ void init_compress_otf() {
     case OTF_XZ_MT: {
       uint64_t memory_usage = 0;
       uint64_t block_size = 0;
-      uint64_t max_memory = compression_otf_max_memory * 1024 * 1024LL;
-      int threads = compression_otf_thread_count;
+      uint64_t max_memory = g_switches.compression_otf_max_memory * 1024 * 1024LL;
+      int threads = g_switches.compression_otf_thread_count;
 
       if (max_memory == 0) {
         max_memory = lzma_max_memory_default() * 1024 * 1024LL;
@@ -8188,7 +8113,7 @@ void safe_fclose(FILE** f) {
 }
 
 void print_work_sign(bool with_backspace) {
-  if (!DEBUG_MODE) {
+  if (!g_switches.DEBUG_MODE) {
     if ((get_time_ms() - work_sign_start_time) >= 250) {
       work_sign_var = (work_sign_var + 1) % 4;
       work_sign_start_time = get_time_ms();
@@ -8213,7 +8138,7 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
     }
 
     bool new_lzma_text = false;
-    if ((show_lzma_progress) && ((current_recursion_context.comp_decomp_state == P_COMPRESS) || ((current_recursion_context.comp_decomp_state == P_CONVERT) && (conversion_to_method == OTF_XZ_MT)))) {
+    if ((current_recursion_context.is_show_lzma_progress()) && ((current_recursion_context.comp_decomp_state == P_COMPRESS) || ((current_recursion_context.comp_decomp_state == P_CONVERT) && (conversion_to_method == OTF_XZ_MT)))) {
       int snprintf_ret = snprintf(lzma_progress_text, 70, "lzma total/written/left: %i/%i/%i MiB ", lzma_mib_total, lzma_mib_written, lzma_mib_total - lzma_mib_written);
       if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
         new_lzma_text = true;

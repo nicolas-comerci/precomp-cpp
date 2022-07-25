@@ -1,3 +1,5 @@
+#include "precomp_dll.h"
+
 int def(FILE *source, FILE *dest, int level, int windowbits, int memlevel);
 long long def_compare(FILE *compfile, int level, int windowbits, int memlevel, long long & decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
 long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& decompressed_bytes_used);
@@ -176,6 +178,7 @@ class RecursionContext {
     std::set<long long>* intense_ignore_offsets = new std::set<long long>();
     std::set<long long>* brute_ignore_offsets = new std::set<long long>();
     int compression_otf_method = OTF_XZ_MT;
+    bool is_show_lzma_progress() { return compression_otf_method == OTF_XZ_MT; }
     bool decompress_otf_end = false;
     unsigned char* decomp_io_buf = NULL;
 
@@ -244,4 +247,12 @@ class RecursionContext {
     long long mp3_parsing_cache_n;
     long long mp3_parsing_cache_mp3_length;
 
+};
+
+// Some variables I think are obsolete, not deleting them yet while other refactoring is in progress
+class ObsoleteData {
+public:
+  // I think these stopped being used when preflate was integrated into precomp
+  std::array<int, 81> comp_mem_level_count;
+  std::array<bool, 81> zlib_level_was_used;
 };

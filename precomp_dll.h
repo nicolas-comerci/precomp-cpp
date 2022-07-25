@@ -2,6 +2,7 @@
 #define STDTHREAD_IMPORTED
 #include <thread>
 #endif
+#include <vector>
 
 // Switches class
 class Switches {
@@ -9,12 +10,11 @@ class Switches {
     Switches();
 
     int compression_method;        //compression method to use (default: none)
-    unsigned int compression_otf_max_memory;    // max. memory for LZMA compression method (default: 2 GiB)
+    uint64_t compression_otf_max_memory;    // max. memory for LZMA compression method (default: 2 GiB)
     unsigned int compression_otf_thread_count;  // max. thread count for LZMA compression method (default: auto-detect)
 
     //byte positions to ignore (default: none)
-    long long* ignore_list;
-    int ignore_list_len;
+    std::vector<long long> ignore_list;
 
     bool intense_mode;             //intense mode (default: off)
     bool fast_mode;                //fast mode (default: off)
@@ -31,7 +31,7 @@ class Switches {
                                    //  (default: off)
     bool use_packjpg_fallback;     //use packJPG for JPG compression (fallback when brunsli fails)
                                    //  (default: on)
-    bool debug_mode;               //debug mode (default: off)
+    bool DEBUG_MODE;               //debug mode (default: off)
 
     unsigned int min_ident_size;   //minimal identical bytes (default: 4)
 
@@ -47,7 +47,7 @@ class Switches {
     bool use_base64;
     bool use_bzip2;
 
-    bool level_switch;            //level switch used? (default: no)
+    bool level_switch_used;            //level switch used? (default: no)
     bool use_zlib_level[81];      //compression levels to use (default: all)
 };
 
@@ -60,8 +60,6 @@ Switches::Switches() {
     compression_otf_thread_count = 2;
   }
 
-  ignore_list = NULL;
-  ignore_list_len = 0;
   intense_mode = false;
   fast_mode = false;
   brute_mode = false;
@@ -71,7 +69,7 @@ Switches::Switches() {
   use_brunsli = true;
   use_brotli = false;
   use_packjpg_fallback = true;
-  debug_mode = false;
+  DEBUG_MODE = false;
   min_ident_size = 4;
   
   use_pdf = true;
@@ -84,7 +82,7 @@ Switches::Switches() {
   use_swf = true;
   use_base64 = true;
   use_bzip2 = true;
-  level_switch = false;
+  level_switch_used = false;
   for (int i = 0; i < 81; i++) {
     use_zlib_level[i] = true;
   }
