@@ -256,3 +256,42 @@ public:
   std::array<int, 81> comp_mem_level_count;
   std::array<bool, 81> zlib_level_was_used;
 };
+
+class ResultStatistics {
+public:
+  unsigned int recompressed_streams_count = 0;
+  unsigned int recompressed_pdf_count = 0;
+  unsigned int recompressed_pdf_count_8_bit = 0;
+  unsigned int recompressed_pdf_count_24_bit = 0;
+  unsigned int recompressed_zip_count = 0;
+  unsigned int recompressed_gzip_count = 0;
+  unsigned int recompressed_png_count = 0;
+  unsigned int recompressed_png_multi_count = 0;
+  unsigned int recompressed_gif_count = 0;
+  unsigned int recompressed_jpg_count = 0;
+  unsigned int recompressed_jpg_prog_count = 0;
+  unsigned int recompressed_mp3_count = 0;
+  unsigned int recompressed_swf_count = 0;
+  unsigned int recompressed_base64_count = 0;
+  unsigned int recompressed_bzip2_count = 0;
+  unsigned int recompressed_zlib_count = 0;    // intense mode
+  unsigned int recompressed_brute_count = 0;   // brute mode
+
+  unsigned int decompressed_streams_count = 0;
+  unsigned int decompressed_pdf_count = 0;
+  unsigned int decompressed_pdf_count_8_bit = 0;
+  unsigned int decompressed_pdf_count_24_bit = 0;
+  unsigned int decompressed_zip_count = 0;
+  unsigned int decompressed_gzip_count = 0;
+  unsigned int decompressed_png_count = 0;
+  unsigned int decompressed_png_multi_count = 0;
+  unsigned int decompressed_gif_count = 0;
+  unsigned int decompressed_jpg_count = 0;
+  unsigned int decompressed_jpg_prog_count = 0;
+  unsigned int decompressed_mp3_count = 0;
+  unsigned int decompressed_swf_count = 0;
+  unsigned int decompressed_base64_count = 0;
+  unsigned int decompressed_bzip2_count = 0;
+  unsigned int decompressed_zlib_count = 0;    // intense mode
+  unsigned int decompressed_brute_count = 0;   // brute mode
+};

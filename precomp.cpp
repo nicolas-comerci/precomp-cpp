@@ -168,42 +168,7 @@ zLibMTF MTF;
 size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
 bool preflate_verify = false;
 
-// statistics
-unsigned int recompressed_streams_count = 0;
-unsigned int recompressed_pdf_count = 0;
-unsigned int recompressed_pdf_count_8_bit = 0;
-unsigned int recompressed_pdf_count_24_bit = 0;
-unsigned int recompressed_zip_count = 0;
-unsigned int recompressed_gzip_count = 0;
-unsigned int recompressed_png_count = 0;
-unsigned int recompressed_png_multi_count = 0;
-unsigned int recompressed_gif_count = 0;
-unsigned int recompressed_jpg_count = 0;
-unsigned int recompressed_jpg_prog_count = 0;
-unsigned int recompressed_mp3_count = 0;
-unsigned int recompressed_swf_count = 0;
-unsigned int recompressed_base64_count = 0;
-unsigned int recompressed_bzip2_count = 0;
-unsigned int recompressed_zlib_count = 0;    // intense mode
-unsigned int recompressed_brute_count = 0;   // brute mode
-
-unsigned int decompressed_streams_count = 0;
-unsigned int decompressed_pdf_count = 0;
-unsigned int decompressed_pdf_count_8_bit = 0;
-unsigned int decompressed_pdf_count_24_bit = 0;
-unsigned int decompressed_zip_count = 0;
-unsigned int decompressed_gzip_count = 0;
-unsigned int decompressed_png_count = 0;
-unsigned int decompressed_png_multi_count = 0;
-unsigned int decompressed_gif_count = 0;
-unsigned int decompressed_jpg_count = 0;
-unsigned int decompressed_jpg_prog_count = 0;
-unsigned int decompressed_mp3_count = 0;
-unsigned int decompressed_swf_count = 0;
-unsigned int decompressed_base64_count = 0;
-unsigned int decompressed_bzip2_count = 0;
-unsigned int decompressed_zlib_count = 0;    // intense mode
-unsigned int decompressed_brute_count = 0;   // brute mode
+ResultStatistics g_statistics;
 
 int min_ident_size_intense_brute_mode = 64;
 
@@ -2243,27 +2208,35 @@ void denit_compress() {
     printf_time(get_time_ms() - start_time);
 
     // statistics
-    printf("\nRecompressed streams: %i/%i\n", recompressed_streams_count, decompressed_streams_count);
+    printf("\nRecompressed streams: %i/%i\n", g_statistics.recompressed_streams_count, g_statistics.decompressed_streams_count);
 
-    if ((recompressed_streams_count > 0) || (decompressed_streams_count > 0)) {
-      if ((g_switches.use_pdf) && ((recompressed_pdf_count > 0) || (decompressed_pdf_count > 0))) printf("PDF streams: %i/%i\n", recompressed_pdf_count, decompressed_pdf_count);
-      if (g_switches.pdf_bmp_mode) {
-        if ((g_switches.use_pdf) && ((recompressed_pdf_count_8_bit > 0) || (decompressed_pdf_count_8_bit > 0))) printf("PDF image streams (8-bit): %i/%i\n", recompressed_pdf_count_8_bit, decompressed_pdf_count_8_bit);
-        if ((g_switches.use_pdf) && ((recompressed_pdf_count_24_bit > 0) || (decompressed_pdf_count_24_bit > 0))) printf("PDF image streams (24-bit): %i/%i\n", recompressed_pdf_count_24_bit, decompressed_pdf_count_24_bit);
+    if ((g_statistics.recompressed_streams_count > 0) || (g_statistics.decompressed_streams_count > 0)) {
+      std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{{
+        {g_switches.use_pdf, g_statistics.decompressed_pdf_count, g_statistics.recompressed_pdf_count, "PDF"},
+        {g_switches.pdf_bmp_mode && g_switches.use_pdf, g_statistics.decompressed_pdf_count_8_bit, g_statistics.recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
+        {g_switches.pdf_bmp_mode && g_switches.use_pdf, g_statistics.decompressed_pdf_count_24_bit, g_statistics.recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
+        {g_switches.use_zip, g_statistics.decompressed_zip_count, g_statistics.recompressed_zip_count, "ZIP"},
+        {g_switches.use_gzip, g_statistics.decompressed_gzip_count, g_statistics.recompressed_gzip_count, "GZip"},
+        {g_switches.use_png, g_statistics.decompressed_png_count, g_statistics.recompressed_png_count, "PNG"},
+        {g_switches.use_png, g_statistics.decompressed_png_multi_count, g_statistics.recompressed_png_multi_count, "PNG (multi)"},
+        {g_switches.use_gif, g_statistics.decompressed_gif_count, g_statistics.recompressed_gif_count, "GIF"},
+        {g_switches.use_jpg, g_statistics.decompressed_jpg_count, g_statistics.recompressed_jpg_count, "JPG"},
+        {g_switches.use_jpg, g_statistics.decompressed_jpg_prog_count, g_statistics.recompressed_jpg_prog_count, "JPG (progressive)"},
+        {g_switches.use_mp3, g_statistics.decompressed_mp3_count, g_statistics.recompressed_mp3_count, "MP3"},
+        {g_switches.use_swf, g_statistics.decompressed_swf_count, g_statistics.recompressed_swf_count, "SWF"},
+        {g_switches.use_base64, g_statistics.decompressed_base64_count, g_statistics.recompressed_base64_count, "Base64"},
+        {g_switches.use_bzip2, g_statistics.decompressed_bzip2_count, g_statistics.recompressed_bzip2_count, "bZip2"},
+        {g_switches.intense_mode, g_statistics.decompressed_zlib_count, g_statistics.recompressed_zlib_count, "zLib (intense mode)"},
+        {g_switches.brute_mode, g_statistics.decompressed_brute_count, g_statistics.recompressed_brute_count, "Brute mode"},
+      }};
+      for (auto format_stats : format_statistics) {
+        bool condition = std::get<0>(format_stats);
+        unsigned int decompressed_count = std::get<1>(format_stats);
+        unsigned int recompressed_count = std::get<2>(format_stats);
+        std::string format_tag = std::get<3>(format_stats);
+        if (condition && ((recompressed_count > 0) || (decompressed_count > 0)))
+          std::cout << format_tag << " streams: " << recompressed_count << "/" << decompressed_count << std::endl;
       }
-      if ((g_switches.use_zip) && ((recompressed_zip_count > 0) || (decompressed_zip_count > 0))) printf("ZIP streams: %i/%i\n", recompressed_zip_count, decompressed_zip_count);
-      if ((g_switches.use_gzip) && ((recompressed_gzip_count > 0) || (decompressed_gzip_count > 0))) printf("GZip streams: %i/%i\n", recompressed_gzip_count, decompressed_gzip_count);
-      if ((g_switches.use_png) && ((recompressed_png_count > 0) || (decompressed_png_count > 0))) printf("PNG streams: %i/%i\n", recompressed_png_count, decompressed_png_count);
-      if ((g_switches.use_png) && ((recompressed_png_multi_count > 0) || (decompressed_png_multi_count > 0))) printf("PNG streams (multi): %i/%i\n", recompressed_png_multi_count, decompressed_png_multi_count);
-      if ((g_switches.use_gif) && ((recompressed_gif_count > 0) || (decompressed_gif_count > 0))) printf("GIF streams: %i/%i\n", recompressed_gif_count, decompressed_gif_count);
-      if ((g_switches.use_jpg) && ((recompressed_jpg_count > 0) || (decompressed_jpg_count > 0))) printf("JPG streams: %i/%i\n", recompressed_jpg_count, decompressed_jpg_count);
-      if ((g_switches.use_jpg) && ((recompressed_jpg_prog_count > 0) || (decompressed_jpg_prog_count > 0))) printf("JPG streams (progressive): %i/%i\n", recompressed_jpg_prog_count, decompressed_jpg_prog_count);
-      if ((g_switches.use_mp3) && ((recompressed_mp3_count > 0) || (decompressed_mp3_count > 0))) printf("MP3 streams: %i/%i\n", recompressed_mp3_count, decompressed_mp3_count);
-      if ((g_switches.use_swf) && ((recompressed_swf_count > 0) || (decompressed_swf_count > 0))) printf("SWF streams: %i/%i\n", recompressed_swf_count, decompressed_swf_count);
-      if ((g_switches.use_base64) && ((recompressed_base64_count > 0) || (decompressed_base64_count > 0))) printf("Base64 streams: %i/%i\n", recompressed_base64_count, decompressed_base64_count);
-      if ((g_switches.use_bzip2) && ((recompressed_bzip2_count > 0) || (decompressed_bzip2_count > 0))) printf("bZip2 streams: %i/%i\n", recompressed_bzip2_count, decompressed_bzip2_count);
-      if ((g_switches.intense_mode) && ((recompressed_zlib_count > 0) || (decompressed_zlib_count > 0))) printf("zLib streams (intense mode): %i/%i\n", recompressed_zlib_count, decompressed_zlib_count);
-      if ((g_switches.brute_mode) && ((recompressed_brute_count > 0) || (decompressed_brute_count > 0))) printf("Brute mode streams: %i/%i\n", recompressed_brute_count, decompressed_brute_count);
     }
 
     if (!g_switches.level_switch_used) show_used_levels();
@@ -3164,18 +3137,18 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
-    decompressed_streams_count++;
+    g_statistics.decompressed_streams_count++;
     if (img_bpc == 8) {
-      decompressed_pdf_count_8_bit++;
+      g_statistics.decompressed_pdf_count_8_bit++;
     } else {
-      decompressed_pdf_count++;
+      g_statistics.decompressed_pdf_count++;
     }
     
     debug_deflate_detected(rdres, "in PDF");
 
     if (rdres.accepted) {
-      recompressed_streams_count++;
-      recompressed_pdf_count++;
+      g_statistics.recompressed_streams_count++;
+      g_statistics.recompressed_pdf_count++;
 
       current_recursion_context.non_zlib_was_used = true;
       debug_sums(rdres);
@@ -3186,23 +3159,23 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
           if (g_switches.DEBUG_MODE) {
             printf("Image size did match (8 bit)\n");
           }
-          recompressed_pdf_count_8_bit++;
-          recompressed_pdf_count--;
+          g_statistics.recompressed_pdf_count_8_bit++;
+          g_statistics.recompressed_pdf_count--;
         } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
           bmp_header_type = 2;
           if (g_switches.DEBUG_MODE) {
             printf("Image size did match (24 bit)\n");
           }
-          decompressed_pdf_count_8_bit--;
-          decompressed_pdf_count_24_bit++;
-          recompressed_pdf_count_24_bit++;
-          recompressed_pdf_count--;
+          g_statistics.decompressed_pdf_count_8_bit--;
+          g_statistics.decompressed_pdf_count_24_bit++;
+          g_statistics.recompressed_pdf_count_24_bit++;
+          g_statistics.recompressed_pdf_count--;
         } else {
           if (g_switches.DEBUG_MODE) {
             printf("Image size didn't match with stream size\n");
           }
-          decompressed_pdf_count_8_bit--;
-          decompressed_pdf_count++;
+          g_statistics.decompressed_pdf_count_8_bit--;
+          g_statistics.decompressed_pdf_count++;
         }
       }
 
@@ -3358,13 +3331,13 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
   recompress_deflate_result rdres = try_recompression_deflate(current_recursion_context.fin);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-    decompressed_streams_count++;
+    g_statistics.decompressed_streams_count++;
     dcounter++;
 
     debug_deflate_detected(rdres, debugname);
 
     if (rdres.accepted) {
-      recompressed_streams_count++;
+      g_statistics.recompressed_streams_count++;
       rcounter++;
 
       current_recursion_context.non_zlib_was_used = true;
@@ -3385,7 +3358,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       // Do we really want to allow uncompressed streams that are smaller than the compressed
       // ones? (It makes sense if the uncompressed stream contains a JPEG, or something similar.
       if (rdres.uncompressed_stream_size <= rdres.compressed_stream_size && !r.success) {
-        recompressed_streams_count--;
+        g_statistics.recompressed_streams_count--;
         compressed_data_found = false;
         return;
       }
@@ -3414,7 +3387,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
 }
 
 void try_decompression_zip(int zip_header_length) {
-  try_decompression_deflate_type(decompressed_zip_count, recompressed_zip_count, 
+  try_decompression_deflate_type(g_statistics.decompressed_zip_count, g_statistics.recompressed_zip_count, 
                                  D_ZIP, current_recursion_context.in_buf + current_recursion_context.cb + 4, zip_header_length - 4, false,
                                  "in ZIP");
 }
@@ -3469,16 +3442,21 @@ void show_used_levels() {
   }
 
   std::string disable_methods("");
-  if (((g_switches.use_pdf) && ((recompressed_pdf_count == 0) && (decompressed_pdf_count > 0)))) disable_methods += 'p';
-  if (((g_switches.use_zip) && ((recompressed_zip_count == 0) && (decompressed_zip_count > 0)))) disable_methods += 'z';
-  if (((g_switches.use_gzip) && ((recompressed_gzip_count == 0) && (decompressed_gzip_count > 0)))) disable_methods += 'g';
-  if ((((g_switches.use_png) && (((recompressed_png_count + recompressed_png_multi_count) == 0) && (decompressed_png_count + decompressed_png_multi_count > 0))))) disable_methods += 'n';
-  if (((g_switches.use_gif) && ((recompressed_gif_count == 0) && (decompressed_gif_count > 0)))) disable_methods += 'f';
-  if (((g_switches.use_jpg) && (((recompressed_jpg_count + recompressed_jpg_prog_count) == 0) && (decompressed_jpg_count + decompressed_jpg_prog_count > 0)))) disable_methods += 'j';
-  if (((g_switches.use_swf) && ((recompressed_swf_count == 0) && (decompressed_swf_count > 0)))) disable_methods += 's';
-  if (((g_switches.use_base64) && ((recompressed_base64_count == 0) && (decompressed_base64_count > 0)))) disable_methods += 'm';
-  if (((g_switches.use_bzip2) && ((recompressed_bzip2_count == 0) && (decompressed_bzip2_count > 0)))) disable_methods += 'b';
-  if (((g_switches.use_mp3) && ((recompressed_mp3_count == 0) && (decompressed_mp3_count > 0)))) disable_methods += '3';
+  std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
+    {g_switches.use_pdf, g_statistics.recompressed_pdf_count, g_statistics.decompressed_pdf_count, "p"},
+    {g_switches.use_zip, g_statistics.recompressed_zip_count, g_statistics.decompressed_zip_count, "z"},
+    {g_switches.use_gzip, g_statistics.recompressed_gzip_count, g_statistics.decompressed_gzip_count, "g"},
+    {g_switches.use_png, g_statistics.recompressed_png_count + g_statistics.recompressed_png_multi_count, g_statistics.decompressed_png_count + g_statistics.decompressed_png_multi_count, "n"},
+    {g_switches.use_gif, g_statistics.recompressed_gif_count, g_statistics.decompressed_gif_count, "f"},
+    {g_switches.use_jpg, g_statistics.recompressed_jpg_count + g_statistics.recompressed_jpg_prog_count, g_statistics.decompressed_jpg_count + g_statistics.decompressed_jpg_prog_count, "j"},
+    {g_switches.use_swf, g_statistics.recompressed_swf_count, g_statistics.decompressed_swf_count, "s"},
+    {g_switches.use_base64, g_statistics.recompressed_base64_count, g_statistics.decompressed_base64_count, "m"},
+    {g_switches.use_bzip2, g_statistics.recompressed_bzip2_count, g_statistics.decompressed_bzip2_count, "b"},
+    {g_switches.use_mp3, g_statistics.recompressed_mp3_count, g_statistics.decompressed_mp3_count, "3"},
+  }};
+  for (auto disable_format : disable_formats) {
+    if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
+  }
   if ( disable_methods.length() > 0 ) {
     #ifdef COMFORT
       printf("\nCompression_Types_Disable=%s",disable_methods.c_str());
@@ -5742,7 +5720,7 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
 }
 
 void try_decompression_gzip(int gzip_header_length) {
-  try_decompression_deflate_type(decompressed_gzip_count, recompressed_gzip_count, 
+  try_decompression_deflate_type(g_statistics.decompressed_gzip_count, g_statistics.recompressed_gzip_count, 
                                  D_GZIP, current_recursion_context.in_buf + current_recursion_context.cb + 2, gzip_header_length - 2, false,
                                  "in GZIP");
 }
@@ -5755,14 +5733,14 @@ void try_decompression_png (int windowbits) {
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
-    decompressed_streams_count++;
-    decompressed_png_count++;
+    g_statistics.decompressed_streams_count++;
+    g_statistics.decompressed_png_count++;
 
     debug_deflate_detected(rdres, "in PNG");
 
     if (rdres.accepted) {
-      recompressed_streams_count++;
-      recompressed_png_count++;
+      g_statistics.recompressed_streams_count++;
+      g_statistics.recompressed_png_count++;
 
       current_recursion_context.non_zlib_was_used = true;
 
@@ -5804,14 +5782,14 @@ void try_decompression_png_multi(FILE* fpng, int windowbits) {
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
-    decompressed_streams_count++;
-    decompressed_png_multi_count++;
+    g_statistics.decompressed_streams_count++;
+    g_statistics.decompressed_png_multi_count++;
 
     debug_deflate_detected(rdres, "in multiPNG");
 
     if (rdres.accepted) {
-      recompressed_streams_count++;
-      recompressed_png_multi_count++;
+      g_statistics.recompressed_streams_count++;
+      g_statistics.recompressed_png_multi_count++;
 
       current_recursion_context.non_zlib_was_used = true;
 
@@ -6271,8 +6249,8 @@ void try_decompression_gif(unsigned char version[5]) {
 
   safe_fclose(&current_recursion_context.ftempout);
 
-  decompressed_streams_count++;
-  decompressed_gif_count++;
+  g_statistics.decompressed_streams_count++;
+  g_statistics.decompressed_gif_count++;
 
   current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
   current_recursion_context.frecomp = tryOpen(current_recursion_context.tempfile2, "wb");
@@ -6296,8 +6274,8 @@ void try_decompression_gif(unsigned char version[5]) {
       recompress_success_needed = true;
 
       if (current_recursion_context.best_identical_bytes > g_switches.min_ident_size) {
-        recompressed_streams_count++;
-        recompressed_gif_count++;
+        g_statistics.recompressed_streams_count++;
+        g_statistics.recompressed_gif_count++;
         current_recursion_context.non_zlib_was_used = true;
 
         if (!current_recursion_context.penalty_bytes.empty()) {
@@ -6588,11 +6566,11 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           mjpg_dht_used = recompress_success;
         }
 
-        decompressed_streams_count++;
+        g_statistics.decompressed_streams_count++;
         if (progressive_jpg) {
-          decompressed_jpg_prog_count++;
+          g_statistics.decompressed_jpg_prog_count++;
         } else {
-          decompressed_jpg_count++;
+          g_statistics.decompressed_jpg_count++;
         }
 
         if ((!recompress_success) && (g_switches.use_packjpg_fallback)) {
@@ -6616,11 +6594,11 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           }
 
           if (jpg_new_length > 0) {
-            recompressed_streams_count++;
+            g_statistics.recompressed_streams_count++;
             if (progressive_jpg) {
-              recompressed_jpg_prog_count++;
+              g_statistics.recompressed_jpg_prog_count++;
             } else {
-              recompressed_jpg_count++;
+              g_statistics.recompressed_jpg_count++;
             }
             current_recursion_context.non_zlib_was_used = true;
 
@@ -6761,8 +6739,8 @@ void try_decompression_mp3 (long long mp3_length) {
           }
         }
 
-        decompressed_streams_count++;
-        decompressed_mp3_count++;
+        g_statistics.decompressed_streams_count++;
+        g_statistics.decompressed_mp3_count++;
 
         if (!recompress_success) {
           if (g_switches.DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
@@ -6785,8 +6763,8 @@ void try_decompression_mp3 (long long mp3_length) {
           }
 
           if (mp3_new_length > 0) {
-            recompressed_streams_count++;
-            recompressed_mp3_count++;
+            g_statistics.recompressed_streams_count++;
+            g_statistics.recompressed_mp3_count++;
             current_recursion_context.non_zlib_was_used = true;
 
             current_recursion_context.best_identical_bytes = mp3_length;
@@ -6908,19 +6886,19 @@ inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char h
 }
 
 void try_decompression_zlib(int windowbits) {
-  try_decompression_deflate_type(decompressed_zlib_count, recompressed_zlib_count, 
+  try_decompression_deflate_type(g_statistics.decompressed_zlib_count, g_statistics.recompressed_zlib_count, 
                                  D_RAW, current_recursion_context.in_buf + current_recursion_context.cb, 2, true,
                                  "(intense mode)");
 }
 
 void try_decompression_brute() {
-  try_decompression_deflate_type(decompressed_brute_count, recompressed_brute_count, 
+  try_decompression_deflate_type(g_statistics.decompressed_brute_count, g_statistics.recompressed_brute_count, 
                                  D_BRUTE, current_recursion_context.in_buf + current_recursion_context.cb, 0, false,
                                  "(brute mode)");
 }
 
 void try_decompression_swf(int windowbits) {
-  try_decompression_deflate_type(decompressed_swf_count, recompressed_swf_count, 
+  try_decompression_deflate_type(g_statistics.decompressed_swf_count, g_statistics.recompressed_swf_count, 
                                  D_SWF, current_recursion_context.in_buf + current_recursion_context.cb + 3, 7, true,
                                  "in SWF");
 }
@@ -6934,8 +6912,8 @@ void try_decompression_bzip2(int compression_level) {
 
         if (current_recursion_context.retval > 0) { // seems to be a zLib-Stream
 
-          decompressed_streams_count++;
-          decompressed_bzip2_count++;
+          g_statistics.decompressed_streams_count++;
+          g_statistics.decompressed_bzip2_count++;
 
           if (g_switches.DEBUG_MODE) {
           print_debug_percent();
@@ -6951,8 +6929,8 @@ void try_decompression_bzip2(int compression_level) {
           try_recompress_bzip2(current_recursion_context.fin, compression_level, compressed_stream_size);
 
           if ((current_recursion_context.best_identical_bytes > g_switches.min_ident_size) && (current_recursion_context.best_identical_bytes < current_recursion_context.best_identical_bytes_decomp)) {
-            recompressed_streams_count++;
-            recompressed_bzip2_count++;
+            g_statistics.recompressed_streams_count++;
+            g_statistics.recompressed_bzip2_count++;
 
             if (g_switches.DEBUG_MODE) {
             std::cout << "Best match: " << current_recursion_context.best_identical_bytes << " bytes, decompressed to " << current_recursion_context.best_identical_bytes_decomp << " bytes" << std::endl;
@@ -7248,8 +7226,8 @@ void try_decompression_base64(int base64_header_length) {
             }
           }
 
-          decompressed_streams_count++;
-          decompressed_base64_count++;
+          g_statistics.decompressed_streams_count++;
+          g_statistics.decompressed_base64_count++;
 
           current_recursion_context.ftempout = tryOpen(current_recursion_context.tempfile1, "rb");
           fseek(current_recursion_context.ftempout, 0, SEEK_END);
@@ -7282,8 +7260,8 @@ void try_decompression_base64(int base64_header_length) {
           safe_fclose(&current_recursion_context.frecomp);
 
           if (current_recursion_context.identical_bytes_decomp > g_switches.min_ident_size) {
-            recompressed_streams_count++;
-            recompressed_base64_count++;
+            g_statistics.recompressed_streams_count++;
+            g_statistics.recompressed_base64_count++;
             if (g_switches.DEBUG_MODE) {
             std::cout << "Match: encoded to " << current_recursion_context.identical_bytes_decomp << " bytes" << std::endl;
             }
