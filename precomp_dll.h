@@ -2,7 +2,99 @@
 #define STDTHREAD_IMPORTED
 #include <thread>
 #endif
+#include <cstdio>
 #include <vector>
+#include <string>
+#include <fstream>
+#include <memory>
+
+// Quick and dirty wrapper to move away from using naked FILE* and simplify later refactor to use iostreams,
+// the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
+class FileWrapper {
+public:
+  std::shared_ptr<std::FILE> file_ptr = nullptr;
+  bool is_tmp_file = false;
+  std::string last_open_file_path;
+  std::string last_open_file_mode;
+
+  friend bool operator==(const FileWrapper& lhs, const std::FILE* rhs) {
+    return rhs == lhs.file_ptr.get();
+  }
+  friend bool operator==(const std::FILE* lhs, const FileWrapper& rhs) {
+    return lhs == rhs.file_ptr.get();
+  }
+  friend bool operator!=(const FileWrapper& lhs, const std::FILE* rhs) {
+    return rhs != lhs.file_ptr.get();
+  }
+  friend bool operator!=(const std::FILE* lhs, const FileWrapper& rhs) {
+    return lhs != rhs.file_ptr.get();
+  }
+ 
+  void open(std::string file_path, std::string mode) {
+    last_open_file_path = file_path;
+    last_open_file_mode = mode;
+    bool tmp_file = is_tmp_file;
+    // if its a tmp file we ensure it doesn't exist already
+    if (is_tmp_file) std::remove(file_path.c_str());
+    // shared_ptr to FILE that closes itself when last instance is destroyed
+    file_ptr = std::shared_ptr<std::FILE>(
+      std::fopen(file_path.c_str(), mode.c_str()),
+      [](FILE* raw_file_ptr){}/*,
+      [tmp_file, file_path](FILE* raw_file_ptr) {
+        std::fclose(raw_file_ptr);
+        // We also delete tmp files after we are done with them
+        if (tmp_file) std::remove(file_path.c_str());
+      }*/
+    );
+  }
+
+  /*
+  void reopen(bool force = false) {
+    if (is_open && force) close();
+    if (!is_open) open(last_open_file_path, last_open_file_mode);
+  }
+  */
+
+  bool is_open() {
+    return file_ptr != nullptr;
+  }
+
+  /*
+  int close() {
+    int result = is_open() ? 0 : 1;
+    file_ptr = nullptr;
+    return result;
+  }
+  */
+
+  size_t read(char* s, std::streamsize n) {
+    return file_ptr != nullptr ? fread(s, sizeof(char), n, file_ptr.get()) : 0;
+  }
+
+  size_t read(unsigned char* s, std::streamsize n) {
+    return file_ptr != nullptr ? fread(s, sizeof(unsigned char), n, file_ptr.get()) : 0;
+  }
+
+  size_t write(const char* s, std::streamsize n) {
+    return file_ptr != nullptr ? fwrite(s, sizeof(char), n, file_ptr.get()) : 0;
+  }
+
+  size_t write(const unsigned char* s, std::streamsize n) {
+    return file_ptr != nullptr ? fwrite(s, sizeof(unsigned char), n, file_ptr.get()) : 0;
+  }
+
+  int putc(int chr) {
+    return file_ptr != nullptr ? std::fputc(chr, file_ptr.get()) : 0;
+  }
+
+  bool fail() {
+    return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
+  }
+
+  bool eof() {
+    return file_ptr != nullptr ? feof(file_ptr.get()) : false;
+  }
+};
 
 // Switches class
 class Switches {

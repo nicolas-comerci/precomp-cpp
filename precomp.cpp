@@ -232,14 +232,14 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
 
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
-  g_precomp.ctx.fin = fopen(in_file, "rb");
+  g_precomp.ctx.fin.open(in_file, "rb");
   if (g_precomp.ctx.fin == NULL) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  g_precomp.ctx.fout = fopen(out_file, "wb");
+  g_precomp.ctx.fout.open(out_file, "wb");
   if (g_precomp.ctx.fout == NULL) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
@@ -272,14 +272,14 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
 
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
-  g_precomp.ctx.fin = fopen(in_file, "rb");
+  g_precomp.ctx.fin.open(in_file, "rb");
   if (g_precomp.ctx.fin == NULL) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  g_precomp.ctx.fout = fopen(out_file, "wb");
+  g_precomp.ctx.fout.open(out_file, "wb");
   if (g_precomp.ctx.fout == NULL) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
@@ -946,7 +946,7 @@ int init(int argc, char* argv[]) {
 
       g_precomp.ctx.fin_length = fileSize64(argv[i]);
 
-      g_precomp.ctx.fin = fopen(argv[i],"rb");
+      g_precomp.ctx.fin.open(argv[i],"rb");
       if (g_precomp.ctx.fin == NULL) {
         printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
 
@@ -1076,7 +1076,7 @@ int init(int argc, char* argv[]) {
         #endif
       }
     }
-    g_precomp.ctx.fout = fopen(g_precomp.ctx.output_file_name.c_str(), "wb");
+    g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
     if (g_precomp.ctx.fout == NULL) {
       printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
       exit(1);
@@ -1178,7 +1178,7 @@ int init_comfort(int argc, char* argv[]) {
 
     g_precomp.ctx.fin_length = fileSize64(g_precomp.ctx.input_file_name.c_str());
 
-    g_precomp.ctx.fin = fopen(g_precomp.ctx.input_file_name.c_str(), "rb");
+    g_precomp.ctx.fin.open(g_precomp.ctx.input_file_name.c_str(), "rb");
     if (g_precomp.ctx.fin == NULL) {
       printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
       wait_for_key();
@@ -1213,59 +1213,60 @@ int init_comfort(int argc, char* argv[]) {
       wait_for_key();
       exit(1);
     } else {
-      FILE* fnewini = fopen(precomf_ini,"w");
-      fprintf(fnewini,";; Precomp Comfort v%i.%i.%i %s %s - %s version - INI file\n",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
-      fprintf(fnewini,";; Use a semicolon (;) for comments\n\n");
-      fprintf(fnewini,";; Compression method to use\n");
-      fprintf(fnewini,";; 0 = none, 1 = bZip2, 2 = lzma2 multi-threaded\n");
-      fprintf(fnewini,"Compression_Method=2\n");
-      fprintf(fnewini,";; Maximal memory (in MiB) for LZMA compression method\n");
-      fprintf(fnewini,"LZMA_Maximal_Memory=2048\n");
-      fprintf(fnewini,";; Thread count for LZMA compression method\n");
-      fprintf(fnewini,";; 0 = auto-detect\n");
-      fprintf(fnewini,"LZMA_Thread_Count=0\n");
-      fprintf(fnewini,";; LZMA filters to use (up to 3 of the them can be combined)\n");
-      fprintf(fnewini,";; X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
-      fprintf(fnewini,";; S = SPARC, D = delta (must be followed by distance 1..256))\n");
-      fprintf(fnewini,";; The default is to disable all filters\n");
-      fprintf(fnewini,"; LZMA_Filters=XPIATSD2\n\n");
-      fprintf(fnewini,";; Fast mode (on/off)\n");
-      fprintf(fnewini,"Fast_Mode=off\n\n");
-      fprintf(fnewini,";; Intense mode (on/off)\n");
-      fprintf(fnewini,"Intense_Mode=off\n\n");
-      fprintf(fnewini,";; Brute mode (on/off)\n");
-      fprintf(fnewini,"Brute_Mode=off\n\n");
-      fprintf(fnewini,";; Preserve Input's file extension (on/off)\n");
-      fprintf(fnewini,"Preserve_Extension=off\n\n");
-      fprintf(fnewini,";; Wrap BMP header around PDF images (on/off)\n");
-      fprintf(fnewini,"PDF_BMP_Mode=off\n\n");
-      fprintf(fnewini,";; Recompress progressive JPGs only (on/off)\n");
-      fprintf(fnewini,"JPG_progressive_only=off\n\n");
-      fprintf(fnewini,";; MJPEG recompression (on/off)\n");
-      fprintf(fnewini,"MJPEG_recompression=on\n\n");
-      fprintf(fnewini,";; Minimal identical byte size\n");
-	  fprintf(fnewini, "JPG_brunsli=on\n\n");
-	  fprintf(fnewini, ";; Prefer brunsli to packJPG for JPG streams (on/off)");
-	  fprintf(fnewini, "JPG_brotli=off\n\n");
-	  fprintf(fnewini, ";; Use brotli to compress metadata in JPG streams (on/off)");
-	  fprintf(fnewini, "JPG_packjpg=on\n\n");
-	  fprintf(fnewini, ";; Use packJPG for JPG streams (fallback if brunsli fails) (on/off)");
-      fprintf(fnewini,"Minimal_Size=4\n\n");
-      fprintf(fnewini,";; Verbose mode (on/off)\n");
-      fprintf(fnewini,"Verbose=off\n\n");
-      fprintf(fnewini,";; Compression types to use\n");
-      fprintf(fnewini,";; P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG, S = SWF\n");
-      fprintf(fnewini,";; M = MIME Base64, B = bZip2, 3 = MP3\n");
-      fprintf(fnewini,"; Compression_Types_Enable=PZGNFJSMB3\n");
-      fprintf(fnewini,"; Compression_Types_Disable=PZGNFJSMB3\n\n");
-      fprintf(fnewini,";; zLib levels to use\n");
-      fprintf(fnewini,"; zLib_Levels=\n");
-      fprintf(fnewini,";; Maximal recursion depth to use\n");
-      fprintf(fnewini,"Maximal_Recursion_Depth=10\n\n");
-      fprintf(fnewini,";; Use this to ignore streams at certain positions in the file\n");
-      fprintf(fnewini,";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
-      fprintf(fnewini,"; Ignore_Positions=0\n");
-      safe_fclose(&fnewini);
+      FileWrapper fnewini;
+      fnewini.open(precomf_ini,"w");
+      fprintf(fnewini.file_ptr.get(), ";; Precomp Comfort v%i.%i.%i %s %s - %s version - INI file\n",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
+      fprintf(fnewini.file_ptr.get(), ";; Use a semicolon (;) for comments\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Compression method to use\n");
+      fprintf(fnewini.file_ptr.get(), ";; 0 = none, 1 = bZip2, 2 = lzma2 multi-threaded\n");
+      fprintf(fnewini.file_ptr.get(), "Compression_Method=2\n");
+      fprintf(fnewini.file_ptr.get(), ";; Maximal memory (in MiB) for LZMA compression method\n");
+      fprintf(fnewini.file_ptr.get(), "LZMA_Maximal_Memory=2048\n");
+      fprintf(fnewini.file_ptr.get(), ";; Thread count for LZMA compression method\n");
+      fprintf(fnewini.file_ptr.get(), ";; 0 = auto-detect\n");
+      fprintf(fnewini.file_ptr.get(), "LZMA_Thread_Count=0\n");
+      fprintf(fnewini.file_ptr.get(), ";; LZMA filters to use (up to 3 of the them can be combined)\n");
+      fprintf(fnewini.file_ptr.get(), ";; X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
+      fprintf(fnewini.file_ptr.get(), ";; S = SPARC, D = delta (must be followed by distance 1..256))\n");
+      fprintf(fnewini.file_ptr.get(), ";; The default is to disable all filters\n");
+      fprintf(fnewini.file_ptr.get(), "; LZMA_Filters=XPIATSD2\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Fast mode (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "Fast_Mode=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Intense mode (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "Intense_Mode=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Brute mode (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "Brute_Mode=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Preserve Input's file extension (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "Preserve_Extension=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Wrap BMP header around PDF images (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "PDF_BMP_Mode=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Recompress progressive JPGs only (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "JPG_progressive_only=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; MJPEG recompression (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "MJPEG_recompression=on\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Minimal identical byte size\n");
+	  fprintf(fnewini.file_ptr.get(),  "JPG_brunsli=on\n\n");
+	  fprintf(fnewini.file_ptr.get(),  ";; Prefer brunsli to packJPG for JPG streams (on/off)");
+	  fprintf(fnewini.file_ptr.get(),  "JPG_brotli=off\n\n");
+	  fprintf(fnewini.file_ptr.get(),  ";; Use brotli to compress metadata in JPG streams (on/off)");
+	  fprintf(fnewini.file_ptr.get(),  "JPG_packjpg=on\n\n");
+	  fprintf(fnewini.file_ptr.get(),  ";; Use packJPG for JPG streams (fallback if brunsli fails) (on/off)");
+      fprintf(fnewini.file_ptr.get(), "Minimal_Size=4\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Verbose mode (on/off)\n");
+      fprintf(fnewini.file_ptr.get(), "Verbose=off\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Compression types to use\n");
+      fprintf(fnewini.file_ptr.get(), ";; P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG, S = SWF\n");
+      fprintf(fnewini.file_ptr.get(), ";; M = MIME Base64, B = bZip2, 3 = MP3\n");
+      fprintf(fnewini.file_ptr.get(), "; Compression_Types_Enable=PZGNFJSMB3\n");
+      fprintf(fnewini.file_ptr.get(), "; Compression_Types_Disable=PZGNFJSMB3\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; zLib levels to use\n");
+      fprintf(fnewini.file_ptr.get(), "; zLib_Levels=\n");
+      fprintf(fnewini.file_ptr.get(), ";; Maximal recursion depth to use\n");
+      fprintf(fnewini.file_ptr.get(), "Maximal_Recursion_Depth=10\n\n");
+      fprintf(fnewini.file_ptr.get(), ";; Use this to ignore streams at certain positions in the file\n");
+      fprintf(fnewini.file_ptr.get(), ";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
+      fprintf(fnewini.file_ptr.get(), "; Ignore_Positions=0\n");
+      safe_fclose(fnewini);
       g_precomp.switches.min_ident_size = 4;
       min_ident_size_set = true;
       g_precomp.switches.compression_otf_max_memory = 2048;
@@ -2119,7 +2120,7 @@ int init_comfort(int argc, char* argv[]) {
   } else {
     printf("\n");
   }
-  g_precomp.ctx.fout = fopen(g_precomp.ctx.output_file_name.c_str(), "wb");
+  g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
   if (g_precomp.ctx.fout == NULL) {
     printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
     wait_for_key();
@@ -2170,8 +2171,8 @@ void denit_compress() {
     denit_compress_otf();
   }
 
-  safe_fclose(&g_precomp.ctx.fin);
-  safe_fclose(&g_precomp.ctx.fout);
+  safe_fclose(g_precomp.ctx.fin);
+  safe_fclose(g_precomp.ctx.fout);
 
   if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx.is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
@@ -2291,8 +2292,8 @@ void denit_decompress() {
 }
 
 void denit_convert() {
-  safe_fclose(&g_precomp.ctx.fin);
-  safe_fclose(&g_precomp.ctx.fout);
+  safe_fclose(g_precomp.ctx.fin);
+  safe_fclose(g_precomp.ctx.fout);
 
   if ((!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx.is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
     printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
@@ -2320,8 +2321,8 @@ void denit_convert() {
 }
 
 void denit() {
-  safe_fclose(&g_precomp.ctx.fin);
-  safe_fclose(&g_precomp.ctx.fout);
+  safe_fclose(g_precomp.ctx.fin);
+  safe_fclose(g_precomp.ctx.fout);
 }
 
 // Brute mode detects a bit less than intense mode to avoid false positives
@@ -2352,7 +2353,7 @@ void copy_penalty_bytes(long long& rek_penalty_bytes_len, bool& use_penalty_byte
 }
 
 #define DEF_COMPARE_CHUNK 512
-long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& decompressed_bytes_used) {
+long long def_compare_bzip2(FileWrapper& source, FileWrapper& compfile, int level, long long& decompressed_bytes_used) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2382,11 +2383,11 @@ long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& 
     print_work_sign(true);
 
     strm.avail_in = own_fread(in, 1, DEF_COMPARE_CHUNK, source);
-    if (ferror(source)) {
+    if (ferror(source.file_ptr.get())) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    flush = feof(source) ? BZ_FINISH : BZ_RUN;
+    flush = feof(source.file_ptr.get()) ? BZ_FINISH : BZ_RUN;
     strm.next_in = (char*)in;
     decompressed_bytes_used += strm.avail_in;
 
@@ -2399,7 +2400,7 @@ long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& 
       have = DEF_COMPARE_CHUNK - strm.avail_out;
 
       if (have > 0) {
-        if (compfile == g_precomp.ctx.fin) {
+        if (compfile.file_ptr == g_precomp.ctx.fin.file_ptr) {
           identical_bytes_compare = compare_file_mem_penalty(compfile, out, g_precomp.ctx.input_file_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         } else {
           identical_bytes_compare = compare_file_mem_penalty(compfile, out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
@@ -2425,7 +2426,7 @@ long long def_compare_bzip2(FILE *source, FILE *compfile, int level, long long& 
   return rek_same_byte_count;
 }
 
-int def_part_bzip2(FILE *source, FILE *dest, int level, long long stream_size_in, long long stream_size_out) {
+int def_part_bzip2(FileWrapper& source, FileWrapper& dest, int level, long long stream_size_in, long long stream_size_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2453,7 +2454,7 @@ int def_part_bzip2(FILE *source, FILE *dest, int level, long long stream_size_in
       strm.avail_in = own_fread(in, 1, stream_size_in - pos_in, source);
       flush = BZ_FINISH;
     }
-    if (ferror(source)) {
+    if (ferror(source.file_ptr.get())) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2472,7 +2473,7 @@ int def_part_bzip2(FILE *source, FILE *dest, int level, long long stream_size_in
       }
       pos_out += have;
 
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest)) {
+      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2490,7 +2491,7 @@ unsigned int frs_line_len;
 unsigned int frs_skip_len;
 unsigned char frs_skipbuf[4];
 
-size_t fread_skip(unsigned char *ptr, size_t size, size_t count, FILE* stream) {
+size_t fread_skip(unsigned char *ptr, size_t size, size_t count, FileWrapper& stream) {
   size_t bytes_read = 0;
   unsigned int read_tmp;
 
@@ -2597,7 +2598,7 @@ bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = fa
   return false;
 }
 
-int inf_bzip2(FILE *source, FILE *dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
+int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
   int ret;
   unsigned have;
   bz_stream strm;
@@ -2621,7 +2622,7 @@ int inf_bzip2(FILE *source, FILE *dest, long long& compressed_stream_size, long 
     strm.avail_in = own_fread(in, 1, CHUNK, source);
     avail_in_before = strm.avail_in;
 
-    if (ferror(source)) {
+    if (ferror(source.file_ptr.get())) {
       (void)BZ2_bzDecompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2643,7 +2644,7 @@ int inf_bzip2(FILE *source, FILE *dest, long long& compressed_stream_size, long 
       avail_in_before = strm.avail_in;
       
       have = CHUNK - strm.avail_out;
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest)) {
+      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2662,7 +2663,7 @@ int inf_bzip2(FILE *source, FILE *dest, long long& compressed_stream_size, long 
 }
 
 
-int def_bzip2(FILE *source, FILE *dest, int level) {
+int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2680,11 +2681,11 @@ int def_bzip2(FILE *source, FILE *dest, int level) {
     print_work_sign(true);
 
     strm.avail_in = own_fread(in, 1, CHUNK, source);
-    if (ferror(source)) {
+    if (ferror(source.file_ptr.get())) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    flush = feof(source) ? BZ_FINISH : BZ_RUN;
+    flush = feof(source.file_ptr.get()) ? BZ_FINISH : BZ_RUN;
     strm.next_in = (char*)in;
 
     do {
@@ -2695,7 +2696,7 @@ int def_bzip2(FILE *source, FILE *dest, int level) {
 
       have = CHUNK - strm.avail_out;
 
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest)) {
+      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2707,20 +2708,20 @@ int def_bzip2(FILE *source, FILE *dest, int level) {
   return BZ_OK;
 }
 
-long long file_recompress_bzip2(FILE* origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total) {
+long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total) {
   long long retval;
 
-  g_precomp.ctx.ftempout = fopen(g_precomp.ctx.tempfile1, "rb");
-  fseek(g_precomp.ctx.ftempout, 0, SEEK_END);
+  g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+  fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_END);
   decompressed_bytes_total = tell_64(g_precomp.ctx.ftempout);
   if (g_precomp.ctx.ftempout == NULL) {
     error(ERR_TEMP_FILE_DISAPPEARED);
   }
 
-  fseek(g_precomp.ctx.ftempout, 0, SEEK_SET);
+  fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_SET);
   retval = def_compare_bzip2(g_precomp.ctx.ftempout, origfile, level, decompressed_bytes_used);
 
-  safe_fclose(&g_precomp.ctx.ftempout);
+  safe_fclose(g_precomp.ctx.ftempout);
 
   if (retval < 0) return -1;
 
@@ -2728,14 +2729,14 @@ long long file_recompress_bzip2(FILE* origfile, int level, long long& decompress
 }
 
 void write_decompressed_data(long long byte_count, char* decompressed_file_name) {
-  g_precomp.ctx.ftempout = fopen(decompressed_file_name, "rb");
+  g_precomp.ctx.ftempout.open(decompressed_file_name, "rb");
   if (g_precomp.ctx.ftempout == NULL) error(ERR_TEMP_FILE_DISAPPEARED);
 
-  fseek(g_precomp.ctx.ftempout, 0, SEEK_SET);
+  fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_SET);
 
   fast_copy(g_precomp.ctx.ftempout, g_precomp.ctx.fout, byte_count);
 
-  safe_fclose(&g_precomp.ctx.ftempout);
+  safe_fclose(g_precomp.ctx.ftempout);
 }
 
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* decompressed_file_name) {
@@ -2746,7 +2747,7 @@ void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* 
     }
 }
 
-unsigned long long compare_files(FILE* file1, FILE* file2, unsigned int pos1, unsigned int pos2) {
+unsigned long long compare_files(FileWrapper& file1, FileWrapper& file2, unsigned int pos1, unsigned int pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
@@ -2760,8 +2761,8 @@ unsigned long long compare_files(FILE* file1, FILE* file2, unsigned int pos1, un
   do {
     print_work_sign(true);
 
-    size1 = fread(input_bytes1, 1, COMP_CHUNK, file1);
-    size2 = fread(input_bytes2, 1, COMP_CHUNK, file2);
+    size1 = fread(input_bytes1, 1, COMP_CHUNK, file1.file_ptr.get());
+    size2 = fread(input_bytes2, 1, COMP_CHUNK, file2.file_ptr.get());
 
     minsize = std::min(size1, size2);
     for (i = 0; i < minsize; i++) {
@@ -2778,7 +2779,7 @@ unsigned long long compare_files(FILE* file1, FILE* file2, unsigned int pos1, un
 
 unsigned char input_bytes1[DEF_COMPARE_CHUNK];
 
-long long compare_file_mem_penalty(FILE* file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes) {
+long long compare_file_mem_penalty(FileWrapper& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes) {
   int same_byte_count = 0;
   int size1;
   int i;
@@ -2787,7 +2788,7 @@ long long compare_file_mem_penalty(FILE* file1, unsigned char* input_bytes2, lon
   old_pos = tell_64(file1);
   seek_64(file1, pos1);
 
-  size1 = fread(input_bytes1, 1, bytecount, file1);
+  size1 = fread(input_bytes1, 1, bytecount, file1.file_ptr.get());
 
   for (i = 0; i < size1; i++) {
     if (input_bytes1[i] == input_bytes2[i]) {
@@ -2911,18 +2912,18 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
 
 class OwnFileInputStream : public InputStream {
 public:
-  OwnFileInputStream(FILE* f) : _f(f), _eof(false) {}
+  OwnFileInputStream(FileWrapper* f) : _f(f), _eof(false) {}
 
   virtual bool eof() const {
     return _eof;
   }
   virtual size_t read(unsigned char* buffer, const size_t size) {
-    size_t res = own_fread(buffer, 1, size, _f);
+    size_t res = own_fread(buffer, 1, size, *_f);
     _eof |= res < size;
     return res;
   }
 private:
-  FILE* _f;
+  FileWrapper* _f;
   bool _eof;
 };
 class UncompressedOutStream : public OutputStream {
@@ -2930,7 +2931,7 @@ public:
   UncompressedOutStream(bool& in_memory) : _written(0), _in_memory(in_memory) {}
   ~UncompressedOutStream() {
     if (!_in_memory) {
-      safe_fclose(&g_precomp.ctx.ftempout);
+      safe_fclose(g_precomp.ctx.ftempout);
     }
   }
 
@@ -2959,8 +2960,8 @@ private:
   bool& _in_memory;
 };
 
-recompress_deflate_result try_recompression_deflate(FILE* file) {
-  if (file == g_precomp.ctx.fin) {
+recompress_deflate_result try_recompression_deflate(FileWrapper& file) {
+  if (file.file_ptr == g_precomp.ctx.fin.file_ptr) {
     seek_64(file, g_precomp.ctx.input_file_pos);
   } else {
     seek_64(file, 0);
@@ -2969,7 +2970,7 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
   recompress_deflate_result result;
   memset(&result, 0, sizeof(result));
   
-  OwnFileInputStream is(file);
+  OwnFileInputStream is(&file);
 
   {
     result.uncompressed_in_memory = true;
@@ -2983,18 +2984,18 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
     result.uncompressed_stream_size = uos.written();
 
     if (preflate_verify && result.accepted) {
-      if (file == g_precomp.ctx.fin) {
+      if (file.file_ptr == g_precomp.ctx.fin.file_ptr) {
         seek_64(file, g_precomp.ctx.input_file_pos);
       } else {
         seek_64(file, 0);
       }
-      OwnFileInputStream is2(file);
+      OwnFileInputStream is2(&file);
       std::vector<uint8_t> orgdata(result.compressed_stream_size);
       is2.read(orgdata.data(), orgdata.size());
 
       MemStream reencoded_deflate;
       MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(g_precomp.ctx.decomp_io_buf, g_precomp.ctx.decomp_io_buf + result.uncompressed_stream_size) : std::vector<uint8_t>());
-      OwnFileInputStream uncompressed_file(result.uncompressed_in_memory ? NULL : g_precomp.ctx.ftempout);
+      OwnFileInputStream uncompressed_file(result.uncompressed_in_memory ? NULL : &g_precomp.ctx.ftempout);
       if (!preflate_reencode(reencoded_deflate, result.recon_data, 
                              result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file, 
                              result.uncompressed_stream_size,
@@ -3005,14 +3006,15 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
         char namebuf[50];
         while (true) {
           snprintf(namebuf, 49, "preflate_error_%04d.raw", counter++);
-          FILE* f = fopen(namebuf, "rb");
-          if (f) {
-            fclose(f);
+          FileWrapper f;
+          f.open(namebuf, "rb");
+          if (f.file_ptr) {
+            fclose(f.file_ptr.get());
             continue;
           }
-          f = fopen(namebuf, "wb");
-          fwrite(orgdata.data(), 1, orgdata.size(), f);
-          fclose(f);
+          f.open(namebuf, "wb");
+          fwrite(orgdata.data(), 1, orgdata.size(), f.file_ptr.get());
+          fclose(f.file_ptr.get());
           break;
         }
       }
@@ -3023,22 +3025,22 @@ recompress_deflate_result try_recompression_deflate(FILE* file) {
 
 class OwnFileOutputStream : public OutputStream {
 public:
-  OwnFileOutputStream(FILE* f) : _f(f) {}
+  OwnFileOutputStream(FileWrapper* f) : _f(f) {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
-    return own_fwrite(buffer, 1, size, _f);
+    return own_fwrite(buffer, 1, size, *_f);
   }
 private:
-  FILE* _f;
+  FileWrapper* _f;
 };
 
-bool try_reconstructing_deflate(FILE* fin, FILE* fout, const recompress_deflate_result& rdres) {
-  OwnFileOutputStream os(fout);
-  OwnFileInputStream is(fin);
+bool try_reconstructing_deflate(FileWrapper& fin, FileWrapper& fout, const recompress_deflate_result& rdres) {
+  OwnFileOutputStream os(&fout);
+  OwnFileInputStream is(&fin);
   bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, []() { print_work_sign(true); });
   return result;
 }
-bool try_reconstructing_deflate_skip(FILE* fin, FILE* fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(FileWrapper& fin, FileWrapper& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   frs_offset = 0;
@@ -3047,12 +3049,12 @@ bool try_reconstructing_deflate_skip(FILE* fin, FILE* fout, const recompress_def
   if ((int64_t)fread_skip(unpacked_output.data(), 1, rdres.uncompressed_stream_size, fin) != rdres.uncompressed_stream_size) {
     return false;
   }
-  OwnFileOutputStream os(fout);
+  OwnFileOutputStream os(&fout);
   return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { print_work_sign(true); });
 }
 class OwnFileOutputStreamMultiPNG : public OutputStream {
 public:
-  OwnFileOutputStreamMultiPNG(FILE* f, 
+  OwnFileOutputStreamMultiPNG(FileWrapper* f,
                       const size_t idat_count, 
                       const uint32_t* idat_crcs, 
                       const uint32_t* idat_lengths) 
@@ -3068,7 +3070,7 @@ public:
     size_t size = size_;
     const unsigned char* buffer = buffer_;
     while (size > _to_read) {
-      own_fwrite(buffer, 1, _to_read, _f);
+      own_fwrite(buffer, 1, _to_read, *_f);
       written += _to_read;
       size -= _to_read;
       buffer += _to_read;
@@ -3077,32 +3079,32 @@ public:
         return written;
       }
       unsigned char crc_out[4] = {(unsigned char)(_idat_crcs[_idat_idx] >> 24), (unsigned char)(_idat_crcs[_idat_idx] >> 16), (unsigned char)(_idat_crcs[_idat_idx] >> 8), (unsigned char)(_idat_crcs[_idat_idx] >> 0)};
-      own_fwrite(crc_out, 1, 4, _f);
+      own_fwrite(crc_out, 1, 4, *_f);
       _to_read = _idat_lengths[_idat_idx];
       unsigned char len_out[4] = {(unsigned char)(_to_read >> 24), (unsigned char)(_to_read >> 16), (unsigned char)(_to_read >> 8), (unsigned char)(_to_read >> 0)};
-      own_fwrite(len_out, 1, 4, _f);
-      own_fwrite("IDAT", 1, 4, _f);
+      own_fwrite(len_out, 1, 4, *_f);
+      own_fwrite("IDAT", 1, 4, *_f);
     }
-    own_fwrite(buffer, 1, size, _f);
+    own_fwrite(buffer, 1, size, *_f);
     written += size;
     _to_read -= size;
     return written;
   }
 private:
-  FILE* _f;
+  FileWrapper* _f;
   const size_t _idat_count;
   const uint32_t* _idat_crcs;
   const uint32_t* _idat_lengths;
   size_t _idat_idx, _to_read;
 };
-bool try_reconstructing_deflate_multipng(FILE* fin, FILE* fout, const recompress_deflate_result& rdres,
+bool try_reconstructing_deflate_multipng(FileWrapper& fin, FileWrapper& fout, const recompress_deflate_result& rdres,
                                 const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   if ((int64_t)own_fread(unpacked_output.data(), 1, rdres.uncompressed_stream_size, fin) != rdres.uncompressed_stream_size) {
     return false;
   }
-  OwnFileOutputStreamMultiPNG os(fout, idat_count, idat_crcs, idat_lengths);
+  OwnFileOutputStreamMultiPNG os(&fout, idat_count, idat_crcs, idat_lengths);
   return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { print_work_sign(true); });
 }
 
@@ -3272,12 +3274,12 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         fout_fput_uncompressed(rdres);
       } else {
         if (!rdres.uncompressed_in_memory) {
-          g_precomp.ctx.ftempout = fopen(g_precomp.ctx.tempfile1, "rb");
+          g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
           if (g_precomp.ctx.ftempout == NULL) {
             error(ERR_TEMP_FILE_DISAPPEARED);
           }
 
-          fseek(g_precomp.ctx.ftempout, 0, SEEK_SET);
+          fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_SET);
         }
 
         unsigned char* buf_ptr = g_precomp.ctx.decomp_io_buf;
@@ -3296,7 +3298,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
         }
 
-        safe_fclose(&g_precomp.ctx.ftempout);
+        safe_fclose(g_precomp.ctx.ftempout);
       }
 
       // start new uncompressed data
@@ -3496,7 +3498,7 @@ bool compress_file(float min_percent, float max_percent) {
   if (!g_precomp.switches.DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
 
   seek_64(g_precomp.ctx.fin, 0);
-  fread(g_precomp.ctx.in_buf, 1, IN_BUF_SIZE, g_precomp.ctx.fin);
+  fread(g_precomp.ctx.in_buf, 1, IN_BUF_SIZE, g_precomp.ctx.fin.file_ptr.get());
   long long in_buf_pos = 0;
   g_precomp.ctx.cb = -1;
 
@@ -3511,7 +3513,7 @@ bool compress_file(float min_percent, float max_percent) {
 
   if ((in_buf_pos + IN_BUF_SIZE) <= (g_precomp.ctx.input_file_pos + CHECKBUF_SIZE)) {
     seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos);
-    fread(g_precomp.ctx.in_buf, 1, IN_BUF_SIZE, g_precomp.ctx.fin);
+    fread(g_precomp.ctx.in_buf, 1, IN_BUF_SIZE, g_precomp.ctx.fin.file_ptr.get());
     in_buf_pos = g_precomp.ctx.input_file_pos;
     g_precomp.ctx.cb = 0;
 
@@ -3685,11 +3687,11 @@ bool compress_file(float min_percent, float max_percent) {
 
           if ((g_precomp.ctx.input_file_pos + act_search_pos) >= 4096) {
             seek_64(g_precomp.ctx.fin, (g_precomp.ctx.input_file_pos + act_search_pos) - 4096);
-            fread(type_buf, 1, 4096, g_precomp.ctx.fin);
+            fread(type_buf, 1, 4096, g_precomp.ctx.fin.file_ptr.get());
             type_buf_length = 4096;
           } else {
             seek_64(g_precomp.ctx.fin, 0);
-            fread(type_buf, 1, g_precomp.ctx.input_file_pos + act_search_pos, g_precomp.ctx.fin);
+            fread(type_buf, 1, g_precomp.ctx.input_file_pos + act_search_pos, g_precomp.ctx.fin.file_ptr.get());
             type_buf_length = g_precomp.ctx.input_file_pos + act_search_pos;
           }
 
@@ -3819,7 +3821,7 @@ bool compress_file(float min_percent, float max_percent) {
         if (g_precomp.ctx.input_file_pos >= 4) {
           seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos - 4);
 
-         if (fread(in, 1, 10, g_precomp.ctx.fin) == 10) {
+         if (fread(in, 1, 10, g_precomp.ctx.fin.file_ptr.get()) == 10) {
           seek_64(g_precomp.ctx.fin, tell_64(g_precomp.ctx.fin) - 2);
 
           idat_lengths[0] = (in[0] << 24) + (in[1] << 16) + (in[2] << 8) + in[3];
@@ -3844,7 +3846,7 @@ bool compress_file(float min_percent, float max_percent) {
             // go through additional IDATs
             for (;;) {
               seek_64(g_precomp.ctx.fin, tell_64(g_precomp.ctx.fin) + idat_lengths[idat_count - 1]);
-              if (fread(in, 1, 12, g_precomp.ctx.fin) != 12) { // CRC, length, "IDAT"
+              if (fread(in, 1, 12, g_precomp.ctx.fin.file_ptr.get()) != 12) { // CRC, length, "IDAT"
                 idat_count = 0;
                 break;
               }
@@ -3881,7 +3883,7 @@ bool compress_file(float min_percent, float max_percent) {
         } else if (idat_count > 1) {
           // copy to temp0.dat before trying to recompress
           remove(g_precomp.ctx.tempfile0);
-          g_precomp.ctx.fpng = tryOpen(g_precomp.ctx.tempfile0, "w+b");
+          g_precomp.ctx.fpng.open(g_precomp.ctx.tempfile0, "w+b");
 
           seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos + 6); // start after zLib header
 
@@ -3896,7 +3898,7 @@ bool compress_file(float min_percent, float max_percent) {
           try_decompression_png_multi(g_precomp.ctx.fpng, -windowbits);
           g_precomp.ctx.cb += 6;
 
-          safe_fclose(&g_precomp.ctx.fpng);
+          safe_fclose(g_precomp.ctx.fpng);
         }
 
         if (!g_precomp.ctx.compressed_data_found) {
@@ -3951,7 +3953,7 @@ bool compress_file(float min_percent, float max_percent) {
 
         do{
           seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos );
-          if ((fread(in, 1, 5, g_precomp.ctx.fin) != 5) || (in[0] != 0xFF))
+          if ((fread(in, 1, 5, g_precomp.ctx.fin.file_ptr.get()) != 5) || (in[0] != 0xFF))
               break;
           int length = (int)in[2]*256+(int)in[3];
           switch (in[1]){
@@ -3989,7 +3991,7 @@ bool compress_file(float min_percent, float max_percent) {
 
           bool isMarker = ( in[4] == 0xFF );
           size_t bytesRead = 0;
-          while (!done && (bytesRead = fread(in, sizeof(in[0]), CHUNK, g_precomp.ctx.fin))){
+          while (!done && (bytesRead = fread(in, sizeof(in[0]), CHUNK, g_precomp.ctx.fin.file_ptr.get()))){
             for (size_t i = 0; !done && (i < bytesRead); i++){
               g_precomp.ctx.input_file_pos++;
               if (!isMarker){
@@ -4041,7 +4043,7 @@ bool compress_file(float min_percent, float max_percent) {
 
         // parse frames until first invalid frame is found or end-of-file
         seek_64(g_precomp.ctx.fin, act_pos);
-        while (fread(in, 1, 4, g_precomp.ctx.fin) == 4) {
+        while (fread(in, 1, 4, g_precomp.ctx.fin.file_ptr.get()) == 4) {
           // check syncword
           if ((in[0] != 0xFF) || ((in[1] & 0xE0) != 0xE0)) break;
           // compare data from header
@@ -4106,7 +4108,7 @@ bool compress_file(float min_percent, float max_percent) {
           if ((type == MPEG1_LAYER_III) && (frame_size > 4)) {
             unsigned char header2 = in[2];
             unsigned char header3 = in[3];
-            if (fread(in, 1, frame_size - 4, g_precomp.ctx.fin) != (unsigned int)(frame_size - 4)) {
+            if (fread(in, 1, frame_size - 4, g_precomp.ctx.fin.file_ptr.get()) != (unsigned int)(frame_size - 4)) {
               // discard incomplete frame
               n--;
               mp3_length -= frame_size;
@@ -4405,7 +4407,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore PDF header
-      fprintf(g_precomp.ctx.fout, "/FlateDecode");
+      fprintf(g_precomp.ctx.fout.file_ptr.get(), "/FlateDecode");
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, false);
       fin_fget_recon_data(rdres);
       int bmp_c = (header1 >> 6);
@@ -4452,10 +4454,10 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('P', g_precomp.ctx.fout);
-      fputc('K', g_precomp.ctx.fout);
-      fputc(3, g_precomp.ctx.fout);
-      fputc(4, g_precomp.ctx.fout);
+      fputc('P', g_precomp.ctx.fout.file_ptr.get());
+      fputc('K', g_precomp.ctx.fout.file_ptr.get());
+      fputc(3, g_precomp.ctx.fout.file_ptr.get());
+      fputc(4, g_precomp.ctx.fout.file_ptr.get());
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
@@ -4470,8 +4472,8 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc(31, g_precomp.ctx.fout);
-      fputc(139, g_precomp.ctx.fout);
+      fputc(31, g_precomp.ctx.fout.file_ptr.get());
+      fputc(139, g_precomp.ctx.fout.file_ptr.get());
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
@@ -4486,7 +4488,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore IDAT
-      fprintf(g_precomp.ctx.fout, "IDAT");
+      fprintf(g_precomp.ctx.fout.file_ptr.get(), "IDAT");
 
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
       fin_fget_recon_data(rdres);
@@ -4506,7 +4508,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore first IDAT
-      fprintf(g_precomp.ctx.fout, "IDAT");
+      fprintf(g_precomp.ctx.fout.file_ptr.get(), "IDAT");
       
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
 
@@ -4581,24 +4583,24 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       }
 
       remove(g_precomp.ctx.tempfile1);
-      g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+      g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
 
       fast_copy(g_precomp.ctx.fin, g_precomp.ctx.ftempout, decompressed_data_length);
 
-      safe_fclose(&g_precomp.ctx.ftempout);
+      safe_fclose(g_precomp.ctx.ftempout);
 
       remove(g_precomp.ctx.tempfile2);
 
       bool recompress_success = false;
 
-      g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-      g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "wb");
+      g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+      g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "wb");
 
       // recompress data
       recompress_success = recompress_gif(g_precomp.ctx.ftempout, g_precomp.ctx.frecomp, block_size, NULL, &gDiff);
 
-      safe_fclose(&g_precomp.ctx.frecomp);
-      safe_fclose(&g_precomp.ctx.ftempout);
+      safe_fclose(g_precomp.ctx.frecomp);
+      safe_fclose(g_precomp.ctx.ftempout);
 
       if (recompress_success_needed) {
         if (!recompress_success) {
@@ -4610,17 +4612,17 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       long long old_fout_pos = tell_64(g_precomp.ctx.fout);
 
-      g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "rb");
+      g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "rb");
 
       fast_copy(g_precomp.ctx.frecomp, g_precomp.ctx.fout, recompressed_data_length);
 
-      safe_fclose(&g_precomp.ctx.frecomp);
+      safe_fclose(g_precomp.ctx.frecomp);
 
       remove(g_precomp.ctx.tempfile2);
       remove(g_precomp.ctx.tempfile1);
 
       if (penalty_bytes_stored) {
-        fflush(g_precomp.ctx.fout);
+        fflush(g_precomp.ctx.fout.file_ptr.get());
 
         long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
 
@@ -4693,11 +4695,11 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 		}
       } else {
         remove(g_precomp.ctx.tempfile1);
-        g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+        g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
 
         fast_copy(g_precomp.ctx.fin, g_precomp.ctx.ftempout, decompressed_data_length);
 
-        safe_fclose(&g_precomp.ctx.ftempout);
+        safe_fclose(g_precomp.ctx.ftempout);
 
         remove(g_precomp.ctx.tempfile2);
 
@@ -4711,7 +4713,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       }
 
       if (!in_memory) {
-        g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "rb");
+        g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "rb");
       }
 
       if (mjpg_dht_used) {
@@ -4735,7 +4737,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         } else {
           do {
             ffda_pos++;
-            if (fread(in, 1, 1, g_precomp.ctx.frecomp) != 1) break;
+            if (fread(in, 1, 1, g_precomp.ctx.frecomp.file_ptr.get()) != 1) break;
             if (found_ff) {
               found_ffda = (in[0] == 0xDA);
               if (found_ffda) break;
@@ -4775,7 +4777,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         if (jpg_mem_in != NULL) delete[] jpg_mem_in;
         if (jpg_mem_out != NULL) delete[] jpg_mem_out;
       } else {
-        safe_fclose(&g_precomp.ctx.frecomp);
+        safe_fclose(g_precomp.ctx.frecomp);
 
         remove(g_precomp.ctx.tempfile2);
         remove(g_precomp.ctx.tempfile1);
@@ -4786,9 +4788,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('C', g_precomp.ctx.fout);
-      fputc('W', g_precomp.ctx.fout);
-      fputc('S', g_precomp.ctx.fout);
+      fputc('C', g_precomp.ctx.fout.file_ptr.get());
+      fputc('W', g_precomp.ctx.fout.file_ptr.get());
+      fputc('S', g_precomp.ctx.fout.file_ptr.get());
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length);
 
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
@@ -4815,7 +4817,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         printf("Base64 header length: %i\n", base64_header_length);
       }
       own_fread(in, 1, base64_header_length, g_precomp.ctx.fin);
-      fputc(*(in) + 1, g_precomp.ctx.fout); // first char was decreased
+      fputc(*(in) + 1, g_precomp.ctx.fout.file_ptr.get()); // first char was decreased
       own_fwrite(in + 1, 1, base64_header_length - 1, g_precomp.ctx.fout);
 
       // read line length list
@@ -4856,7 +4858,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       if (recursion_used) {
         recursion_result r = recursion_decompress(recursion_data_length);
         base64_reencode(r.frecurse, g_precomp.ctx.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
-        safe_fclose(&r.frecurse);
+        safe_fclose(r.frecurse);
         remove(r.file_name);
         delete[] r.file_name;
       } else {
@@ -4909,7 +4911,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       if (recursion_used) {
         recursion_result r = recursion_decompress(recursion_data_length);
         g_precomp.ctx.retval = def_part_bzip2(r.frecurse, g_precomp.ctx.fout, level, decompressed_data_length, recompressed_data_length);
-        safe_fclose(&r.frecurse);
+        safe_fclose(r.frecurse);
         remove(r.file_name);
         delete[] r.file_name;
       } else {
@@ -4923,7 +4925,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       }
 
       if (penalty_bytes_stored) {
-        fflush(g_precomp.ctx.fout);
+        fflush(g_precomp.ctx.fout.file_ptr.get());
 
         long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
         int pb_pos = 0;
@@ -4971,11 +4973,11 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
       } else {
         remove(g_precomp.ctx.tempfile1);
-        g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+        g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
 
         fast_copy(g_precomp.ctx.fin, g_precomp.ctx.ftempout, decompressed_data_length);
 
-        safe_fclose(&g_precomp.ctx.ftempout);
+        safe_fclose(g_precomp.ctx.ftempout);
 
         remove(g_precomp.ctx.tempfile2);
 
@@ -4994,11 +4996,11 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         if (mp3_mem_in != NULL) delete[] mp3_mem_in;
         if (mp3_mem_out != NULL) delete[] mp3_mem_out;
       } else {
-        g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "rb");
+        g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "rb");
 
         fast_copy(g_precomp.ctx.frecomp, g_precomp.ctx.fout, recompressed_data_length);
 
-        safe_fclose(&g_precomp.ctx.frecomp);
+        safe_fclose(g_precomp.ctx.frecomp);
 
         remove(g_precomp.ctx.tempfile2);
         remove(g_precomp.ctx.tempfile1);
@@ -5096,28 +5098,28 @@ void convert_file() {
   denit_convert();
 }
 
-long long try_to_decompress_bzip2(FILE* file, int compression_level, long long& compressed_stream_size) {
+long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size) {
   long long r, decompressed_stream_size;
 
   print_work_sign(true);
 
   remove(g_precomp.ctx.tempfile1);
-  g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+  g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
 
-  if (file == g_precomp.ctx.fin) {
+  if (file.file_ptr == g_precomp.ctx.fin.file_ptr) {
     seek_64(file, g_precomp.ctx.input_file_pos);
   } else {
     seek_64(file, 0);
   }
 
   r = inf_bzip2(file, g_precomp.ctx.ftempout, compressed_stream_size, decompressed_stream_size);
-  safe_fclose(&g_precomp.ctx.ftempout);
+  safe_fclose(g_precomp.ctx.ftempout);
   if (r == BZ_OK) return decompressed_stream_size;
 
   return r;
 }
 
-void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_stream_size) {
+void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size) {
             print_work_sign(true);
 
             long long decomp_bytes_total;
@@ -5164,15 +5166,15 @@ void try_recompress_bzip2(FILE* origfile, int level, long long& compressed_strea
 void write_header() {
   char* input_file_name_without_path = new char[g_precomp.ctx.input_file_name.length() + 1];
 
-  fprintf(g_precomp.ctx.fout, "PCF");
+  fprintf(g_precomp.ctx.fout.file_ptr.get(), "PCF");
 
   // version number
-  fputc(V_MAJOR, g_precomp.ctx.fout);
-  fputc(V_MINOR, g_precomp.ctx.fout);
-  fputc(V_MINOR2, g_precomp.ctx.fout);
+  fputc(V_MAJOR, g_precomp.ctx.fout.file_ptr.get());
+  fputc(V_MINOR, g_precomp.ctx.fout.file_ptr.get());
+  fputc(V_MINOR2, g_precomp.ctx.fout.file_ptr.get());
 
   // compression-on-the-fly method used
-  fputc(g_precomp.ctx.compression_otf_method, g_precomp.ctx.fout);
+  fputc(g_precomp.ctx.compression_otf_method, g_precomp.ctx.fout.file_ptr.get());
 
   // write input file name without path
   const char* last_backslash = strrchr(g_precomp.ctx.input_file_name.c_str(), PATH_DELIM);
@@ -5182,8 +5184,8 @@ void write_header() {
     strcpy(input_file_name_without_path, g_precomp.ctx.input_file_name.c_str());
   }
 
-  fprintf(g_precomp.ctx.fout, "%s", input_file_name_without_path);
-  fputc(0, g_precomp.ctx.fout);
+  fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", input_file_name_without_path);
+  fputc(0, g_precomp.ctx.fout.file_ptr.get());
 
   delete[] input_file_name_without_path;
 
@@ -5197,13 +5199,13 @@ void write_header() {
 bool check_for_pcf_file() {
   seek_64(g_precomp.ctx.fin, 0);
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     return false;
   }
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx.input_file_name.c_str());
@@ -5212,12 +5214,12 @@ bool check_for_pcf_file() {
   }
 
   // skip compression method
-  fread(in, 1, 1, g_precomp.ctx.fin);
+  fread(in, 1, 1, g_precomp.ctx.fin.file_ptr.get());
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin);
+    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5240,14 +5242,14 @@ bool check_for_pcf_file() {
 void read_header() {
   seek_64(g_precomp.ctx.fin, 0);
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", g_precomp.ctx.input_file_name.c_str());
     exit(1);
   }
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx.input_file_name.c_str());
@@ -5255,13 +5257,13 @@ void read_header() {
     exit(1);
   }
 
-  fread(in, 1, 1, g_precomp.ctx.fin);
+  fread(in, 1, 1, g_precomp.ctx.fin.file_ptr.get());
   g_precomp.ctx.compression_otf_method = in[0];
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin);
+    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5273,40 +5275,40 @@ void read_header() {
 void convert_header() {
   seek_64(g_precomp.ctx.fin, 0);
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", g_precomp.ctx.input_file_name.c_str());
     exit(1);
   }
-  fwrite(in, 1, 3, g_precomp.ctx.fout);
+  fwrite(in, 1, 3, g_precomp.ctx.fout.file_ptr.get());
 
-  fread(in, 1, 3, g_precomp.ctx.fin);
+  fread(in, 1, 3, g_precomp.ctx.fin.file_ptr.get());
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx.input_file_name);
     printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
-  fwrite(in, 1, 3, g_precomp.ctx.fout);
+  fwrite(in, 1, 3, g_precomp.ctx.fout.file_ptr.get());
 
-  fread(in, 1, 1, g_precomp.ctx.fin);
+  fread(in, 1, 1, g_precomp.ctx.fin.file_ptr.get());
   conversion_from_method = in[0];
   if (conversion_from_method == conversion_to_method) {
     printf("Input file doesn't need to be converted\n");
     exit(1);
   }
   in[0] = conversion_to_method;
-  fwrite(in, 1, 1, g_precomp.ctx.fout);
+  fwrite(in, 1, 1, g_precomp.ctx.fout.file_ptr.get());
 
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin);
+    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
     if (c != 0) header_filename += c;
   } while (c != 0);
-  fprintf(g_precomp.ctx.fout, "%s", header_filename.c_str());
-  fputc(0, g_precomp.ctx.fout);
+  fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", header_filename.c_str());
+  fputc(0, g_precomp.ctx.fout.file_ptr.get());
 }
 
 void progress_update(long long bytes_written) {
@@ -5326,7 +5328,7 @@ void lzma_progress_update() {
   show_progress(percent, true, true);
 }
 
-void fast_copy(FILE* file1, FILE* file2, long long bytecount, bool update_progress) {
+void fast_copy(FileWrapper& file1, FileWrapper& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
   long long i;
@@ -5350,7 +5352,7 @@ void fast_copy(FILE* file1, FILE* file2, long long bytecount, bool update_progre
   if ((update_progress) && (!g_precomp.switches.DEBUG_MODE)) g_precomp.ctx.uncompressed_bytes_written += bytecount;
 }
 
-void fast_copy(FILE* file, unsigned char* mem, long long bytecount) {
+void fast_copy(FileWrapper& file, unsigned char* mem, long long bytecount) {
     if (bytecount == 0) return;
 
   long long i;
@@ -5367,7 +5369,7 @@ void fast_copy(FILE* file, unsigned char* mem, long long bytecount) {
   }
 }
 
-void fast_copy(unsigned char* mem, FILE* file, long long bytecount) {
+void fast_copy(unsigned char* mem, FileWrapper& file, long long bytecount) {
     if (bytecount == 0) return;
 
   long long i;
@@ -5384,7 +5386,7 @@ void fast_copy(unsigned char* mem, FILE* file, long long bytecount) {
   }
 }
 
-size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool final_byte, bool update_lzma_progress) {
+size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte, bool update_lzma_progress) {
   size_t result = 0;
   bool use_otf = false;
 
@@ -5392,7 +5394,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
     use_otf = (conversion_to_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_to_method;
   } else {
-    if ((stream != g_precomp.ctx.fout) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_COMPRESS)) {
+    if ((stream.file_ptr != g_precomp.ctx.fout.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_COMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5400,7 +5402,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
   }
 
   if (!use_otf) {
-    result = fwrite(ptr, size, count, stream);
+    result = fwrite(ptr, size, count, stream.file_ptr.get());
     if (result != count) {
       error(ERR_DISK_FULL);
     }
@@ -5421,7 +5423,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
           otf_bz2_stream_c.next_out = (char*)otf_out;
           ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
           have = CHUNK - otf_bz2_stream_c.avail_out;
-          if (fwrite(otf_out, 1, have, stream) != have || ferror(stream)) {
+          if (fwrite(otf_out, 1, have, stream.file_ptr.get()) != have || ferror(stream.file_ptr.get())) {
             result = 0;
             error(ERR_DISK_FULL);
           }
@@ -5446,7 +5448,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
           otf_xz_stream_c.next_out = (uint8_t *)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
-          if (fwrite(otf_out, 1, have, stream) != have || ferror(stream)) {
+          if (fwrite(otf_out, 1, have, stream.file_ptr.get()) != have || ferror(stream.file_ptr.get())) {
             result = 0;
             error(ERR_DISK_FULL);
           }
@@ -5483,14 +5485,14 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FILE* stream, bool
   return result;
 }
 
-size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
+size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
   bool use_otf = false;
 
   if (g_precomp.ctx.comp_decomp_state == P_CONVERT) {
     use_otf = (conversion_from_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_from_method;
   } else {
-    if ((stream != g_precomp.ctx.fin) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_DECOMPRESS)) {
+    if ((stream.file_ptr != g_precomp.ctx.fin.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_DECOMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5498,7 +5500,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
   }
 
   if (!use_otf) {
-    return fread(ptr, size, count, stream);
+    return fread(ptr, size, count, stream.file_ptr.get());
   } else {
     switch (g_precomp.ctx.compression_otf_method) {
       case 1: { // bZip2
@@ -5513,7 +5515,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
         do {
 
           if (otf_bz2_stream_d.avail_in == 0) {
-            otf_bz2_stream_d.avail_in = fread(otf_in, 1, CHUNK, g_precomp.ctx.fin);
+            otf_bz2_stream_d.avail_in = fread(otf_in, 1, CHUNK, g_precomp.ctx.fin.file_ptr.get());
             otf_bz2_stream_d.next_in = (char*)otf_in;
             if (otf_bz2_stream_d.avail_in == 0) break;
           }
@@ -5542,11 +5544,11 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
 
         do {
           print_work_sign(true);
-          if ((otf_xz_stream_d.avail_in == 0) && !feof(g_precomp.ctx.fin)) {
+          if ((otf_xz_stream_d.avail_in == 0) && !feof(g_precomp.ctx.fin.file_ptr.get())) {
             otf_xz_stream_d.next_in = (uint8_t *)otf_in;
-            otf_xz_stream_d.avail_in = fread(otf_in, 1, CHUNK, g_precomp.ctx.fin);
+            otf_xz_stream_d.avail_in = fread(otf_in, 1, CHUNK, g_precomp.ctx.fin.file_ptr.get());
 
-            if (ferror(g_precomp.ctx.fin)) {
+            if (ferror(g_precomp.ctx.fin.file_ptr.get())) {
               printf("ERROR: Could not read input file\n");
               exit(1);
             }
@@ -5596,19 +5598,19 @@ size_t own_fread(void *ptr, size_t size, size_t count, FILE* stream) {
   return 0;
 }
 
-void seek_64(FILE* f, unsigned long long pos) {
+void seek_64(FileWrapper& f, unsigned long long pos) {
   #ifndef __unix
     fpos_t fpt_pos = pos;
-    fsetpos(f, &fpt_pos);
+    fsetpos(f.file_ptr.get(), &fpt_pos);
   #else
     fseeko(f, pos, SEEK_SET);
   #endif
 }
 
-unsigned long long tell_64(FILE* f) {
+unsigned long long tell_64(FileWrapper& f) {
   #ifndef __unix
     fpos_t fpt_pos;
-    fgetpos(f, &fpt_pos);
+    fgetpos(f.file_ptr.get(), &fpt_pos);
     return fpt_pos;
   #else
     return ftello(f);
@@ -5626,7 +5628,7 @@ bool file_exists(const char* filename) {
   return retval;
 }
 
-long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long long pos2) {
+long long compare_files_penalty(FileWrapper& file1, FileWrapper& file2, long long pos1, long long pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
@@ -5643,13 +5645,13 @@ long long compare_files_penalty(FILE* file1, FILE* file2, long long pos1, long l
   bool use_penalty_bytes = false;
 
   long long compare_end;
-  if (file1 == g_precomp.ctx.fin) {
-    fseek(file2, 0, SEEK_END);
-    compare_end = ftell(file2);
+  if (file1.file_ptr == g_precomp.ctx.fin.file_ptr) {
+    fseek(file2.file_ptr.get(), 0, SEEK_END);
+    compare_end = ftell(file2.file_ptr.get());
   } else {
-    fseek(file1, 0, SEEK_END);
-    fseek(file2, 0, SEEK_END);
-    compare_end = std::min(ftell(file1), ftell(file2));
+    fseek(file1.file_ptr.get(), 0, SEEK_END);
+    fseek(file2.file_ptr.get(), 0, SEEK_END);
+    compare_end = std::min(ftell(file1.file_ptr.get()), ftell(file2.file_ptr.get()));
   }
 
   seek_64(file1, pos1);
@@ -5769,7 +5771,7 @@ void try_decompression_png (int windowbits) {
   }
 }
 
-void try_decompression_png_multi(FILE* fpng, int windowbits) {
+void try_decompression_png_multi(FileWrapper& fpng, int windowbits) {
   init_decompression_variables();
 
   // try to decompress at current position
@@ -5863,18 +5865,18 @@ void try_decompression_png_multi(FILE* fpng, int windowbits) {
 // GIF functions
 
 bool newgif_may_write;
-FILE* frecompress_gif = NULL;
-FILE* freadfunc = NULL;
+FileWrapper* frecompress_gif = NULL;
+FileWrapper* freadfunc = NULL;
 
 int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
 {
-  return own_fread(buf, 1, count, freadfunc);
+  return own_fread(buf, 1, count, *freadfunc);
 }
 
 int writeFunc(GifFileType* GifFile, const GifByteType* buf, int count)
 {
   if (newgif_may_write) {
-    return own_fwrite(buf, 1, count, frecompress_gif);
+    return own_fwrite(buf, 1, count, *frecompress_gif);
   } else {
     return count;
   }
@@ -5929,7 +5931,7 @@ bool r_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* n
   return r_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool recompress_gif(FILE* srcfile, FILE* dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
+bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
   int i, j;
   long long last_pos = -1;
   int Row, Col, Width, Height, ExtCode;
@@ -5940,8 +5942,8 @@ bool recompress_gif(FILE* srcfile, FILE* dstfile, unsigned char block_size, GifC
   GifRecordType RecordType;
   GifByteType *Extension;
 
-  freadfunc = srcfile;
-  frecompress_gif = dstfile;
+  freadfunc = &srcfile;
+  frecompress_gif = &dstfile;
   newgif_may_write = false;
 
   init_src_pos = tell_64(srcfile);
@@ -5988,8 +5990,8 @@ bool recompress_gif(FILE* srcfile, FILE* dstfile, unsigned char block_size, GifC
             long long dstfile_pos = tell_64(dstfile);
             seek_64(dstfile, 0);
             // change PGF8xa to GIF8xa
-            fputc('G', dstfile);
-            fputc('I', dstfile);
+            fputc('G', dstfile.file_ptr.get());
+            fputc('I', dstfile.file_ptr.get());
             seek_64(dstfile, dstfile_pos);
           } else {
             seek_64(srcfile, last_pos);
@@ -6071,7 +6073,7 @@ bool d_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile) {
   return d_gif_result(ScreenBuff, myGifFile, true);
 }
 
-bool decompress_gif(FILE* srcfile, FILE* dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
+bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
   int i, j;
   GifFileType* myGifFile;
   int Row, Col, Width, Height, ExtCode;
@@ -6081,7 +6083,7 @@ bool decompress_gif(FILE* srcfile, FILE* dstfile, long long src_pos, int& gif_le
   long long srcfile_pos;
   long long last_pos = -1;
 
-  freadfunc = srcfile;
+  freadfunc = &srcfile;
   myGifFile = DGifOpen(NULL, readFunc);
   if (myGifFile == NULL) {
     return false;
@@ -6120,8 +6122,8 @@ bool decompress_gif(FILE* srcfile, FILE* dstfile, long long src_pos, int& gif_le
             long long dstfile_pos = tell_64(dstfile);
             seek_64(dstfile, 0);
             // change GIF8xa to PGF8xa
-            fputc('P', dstfile);
-            fputc('G', dstfile);
+            fputc('P', dstfile.file_ptr.get());
+            fputc('G', dstfile.file_ptr.get());
             seek_64(dstfile, dstfile_pos);
           } else {
             seek_64(srcfile, last_pos);
@@ -6131,7 +6133,7 @@ bool decompress_gif(FILE* srcfile, FILE* dstfile, long long src_pos, int& gif_le
         }
 
         unsigned char c;
-        c = fgetc(srcfile);
+        c = fgetc(srcfile.file_ptr.get());
         if (c == 254) {
           block_size = 254;
         }
@@ -6228,10 +6230,10 @@ void try_decompression_gif(unsigned char version[5]) {
   seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos);
 
   // read GIF file
-  g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+  g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
 
   if (!decompress_gif(g_precomp.ctx.fin, g_precomp.ctx.ftempout, g_precomp.ctx.input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
-    safe_fclose(&g_precomp.ctx.ftempout);
+    safe_fclose(g_precomp.ctx.ftempout);
     remove(g_precomp.ctx.tempfile1);
     GifDiffFree(&gDiff);
     GifCodeFree(&gCode);
@@ -6242,21 +6244,21 @@ void try_decompression_gif(unsigned char version[5]) {
   std::cout << "Can be decompressed to " << decomp_length << " bytes" << std::endl;
   }
 
-  safe_fclose(&g_precomp.ctx.ftempout);
+  safe_fclose(g_precomp.ctx.ftempout);
 
   g_precomp.statistics.decompressed_streams_count++;
   g_precomp.statistics.decompressed_gif_count++;
 
-  g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-  g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "wb");
+  g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+  g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "wb");
   if (recompress_gif(g_precomp.ctx.ftempout, g_precomp.ctx.frecomp, block_size, &gCode, &gDiff)) {
 
-    safe_fclose(&g_precomp.ctx.frecomp);
-    safe_fclose(&g_precomp.ctx.ftempout);
+    safe_fclose(g_precomp.ctx.frecomp);
+    safe_fclose(g_precomp.ctx.ftempout);
 
-    g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "rb");
+    g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "rb");
     g_precomp.ctx.best_identical_bytes = compare_files_penalty(g_precomp.ctx.fin, g_precomp.ctx.frecomp, g_precomp.ctx.input_file_pos, 0);
-    safe_fclose(&g_precomp.ctx.frecomp);
+    safe_fclose(g_precomp.ctx.frecomp);
 
     if (g_precomp.ctx.best_identical_bytes < gif_length) {
       if (g_precomp.switches.DEBUG_MODE) {
@@ -6338,8 +6340,8 @@ void try_decompression_gif(unsigned char version[5]) {
     printf ("No matches\n");
     }
 
-    safe_fclose(&g_precomp.ctx.frecomp);
-    safe_fclose(&g_precomp.ctx.ftempout);
+    safe_fclose(g_precomp.ctx.frecomp);
+    safe_fclose(g_precomp.ctx.ftempout);
 
   }
 
@@ -6488,17 +6490,18 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
 			printf("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
-          g_precomp.ctx.fjpg = tryOpen(g_precomp.ctx.tempfile0, "wb");
+          g_precomp.ctx.fjpg.open(g_precomp.ctx.tempfile0, "wb");
           seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos);
           fast_copy(g_precomp.ctx.fin, g_precomp.ctx.fjpg, jpg_length);
-          safe_fclose(&g_precomp.ctx.fjpg);
+          safe_fclose(g_precomp.ctx.fjpg);
           remove(g_precomp.ctx.tempfile1);
 
           // Workaround for JPG bugs. Sometimes tempfile1 is removed, but still
           // not accessible by packJPG, so we prevent that by opening it here
           // ourselves.
-          FILE* fworkaround = tryOpen(g_precomp.ctx.tempfile1, "wb");
-          safe_fclose(&fworkaround);
+          FileWrapper fworkaround;
+          fworkaround.open(g_precomp.ctx.tempfile1, "wb");
+          safe_fclose(fworkaround);
 
           recompress_success = pjglib_convert_file2file(g_precomp.ctx.tempfile0, g_precomp.ctx.tempfile1, recompress_msg);
 		  brunsli_used = false;
@@ -6532,10 +6535,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
                 recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
             }
           } else {
-            g_precomp.ctx.fjpg = tryOpen(g_precomp.ctx.tempfile0, "rb");
+            g_precomp.ctx.fjpg.open(g_precomp.ctx.tempfile0, "rb");
             do {
               ffda_pos++;
-              if (fread(in, 1, 1, g_precomp.ctx.fjpg) != 1) break;
+              if (fread(in, 1, 1, g_precomp.ctx.fjpg.file_ptr.get()) != 1) break;
               if (found_ff) {
                 found_ffda = (in[0] == 0xDA);
                 if (found_ffda) break;
@@ -6545,16 +6548,16 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
               }
             } while (!found_ffda);
             if (found_ffda) {
-              g_precomp.ctx.fdecomp = tryOpen(g_precomp.ctx.tempfile3, "wb");
+              g_precomp.ctx.fdecomp.open(g_precomp.ctx.tempfile3, "wb");
               seek_64(g_precomp.ctx.fjpg, 0);
               fast_copy(g_precomp.ctx.fjpg, g_precomp.ctx.fdecomp, ffda_pos - 1);
               // insert MJPGDHT
               own_fwrite(MJPGDHT, 1, MJPGDHT_LEN, g_precomp.ctx.fdecomp);
               seek_64(g_precomp.ctx.fjpg, ffda_pos - 1);
               fast_copy(g_precomp.ctx.fjpg, g_precomp.ctx.fdecomp, jpg_length - (ffda_pos - 1));
-              safe_fclose(&g_precomp.ctx.fdecomp);
+              safe_fclose(g_precomp.ctx.fdecomp);
             }
-            safe_fclose(&g_precomp.ctx.fjpg);
+            safe_fclose(g_precomp.ctx.fjpg);
             recompress_success = pjglib_convert_file2file(g_precomp.ctx.tempfile3, g_precomp.ctx.tempfile1, recompress_msg);
           }
 
@@ -6582,10 +6585,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg) {
           if (in_memory) {
             jpg_new_length = jpg_mem_out_size;
           } else {
-            g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-            fseek(g_precomp.ctx.ftempout, 0, SEEK_END);
-            jpg_new_length = ftell(g_precomp.ctx.ftempout);
-            safe_fclose(&g_precomp.ctx.ftempout);
+            g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+            fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_END);
+            jpg_new_length = ftell(g_precomp.ctx.ftempout.file_ptr.get());
+            safe_fclose(g_precomp.ctx.ftempout);
           }
 
           if (jpg_new_length > 0) {
@@ -6673,15 +6676,16 @@ void try_decompression_mp3 (long long mp3_length) {
           recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
         } else { // large stream => use temporary files
           // try to decompress at current position
-          g_precomp.ctx.fmp3 = tryOpen(g_precomp.ctx.tempfile0, "wb");
+          g_precomp.ctx.fmp3.open(g_precomp.ctx.tempfile0, "wb");
           seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos);
           fast_copy(g_precomp.ctx.fin, g_precomp.ctx.fmp3, mp3_length);
-          safe_fclose(&g_precomp.ctx.fmp3);
+          safe_fclose(g_precomp.ctx.fmp3);
           remove(g_precomp.ctx.tempfile1);
 
           // workaround for bugs, similar to packJPG
-          FILE* fworkaround = tryOpen(g_precomp.ctx.tempfile1, "wb");
-          safe_fclose(&fworkaround);
+          FileWrapper fworkaround;
+          fworkaround.open(g_precomp.ctx.tempfile1, "wb");
+          safe_fclose(fworkaround);
 
           recompress_success = pmplib_convert_file2file(g_precomp.ctx.tempfile0, g_precomp.ctx.tempfile1, recompress_msg);
         }
@@ -6699,14 +6703,15 @@ void try_decompression_mp3 (long long mp3_length) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
                 recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
               } else {
-                g_precomp.ctx.fmp3 = tryOpen(g_precomp.ctx.tempfile0, "r+b");
-                ftruncate(fileno(g_precomp.ctx.fmp3), pos);
-                safe_fclose(&g_precomp.ctx.fmp3);
+                g_precomp.ctx.fmp3.open(g_precomp.ctx.tempfile0, "r+b");
+                ftruncate(fileno(g_precomp.ctx.fmp3.file_ptr.get()), pos);
+                safe_fclose(g_precomp.ctx.fmp3);
                 remove(g_precomp.ctx.tempfile1);
 
                 // workaround for bugs, similar to packJPG
-                FILE* fworkaround = tryOpen(g_precomp.ctx.tempfile1, "wb");
-                safe_fclose(&fworkaround);
+                FileWrapper fworkaround;
+                fworkaround.open(g_precomp.ctx.tempfile1, "wb");
+                safe_fclose(fworkaround);
 
                 recompress_success = pmplib_convert_file2file(g_precomp.ctx.tempfile0, g_precomp.ctx.tempfile1, recompress_msg);
               }
@@ -6751,10 +6756,10 @@ void try_decompression_mp3 (long long mp3_length) {
           if (in_memory) {
             mp3_new_length = mp3_mem_out_size;
           } else {
-            g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-            fseek(g_precomp.ctx.ftempout, 0, SEEK_END);
-            mp3_new_length = ftell(g_precomp.ctx.ftempout);
-            safe_fclose(&g_precomp.ctx.ftempout);
+            g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+            fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_END);
+            mp3_new_length = ftell(g_precomp.ctx.ftempout.file_ptr.get());
+            safe_fclose(g_precomp.ctx.ftempout);
           }
 
           if (mp3_new_length > 0) {
@@ -6915,10 +6920,10 @@ void try_decompression_bzip2(int compression_level) {
           std::cout << "Possible bZip2-Stream found at position " << g_precomp.ctx.saved_input_file_pos << ", compression level = " << compression_level << std::endl;
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
 
-          g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-          fseek(g_precomp.ctx.ftempout, 0, SEEK_END);
+          g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+          fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_END);
           std::cout << "Can be decompressed to " << tell_64(g_precomp.ctx.ftempout) << " bytes" << std::endl;
-          safe_fclose(&g_precomp.ctx.ftempout);
+          safe_fclose(g_precomp.ctx.ftempout);
           }
 
           try_recompress_bzip2(g_precomp.ctx.fin, compression_level, compressed_stream_size);
@@ -7017,7 +7022,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(FILE* file_in, FILE* file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
+void base64_reencode(FileWrapper& file_in, FileWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
           int line_nr = 0;
           unsigned int act_line_len = 0;
           int avail_in;
@@ -7104,7 +7109,7 @@ void try_decompression_base64(int base64_header_length) {
 
         // try to decode at current position
         remove(g_precomp.ctx.tempfile1);
-        g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+        g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
         seek_64(g_precomp.ctx.fin, g_precomp.ctx.input_file_pos);
 
         unsigned char base64_data[CHUNK >> 2];
@@ -7123,7 +7128,7 @@ void try_decompression_base64(int base64_header_length) {
         unsigned int act_line_len = 0;
 
         do {
-          avail_in = fread(in, 1, CHUNK, g_precomp.ctx.fin);
+          avail_in = fread(in, 1, CHUNK, g_precomp.ctx.fin.file_ptr.get());
           for (i = 0; i < (avail_in >> 2); i++) {
             // are these valid base64 chars?
             for (j = (i << 2); j < ((i << 2) + 4); j++) {
@@ -7176,9 +7181,9 @@ void try_decompression_base64(int base64_header_length) {
               b = base64_data[(j << 2) + 1];
               c = base64_data[(j << 2) + 2];
               d = base64_data[(j << 2) + 3];
-              fputc((a << 2) | (b >> 4), g_precomp.ctx.ftempout);
-              fputc(((b << 4) & 0xFF) | (c >> 2), g_precomp.ctx.ftempout);
-              fputc(((c << 6) & 0xFF) | d, g_precomp.ctx.ftempout);
+              fputc((a << 2) | (b >> 4), g_precomp.ctx.ftempout.file_ptr.get());
+              fputc(((b << 4) & 0xFF) | (c >> 2), g_precomp.ctx.ftempout.file_ptr.get());
+              fputc(((c << 6) & 0xFF) | d, g_precomp.ctx.ftempout.file_ptr.get());
             }
             if (stream_finished) break;
             for (j = 0; j < (k % 4); j++) {
@@ -7197,7 +7202,7 @@ void try_decompression_base64(int base64_header_length) {
           }
         }
 
-        safe_fclose(&g_precomp.ctx.ftempout);
+        safe_fclose(g_precomp.ctx.ftempout);
 
         if (!decoding_failed) {
           int line_case = -1;
@@ -7224,10 +7229,10 @@ void try_decompression_base64(int base64_header_length) {
           g_precomp.statistics.decompressed_streams_count++;
           g_precomp.statistics.decompressed_base64_count++;
 
-          g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "rb");
-          fseek(g_precomp.ctx.ftempout, 0, SEEK_END);
-          g_precomp.ctx.identical_bytes = ftell(g_precomp.ctx.ftempout);
-          safe_fclose(&g_precomp.ctx.ftempout);
+          g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
+          fseek(g_precomp.ctx.ftempout.file_ptr.get(), 0, SEEK_END);
+          g_precomp.ctx.identical_bytes = ftell(g_precomp.ctx.ftempout.file_ptr.get());
+          safe_fclose(g_precomp.ctx.ftempout);
 
 
           if (g_precomp.switches.DEBUG_MODE) {
@@ -7238,21 +7243,21 @@ void try_decompression_base64(int base64_header_length) {
 
           // try to re-encode Base64 data
 
-          g_precomp.ctx.ftempout = fopen(g_precomp.ctx.tempfile1, "rb");
+          g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "rb");
           if (g_precomp.ctx.ftempout == NULL) {
             error(ERR_TEMP_FILE_DISAPPEARED);
           }
 
           remove(g_precomp.ctx.tempfile2);
-          g_precomp.ctx.frecomp = tryOpen(g_precomp.ctx.tempfile2, "w+b");
+          g_precomp.ctx.frecomp.open(g_precomp.ctx.tempfile2, "w+b");
 
           base64_reencode(g_precomp.ctx.ftempout, g_precomp.ctx.frecomp, line_count, base64_line_len);
 
-          safe_fclose(&g_precomp.ctx.ftempout);
+          safe_fclose(g_precomp.ctx.ftempout);
 
           g_precomp.ctx.identical_bytes_decomp = compare_files(g_precomp.ctx.fin, g_precomp.ctx.frecomp, g_precomp.ctx.input_file_pos, 0);
 
-          safe_fclose(&g_precomp.ctx.frecomp);
+          safe_fclose(g_precomp.ctx.frecomp);
 
           if (g_precomp.ctx.identical_bytes_decomp > g_precomp.switches.min_ident_size) {
             g_precomp.statistics.recompressed_streams_count++;
@@ -7363,7 +7368,7 @@ void error(int error_nr) {
     case ERR_DISK_FULL:
       printf("There is not enough space on disk");
       // delete output file
-      safe_fclose(&g_precomp.ctx.fout);
+      safe_fclose(g_precomp.ctx.fout);
       remove(g_precomp.ctx.output_file_name.c_str());
       break;
     case ERR_RECURSION_DEPTH_TOO_BIG:
@@ -7399,18 +7404,18 @@ void error(int error_nr) {
   exit(error_nr);
 }
 
-FILE* tryOpen(const char* filename, const char* mode) {
-  FILE* fptr;
+FileWrapper& tryOpen(const char* filename, const char* mode) {
+  FileWrapper fptr;
 
-  fptr = fopen(filename,mode);
+  fptr.open(filename,mode);
 
-  if (fptr != NULL) return fptr;
+  if (fptr.file_ptr != nullptr) return fptr;
 
   long long timeoutstart = get_time_ms();
-  while ((fptr == NULL) && ((get_time_ms() - timeoutstart) <= 15000)) {
-    fptr = fopen(filename,mode);
+  while ((fptr.file_ptr != nullptr) && ((get_time_ms() - timeoutstart) <= 15000)) {
+    fptr.open(filename,mode);
   }
-  if (fptr == NULL) {
+  if (fptr.file_ptr == nullptr) {
     printf("ERROR: Access denied for %s\n", filename);
 
     exit(1);
@@ -7456,11 +7461,12 @@ long long fileSize64(const char* filename) {
 
     return ((long long)(s1) << 32) + s2;
   #else
-    FILE* f = fopen(filename, "rb");
-    if (f == NULL) return 0;
-    fseeko(f, 0, SEEK_END);
-    long long result=ftello(f);
-    safe_fclose(&f);
+    FileWrapper f;
+    f.open(filename, "rb");
+    if (f.file_ptr == nullptr) return 0;
+    fseeko(f.file_ptr.get(), 0, SEEK_END);
+    long long result=ftello(f.file_ptr.get());
+    safe_fclose(f);
     return result;
   #endif // __unix
 }
@@ -7507,8 +7513,9 @@ void init_temp_files() {
   }
 
   // create meta file
-  FILE* f = fopen(g_precomp.ctx.metatempfile, "wb");
-  safe_fclose(&f);
+  FileWrapper f;
+  f.open(g_precomp.ctx.metatempfile, "wb");
+  safe_fclose(f);
 
   // update temporary file list
   tempfilelist_count += 8;
@@ -7537,14 +7544,14 @@ void recursion_pop() {
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, bool leave_open) {
   if (in_memory) {
-    g_precomp.ctx.ftempout = tryOpen(g_precomp.ctx.tempfile1, "wb");
+    g_precomp.ctx.ftempout.open(g_precomp.ctx.tempfile1, "wb");
     fast_copy(g_precomp.ctx.decomp_io_buf, g_precomp.ctx.ftempout, byte_count);
-    if (!leave_open) safe_fclose(&g_precomp.ctx.ftempout);
+    if (!leave_open) safe_fclose(g_precomp.ctx.ftempout);
   }
 }
 
 recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, bool deflate_type, bool in_memory) {
-  FILE* recursion_fout;
+  FileWrapper recursion_fout;
   recursion_result tmp_r;
   tmp_r.success = false;
 
@@ -7567,13 +7574,14 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
-    FILE* ftempfile1 = fopen(g_precomp.ctx.tempfile1, "r+b");
-    ftruncate(fileno(ftempfile1), decompressed_bytes);
-    fclose(ftempfile1);
+    FileWrapper ftempfile1;
+    ftempfile1.open(g_precomp.ctx.tempfile1, "r+b");
+    ftruncate(fileno(ftempfile1.file_ptr.get()), decompressed_bytes);
+    fclose(ftempfile1.file_ptr.get());
   }
 
   g_precomp.ctx.fin_length = fileSize64(g_precomp.ctx.tempfile1);
-  g_precomp.ctx.fin = fopen(g_precomp.ctx.tempfile1, "rb");
+  g_precomp.ctx.fin.open(g_precomp.ctx.tempfile1, "rb");
   if (g_precomp.ctx.fin == NULL) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", g_precomp.ctx.tempfile1);
 
@@ -7584,7 +7592,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = new char[strlen(g_precomp.ctx.tempfile1)+2];
   strcpy(tmp_r.file_name, g_precomp.ctx.output_file_name.c_str());
-  recursion_fout = tryOpen(g_precomp.ctx.output_file_name.c_str(), "wb");
+  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
   g_precomp.ctx.fout = recursion_fout;
 
   g_precomp.ctx.intense_ignore_offsets = new std::set<long long>();
@@ -7657,21 +7665,21 @@ recursion_result recursion_write_file_and_compress(const recompress_deflate_resu
 }
 
 recursion_result recursion_decompress(long long recursion_data_length) {
-  FILE* recursion_fin;
-  FILE* recursion_fout;
+  FileWrapper recursion_fin;
+  FileWrapper recursion_fout;
   recursion_result tmp_r;
 
   recursion_push();
 
   remove(g_precomp.ctx.tempfile1);
-  recursion_fin = tryOpen(g_precomp.ctx.tempfile1,"wb");
+  recursion_fin.open(g_precomp.ctx.tempfile1,"wb");
 
   fast_copy(g_precomp.ctx.fin, recursion_fin, recursion_data_length);
 
-  safe_fclose(&recursion_fin);
+  safe_fclose(recursion_fin);
 
   g_precomp.ctx.fin_length = fileSize64(g_precomp.ctx.tempfile1);
-  g_precomp.ctx.fin = fopen(g_precomp.ctx.tempfile1, "rb");
+  g_precomp.ctx.fin.open(g_precomp.ctx.tempfile1, "rb");
   if (g_precomp.ctx.fin == NULL) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", g_precomp.ctx.tempfile1);
 
@@ -7682,7 +7690,7 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = new char[strlen(g_precomp.ctx.tempfile1)+2];
   strcpy(tmp_r.file_name, g_precomp.ctx.output_file_name.c_str());
-  recursion_fout = tryOpen(g_precomp.ctx.output_file_name.c_str(), "wb");
+  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
   g_precomp.ctx.fout = recursion_fout;
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
@@ -7706,19 +7714,19 @@ recursion_result recursion_decompress(long long recursion_data_length) {
   // get recursion file size
   tmp_r.file_length = fileSize64(tmp_r.file_name);
 
-  tmp_r.frecurse = fopen(tmp_r.file_name, "rb");
+  tmp_r.frecurse.open(tmp_r.file_name, "rb");
 
   return tmp_r;
 }
 
-void own_fputc(char c, FILE* f) {
+void own_fputc(char c, FileWrapper& f) {
   bool use_otf = false;
 
   if (g_precomp.ctx.comp_decomp_state == P_CONVERT) {
     use_otf = (conversion_to_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_to_method;
   } else {
-    if ((f != g_precomp.ctx.fout) || (g_precomp.ctx.compression_otf_method == OTF_NONE)) {
+    if ((f.file_ptr != g_precomp.ctx.fout.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -7726,7 +7734,7 @@ void own_fputc(char c, FILE* f) {
   }
 
   if (!use_otf) {
-    fputc(c, f);
+    fputc(c, f.file_ptr.get());
   } else {
     fout_fputc(c);
   }
@@ -7734,7 +7742,7 @@ void own_fputc(char c, FILE* f) {
 
 void fout_fputc(char c) {
   if (g_precomp.ctx.compression_otf_method == OTF_NONE) { // uncompressed
-    fputc(c, g_precomp.ctx.fout);
+    fputc(c, g_precomp.ctx.fout.file_ptr.get());
   } else {
     unsigned char temp_buf[1];
     temp_buf[0] = c;
@@ -7862,7 +7870,7 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
     debug_pos();
     bool result = try_reconstructing_deflate(r.frecurse, g_precomp.ctx.fout, rdres);
     debug_pos();
-    safe_fclose(&r.frecurse);
+    safe_fclose(r.frecurse);
     remove(r.file_name);
     delete[] r.file_name;
     return result;
@@ -7879,7 +7887,7 @@ unsigned char fin_fgetc() {
   if (g_precomp.ctx.comp_decomp_state == P_CONVERT) g_precomp.ctx.compression_otf_method = conversion_from_method;
 
   if (g_precomp.ctx.compression_otf_method == OTF_NONE) {
-    return fgetc(g_precomp.ctx.fin);
+    return fgetc(g_precomp.ctx.fin.file_ptr.get());
   } else {
     unsigned char temp_buf[1];
     own_fread(temp_buf, 1, 1, g_precomp.ctx.fin);
@@ -8080,9 +8088,9 @@ char get_char_with_echo() {
   #endif
 }
 
-void safe_fclose(FILE** f) {
-  if (*f != NULL) fclose(*f);
-  *f = NULL;
+void safe_fclose(FileWrapper& f) {
+  if (f.file_ptr != nullptr) fclose(f.file_ptr.get());
+  f.file_ptr = nullptr;
 }
 
 void print_work_sign(bool with_backspace) {
