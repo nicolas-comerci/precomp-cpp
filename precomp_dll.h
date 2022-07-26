@@ -11,11 +11,13 @@
 // Quick and dirty wrapper to move away from using naked FILE* and simplify later refactor to use iostreams,
 // the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
 class FileWrapper {
+protected:
+  bool is_tmp_file = false;
+
 public:
   std::shared_ptr<std::FILE> file_ptr = nullptr;
-  bool is_tmp_file = false;
-  std::string last_open_file_path;
-  std::string last_open_file_mode;
+  std::string file_path;
+  std::string file_mode;
 
   friend bool operator==(const FileWrapper& lhs, const std::FILE* rhs) {
     return rhs == lhs.file_ptr.get();
@@ -29,42 +31,40 @@ public:
   friend bool operator!=(const std::FILE* lhs, const FileWrapper& rhs) {
     return lhs != rhs.file_ptr.get();
   }
+
+  ~FileWrapper() {
+    file_ptr = nullptr;
+    if (is_tmp_file) std::remove(file_path.c_str());
+  }
  
   void open(std::string file_path, std::string mode) {
-    last_open_file_path = file_path;
-    last_open_file_mode = mode;
-    bool tmp_file = is_tmp_file;
-    // if its a tmp file we ensure it doesn't exist already
-    if (is_tmp_file) std::remove(file_path.c_str());
+    this->file_path = file_path;
+    this->file_mode = mode;
     // shared_ptr to FILE that closes itself when last instance is destroyed
     file_ptr = std::shared_ptr<std::FILE>(
       std::fopen(file_path.c_str(), mode.c_str()),
-      [tmp_file, file_path](FILE* raw_file_ptr) {
-        std::fclose(raw_file_ptr);
-        // We also delete tmp files after we are done with them
-        if (tmp_file) std::remove(file_path.c_str());
+      [file_path](FILE* raw_file_ptr) {
+        if (raw_file_ptr != nullptr) std::fclose(raw_file_ptr);
       }
     );
   }
 
-  /*
-  void reopen(bool force = false) {
-    if (is_open && force) close();
-    if (!is_open) open(last_open_file_path, last_open_file_mode);
+  void reopen(std::string mode = "") {
+    if (mode.empty()) mode = "a+";
+    if (is_open()) close();
+    open(file_path, file_mode);
+    if (mode.compare("a+") == 0) fseek(file_ptr.get(), 0, SEEK_SET);
   }
-  */
 
   bool is_open() {
     return file_ptr != nullptr;
   }
 
-  /*
   int close() {
     int result = is_open() ? 0 : 1;
     file_ptr = nullptr;
     return result;
   }
-  */
 
   size_t read(char* s, std::streamsize n) {
     return file_ptr != nullptr ? fread(s, sizeof(char), n, file_ptr.get()) : 0;
@@ -92,6 +92,13 @@ public:
 
   bool eof() {
     return file_ptr != nullptr ? feof(file_ptr.get()) : false;
+  }
+};
+
+class PrecompTmpFile: public FileWrapper {
+public:
+  PrecompTmpFile() {
+    is_tmp_file = true;
   }
 };
 
