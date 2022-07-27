@@ -66,12 +66,8 @@ public:
     return result;
   }
 
-  size_t read(char* s, std::streamsize n) {
-    return file_ptr != nullptr ? fread(s, sizeof(char), n, file_ptr.get()) : 0;
-  }
-
-  size_t read(unsigned char* s, std::streamsize n) {
-    return file_ptr != nullptr ? fread(s, sizeof(unsigned char), n, file_ptr.get()) : 0;
+  size_t read(void* s, std::streamsize n) const {
+    return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }
 
   size_t write(const char* s, std::streamsize n) {
