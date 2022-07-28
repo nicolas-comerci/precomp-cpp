@@ -4492,10 +4492,10 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('P', g_precomp.ctx.fout.file_ptr.get());
-      fputc('K', g_precomp.ctx.fout.file_ptr.get());
-      fputc(3, g_precomp.ctx.fout.file_ptr.get());
-      fputc(4, g_precomp.ctx.fout.file_ptr.get());
+      g_precomp.ctx.fout.put('P');
+      g_precomp.ctx.fout.put('K');
+      g_precomp.ctx.fout.put(3);
+      g_precomp.ctx.fout.put(4);
       tempfile += "zip";
       PrecompTmpFile tmp_zip;
       tmp_zip.open(tempfile, "a+");
@@ -4513,8 +4513,8 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc(31, g_precomp.ctx.fout.file_ptr.get());
-      fputc(139, g_precomp.ctx.fout.file_ptr.get());
+      g_precomp.ctx.fout.put(31);
+      g_precomp.ctx.fout.put(139);
       tempfile += "gzip";
       PrecompTmpFile tmp_gzip;
       tmp_gzip.open(tempfile, "a+");
@@ -4843,9 +4843,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      fputc('C', g_precomp.ctx.fout.file_ptr.get());
-      fputc('W', g_precomp.ctx.fout.file_ptr.get());
-      fputc('S', g_precomp.ctx.fout.file_ptr.get());
+      g_precomp.ctx.fout.put('C');
+      g_precomp.ctx.fout.put('W');
+      g_precomp.ctx.fout.put('S');
       tempfile += "swf";
       PrecompTmpFile tmp_swf;
       tmp_swf.open(tempfile, "a+");
@@ -4876,7 +4876,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         printf("Base64 header length: %i\n", base64_header_length);
       }
       own_fread(in, 1, base64_header_length, g_precomp.ctx.fin);
-      fputc(*(in) + 1, g_precomp.ctx.fout.file_ptr.get()); // first char was decreased
+      g_precomp.ctx.fout.put(*(in)+1); // first char was decreased
       own_fwrite(in + 1, 1, base64_header_length - 1, g_precomp.ctx.fout);
 
       // read line length list
@@ -5245,12 +5245,12 @@ void write_header() {
   fprintf(g_precomp.ctx.fout.file_ptr.get(), "PCF");
 
   // version number
-  fputc(V_MAJOR, g_precomp.ctx.fout.file_ptr.get());
-  fputc(V_MINOR, g_precomp.ctx.fout.file_ptr.get());
-  fputc(V_MINOR2, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.put(V_MAJOR);
+  g_precomp.ctx.fout.put(V_MINOR);
+  g_precomp.ctx.fout.put(V_MINOR2);
 
   // compression-on-the-fly method used
-  fputc(g_precomp.ctx.compression_otf_method, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.put(g_precomp.ctx.compression_otf_method);
 
   // write input file name without path
   const char* last_backslash = strrchr(g_precomp.ctx.input_file_name.c_str(), PATH_DELIM);
@@ -5261,7 +5261,7 @@ void write_header() {
   }
 
   fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", input_file_name_without_path);
-  fputc(0, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.put(0);
 
   delete[] input_file_name_without_path;
 
@@ -5384,7 +5384,7 @@ void convert_header() {
     if (c != 0) header_filename += c;
   } while (c != 0);
   fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", header_filename.c_str());
-  fputc(0, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.put(0);
 }
 
 void progress_update(long long bytes_written) {
@@ -6070,8 +6070,8 @@ bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char bl
             long long dstfile_pos = tell_64(dstfile);
             seek_64(dstfile, 0);
             // change PGF8xa to GIF8xa
-            fputc('G', dstfile.file_ptr.get());
-            fputc('I', dstfile.file_ptr.get());
+            dstfile.put('G');
+            dstfile.put('I');
             seek_64(dstfile, dstfile_pos);
           } else {
             seek_64(srcfile, last_pos);
@@ -6202,8 +6202,8 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
             long long dstfile_pos = tell_64(dstfile);
             seek_64(dstfile, 0);
             // change GIF8xa to PGF8xa
-            fputc('P', dstfile.file_ptr.get());
-            fputc('G', dstfile.file_ptr.get());
+            dstfile.put('P');
+            dstfile.put('G');
             seek_64(dstfile, dstfile_pos);
           } else {
             seek_64(srcfile, last_pos);
@@ -7288,9 +7288,9 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
               b = base64_data[(j << 2) + 1];
               c = base64_data[(j << 2) + 2];
               d = base64_data[(j << 2) + 3];
-              fputc((a << 2) | (b >> 4), ftempout.file_ptr.get());
-              fputc(((b << 4) & 0xFF) | (c >> 2), ftempout.file_ptr.get());
-              fputc(((c << 6) & 0xFF) | d, ftempout.file_ptr.get());
+              ftempout.put((a << 2) | (b >> 4));
+              ftempout.put(((b << 4) & 0xFF) | (c >> 2));
+              ftempout.put(((c << 6) & 0xFF) | d);
             }
             if (stream_finished) break;
             for (j = 0; j < (k % 4); j++) {
@@ -7793,7 +7793,7 @@ void own_fputc(char c, FileWrapper& f) {
   }
 
   if (!use_otf) {
-    fputc(c, f.file_ptr.get());
+    f.put(c);
   } else {
     fout_fputc(c);
   }
@@ -7801,7 +7801,7 @@ void own_fputc(char c, FileWrapper& f) {
 
 void fout_fputc(char c) {
   if (g_precomp.ctx.compression_otf_method == OTF_NONE) { // uncompressed
-    fputc(c, g_precomp.ctx.fout.file_ptr.get());
+    g_precomp.ctx.fout.put(c);
   } else {
     unsigned char temp_buf[1];
     temp_buf[0] = c;

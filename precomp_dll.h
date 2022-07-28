@@ -75,7 +75,7 @@ public:
     return file_ptr != nullptr ? fwrite(s, 1, n, file_ptr.get()) : 0;
   }
 
-  int putc(int chr) {
+  int put(int chr) const {
     return file_ptr != nullptr ? std::fputc(chr, file_ptr.get()) : 0;
   }
 
