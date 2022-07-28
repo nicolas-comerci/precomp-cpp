@@ -5283,7 +5283,7 @@ bool check_for_pcf_file() {
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
+    c = g_precomp.ctx.fin.get();
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5327,7 +5327,7 @@ void read_header() {
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
+    c = g_precomp.ctx.fin.get();
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -5368,7 +5368,7 @@ void convert_header() {
   std::string header_filename = "";
   char c;
   do {
-    c = fgetc(g_precomp.ctx.fin.file_ptr.get());
+    c = g_precomp.ctx.fin.get();
     if (c != 0) header_filename += c;
   } while (c != 0);
   g_precomp.ctx.fout.printf(header_filename);
@@ -6182,7 +6182,7 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
         }
 
         unsigned char c;
-        c = fgetc(srcfile.file_ptr.get());
+        c = srcfile.get();
         if (c == 254) {
           block_size = 254;
         }
@@ -7921,7 +7921,7 @@ unsigned char fin_fgetc() {
   if (g_precomp.ctx.comp_decomp_state == P_CONVERT) g_precomp.ctx.compression_otf_method = conversion_from_method;
 
   if (g_precomp.ctx.compression_otf_method == OTF_NONE) {
-    return fgetc(g_precomp.ctx.fin.file_ptr.get());
+    return g_precomp.ctx.fin.get();
   } else {
     unsigned char temp_buf[1];
     own_fread(temp_buf, 1, 1, g_precomp.ctx.fin);

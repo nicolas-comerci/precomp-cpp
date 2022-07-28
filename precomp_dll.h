@@ -115,6 +115,10 @@ public:
     return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }
 
+  int get() const {
+    return file_ptr != nullptr ? fgetc(file_ptr.get()) : 0;
+  }
+
   size_t write(const void* s, std::streamsize n) const {
     return file_ptr != nullptr ? fwrite(s, 1, n, file_ptr.get()) : 0;
   }
