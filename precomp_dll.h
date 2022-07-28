@@ -135,7 +135,7 @@ public:
     return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
   }
 
-  bool eof() {
+  bool eof() const {
     return file_ptr != nullptr ? feof(file_ptr.get()) : false;
   }
 };

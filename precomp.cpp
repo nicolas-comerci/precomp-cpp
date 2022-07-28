@@ -2367,7 +2367,7 @@ long long def_compare_bzip2(FileWrapper& source, FileWrapper& compfile, int leve
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    flush = feof(source.file_ptr.get()) ? BZ_FINISH : BZ_RUN;
+    flush = source.eof() ? BZ_FINISH : BZ_RUN;
     strm.next_in = (char*)in;
     decompressed_bytes_used += strm.avail_in;
 
@@ -2665,7 +2665,7 @@ int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    flush = feof(source.file_ptr.get()) ? BZ_FINISH : BZ_RUN;
+    flush = source.eof() ? BZ_FINISH : BZ_RUN;
     strm.next_in = (char*)in;
 
     do {
@@ -5608,7 +5608,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
 
         do {
           print_work_sign(true);
-          if ((otf_xz_stream_d.avail_in == 0) && !feof(g_precomp.ctx.fin.file_ptr.get())) {
+          if ((otf_xz_stream_d.avail_in == 0) && !g_precomp.ctx.fin.eof()) {
             otf_xz_stream_d.next_in = (uint8_t *)otf_in;
             otf_xz_stream_d.avail_in = g_precomp.ctx.fin.read(otf_in, CHUNK);
 
