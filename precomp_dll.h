@@ -11,32 +11,19 @@
 // Quick and dirty wrapper to move away from using naked FILE* and simplify later refactor to use iostreams,
 // the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
 class FileWrapper {
+private:
+  std::shared_ptr<std::FILE> file_ptr = nullptr;
 protected:
   bool is_tmp_file = false;
-
 public:
-  std::shared_ptr<std::FILE> file_ptr = nullptr;
   std::string file_path;
   std::string file_mode;
-
-  friend bool operator==(const FileWrapper& lhs, const std::FILE* rhs) {
-    return rhs == lhs.file_ptr.get();
-  }
-  friend bool operator==(const std::FILE* lhs, const FileWrapper& rhs) {
-    return lhs == rhs.file_ptr.get();
-  }
-  friend bool operator!=(const FileWrapper& lhs, const std::FILE* rhs) {
-    return rhs != lhs.file_ptr.get();
-  }
-  friend bool operator!=(const std::FILE* lhs, const FileWrapper& rhs) {
-    return lhs != rhs.file_ptr.get();
-  }
 
   ~FileWrapper() {
     file_ptr = nullptr;
     if (is_tmp_file) std::remove(file_path.c_str());
   }
- 
+
   void open(std::string file_path, std::string mode) {
     this->file_path = file_path;
     this->file_mode = mode;

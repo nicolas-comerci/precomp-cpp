@@ -234,14 +234,14 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
   g_precomp.ctx.fin.open(in_file, "rb");
-  if (g_precomp.ctx.fin == NULL) {
+  if (!g_precomp.ctx.fin.is_open()) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
   g_precomp.ctx.fout.open(out_file, "wb");
-  if (g_precomp.ctx.fout == NULL) {
+  if (!g_precomp.ctx.fout.is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
     return false;
@@ -274,14 +274,14 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
   g_precomp.ctx.fin.open(in_file, "rb");
-  if (g_precomp.ctx.fin == NULL) {
+  if (!g_precomp.ctx.fin.is_open()) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
   g_precomp.ctx.fout.open(out_file, "wb");
-  if (g_precomp.ctx.fout == NULL) {
+  if (!g_precomp.ctx.fout.is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
     return false;
@@ -948,7 +948,7 @@ int init(int argc, char* argv[]) {
       g_precomp.ctx.fin_length = fileSize64(argv[i]);
 
       g_precomp.ctx.fin.open(argv[i],"rb");
-      if (g_precomp.ctx.fin == NULL) {
+      if (!g_precomp.ctx.fin.is_open()) {
         printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
 
         exit(1);
@@ -1078,7 +1078,7 @@ int init(int argc, char* argv[]) {
       }
     }
     g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
-    if (g_precomp.ctx.fout == NULL) {
+    if (!g_precomp.ctx.fout.is_open()) {
       printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
       exit(1);
     }
@@ -1180,7 +1180,7 @@ int init_comfort(int argc, char* argv[]) {
     g_precomp.ctx.fin_length = fileSize64(g_precomp.ctx.input_file_name.c_str());
 
     g_precomp.ctx.fin.open(g_precomp.ctx.input_file_name.c_str(), "rb");
-    if (g_precomp.ctx.fin == NULL) {
+    if (!g_precomp.ctx.fin.is_open()) {
       printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
       wait_for_key();
       exit(1);
@@ -2123,7 +2123,7 @@ int init_comfort(int argc, char* argv[]) {
     printf("\n");
   }
   g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
-  if (g_precomp.ctx.fout == NULL) {
+  if (!g_precomp.ctx.fout.is_open()) {
     printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
     wait_for_key();
     exit(1);
@@ -2384,7 +2384,7 @@ long long def_compare_bzip2(FileWrapper& source, FileWrapper& compfile, int leve
       have = DEF_COMPARE_CHUNK - strm.avail_out;
 
       if (have > 0) {
-        if (compfile.file_ptr == g_precomp.ctx.fin.file_ptr) {
+        if (&compfile == &g_precomp.ctx.fin) {
           identical_bytes_compare = compare_file_mem_penalty(compfile, out, g_precomp.ctx.input_file_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         } else {
           identical_bytes_compare = compare_file_mem_penalty(compfile, out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
@@ -2697,7 +2697,7 @@ long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& dec
 
   tmpfile.seekg(0, SEEK_END);
   decompressed_bytes_total = tmpfile.tellg();
-  if (tmpfile == nullptr) {
+  if (!tmpfile.is_open()) {
     error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
   }
 
@@ -2710,7 +2710,7 @@ long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& dec
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name) {
   FileWrapper ftempout;
   ftempout.open(decompressed_file_name, "rb");
-  if (ftempout == NULL) error(ERR_TEMP_FILE_DISAPPEARED, decompressed_file_name);
+  if (!ftempout.is_open()) error(ERR_TEMP_FILE_DISAPPEARED, decompressed_file_name);
 
   ftempout.seekg(0, SEEK_SET);
 
@@ -2944,7 +2944,7 @@ private:
 };
 
 recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::string tmp_filename) {
-  file.seekg(file.file_ptr == g_precomp.ctx.fin.file_ptr ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
+  file.seekg(&file == &g_precomp.ctx.fin ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
 
   recompress_deflate_result result;
   memset(&result, 0, sizeof(result));
@@ -2963,7 +2963,7 @@ recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::stri
     result.uncompressed_stream_size = uos.written();
 
     if (preflate_verify && result.accepted) {
-      file.seekg(file.file_ptr == g_precomp.ctx.fin.file_ptr ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
+      file.seekg(&file == &g_precomp.ctx.fin ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
       OwnFileInputStream is2(&file);
       std::vector<uint8_t> orgdata(result.compressed_stream_size);
       is2.read(orgdata.data(), orgdata.size());
@@ -2983,7 +2983,7 @@ recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::stri
           snprintf(namebuf, 49, "preflate_error_%04d.raw", counter++);
           FileWrapper f;
           f.open(namebuf, "rb");
-          if (f.file_ptr) {
+          if (f.is_open()) {
             continue;
           }
           f.open(namebuf, "wb");
@@ -3251,7 +3251,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         FileWrapper ftempout;
         if (!rdres.uncompressed_in_memory) {
           ftempout.open(tmpfile.file_path, "rb");
-          if (ftempout == NULL) {
+          if (!ftempout.is_open()) {
             error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
           }
 
@@ -5178,7 +5178,7 @@ long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long
   FileWrapper ftempout;
   ftempout.open(tmpfile.file_path, "wb");
 
-  file.seekg(file.file_ptr == g_precomp.ctx.fin.file_ptr ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
+  file.seekg(&file == &g_precomp.ctx.fin ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
 
   r = inf_bzip2(file, ftempout, compressed_stream_size, decompressed_stream_size);
   ftempout.close();
@@ -5462,7 +5462,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
     use_otf = (conversion_to_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_to_method;
   } else {
-    if ((stream.file_ptr != g_precomp.ctx.fout.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_COMPRESS)) {
+    if ((&stream != &g_precomp.ctx.fout) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_COMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5560,7 +5560,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
     use_otf = (conversion_from_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_from_method;
   } else {
-    if ((stream.file_ptr != g_precomp.ctx.fin.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_DECOMPRESS)) {
+    if ((&stream != &g_precomp.ctx.fin) || (g_precomp.ctx.compression_otf_method == OTF_NONE) || (g_precomp.ctx.comp_decomp_state != P_DECOMPRESS)) {
       use_otf = false;
     } else {
       use_otf = true;
@@ -5694,7 +5694,7 @@ long long compare_files_penalty(FileWrapper& file1, FileWrapper& file2, long lon
   bool use_penalty_bytes = false;
 
   long long compare_end;
-  if (file1.file_ptr == g_precomp.ctx.fin.file_ptr) {
+  if (&file1 == &g_precomp.ctx.fin) {
     file2.seekg(0, SEEK_END);
     compare_end = file2.tellg();
   } else {
@@ -7324,7 +7324,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
     {
       FileWrapper ftempout;
       ftempout.open(tmpfile.file_path, "rb");
-      if (ftempout == NULL) {
+      if (!ftempout.is_open()) {
         error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
       }
 
@@ -7492,13 +7492,13 @@ FileWrapper& tryOpen(const char* filename, const char* mode) {
 
   fptr.open(filename,mode);
 
-  if (fptr.file_ptr != nullptr) return fptr;
+  if (fptr.is_open()) return fptr;
 
   long long timeoutstart = get_time_ms();
-  while ((fptr.file_ptr != nullptr) && ((get_time_ms() - timeoutstart) <= 15000)) {
+  while ((!fptr.is_open()) && ((get_time_ms() - timeoutstart) <= 15000)) {
     fptr.open(filename,mode);
   }
-  if (fptr.file_ptr == nullptr) {
+  if (!fptr.is_open()) {
     printf("ERROR: Access denied for %s\n", filename);
 
     exit(1);
@@ -7615,7 +7615,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
   g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
-  if (g_precomp.ctx.fin == NULL) {
+  if (!g_precomp.ctx.fin.is_open()) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
@@ -7711,7 +7711,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
 
   g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
   g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
-  if (g_precomp.ctx.fin == NULL) {
+  if (!g_precomp.ctx.fin.is_open()) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
@@ -7756,7 +7756,7 @@ void own_fputc(char c, FileWrapper& f) {
     use_otf = (conversion_to_method > OTF_NONE);
     if (use_otf) g_precomp.ctx.compression_otf_method = conversion_to_method;
   } else {
-    if ((f.file_ptr != g_precomp.ctx.fout.file_ptr) || (g_precomp.ctx.compression_otf_method == OTF_NONE)) {
+    if ((&f != &g_precomp.ctx.fout) || (g_precomp.ctx.compression_otf_method == OTF_NONE)) {
       use_otf = false;
     } else {
       use_otf = true;
