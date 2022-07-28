@@ -2363,7 +2363,7 @@ long long def_compare_bzip2(FileWrapper& source, FileWrapper& compfile, int leve
     print_work_sign(true);
 
     strm.avail_in = own_fread(in, 1, DEF_COMPARE_CHUNK, source);
-    if (ferror(source.file_ptr.get())) {
+    if (source.fail()) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2434,7 +2434,7 @@ int def_part_bzip2(FileWrapper& source, FileWrapper& dest, int level, long long 
       strm.avail_in = own_fread(in, 1, stream_size_in - pos_in, source);
       flush = BZ_FINISH;
     }
-    if (ferror(source.file_ptr.get())) {
+    if (source.fail()) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2453,7 +2453,7 @@ int def_part_bzip2(FileWrapper& source, FileWrapper& dest, int level, long long 
       }
       pos_out += have;
 
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
+      if (own_fwrite(out, 1, have, dest) != have || dest.fail()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2602,7 +2602,7 @@ int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stre
     strm.avail_in = own_fread(in, 1, CHUNK, source);
     avail_in_before = strm.avail_in;
 
-    if (ferror(source.file_ptr.get())) {
+    if (source.fail()) {
       (void)BZ2_bzDecompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2624,7 +2624,7 @@ int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stre
       avail_in_before = strm.avail_in;
       
       have = CHUNK - strm.avail_out;
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
+      if (own_fwrite(out, 1, have, dest) != have || dest.fail()) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2661,7 +2661,7 @@ int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
     print_work_sign(true);
 
     strm.avail_in = own_fread(in, 1, CHUNK, source);
-    if (ferror(source.file_ptr.get())) {
+    if (source.fail()) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
@@ -2676,7 +2676,7 @@ int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
 
       have = CHUNK - strm.avail_out;
 
-      if (own_fwrite(out, 1, have, dest) != have || ferror(dest.file_ptr.get())) {
+      if (own_fwrite(out, 1, have, dest) != have || dest.fail()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -5487,7 +5487,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_bz2_stream_c.next_out = (char*)otf_out;
           ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
           have = CHUNK - otf_bz2_stream_c.avail_out;
-          if (stream.write(otf_out, have) != have || ferror(stream.file_ptr.get())) {
+          if (stream.write(otf_out, have) != have || stream.fail()) {
             result = 0;
             error(ERR_DISK_FULL);
           }
@@ -5512,7 +5512,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_xz_stream_c.next_out = (uint8_t *)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
-          if (stream.write(otf_out, have) != have || ferror(stream.file_ptr.get())) {
+          if (stream.write(otf_out, have) != have || stream.fail()) {
             result = 0;
             error(ERR_DISK_FULL);
           }
@@ -5612,7 +5612,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
             otf_xz_stream_d.next_in = (uint8_t *)otf_in;
             otf_xz_stream_d.avail_in = g_precomp.ctx.fin.read(otf_in, CHUNK);
 
-            if (ferror(g_precomp.ctx.fin.file_ptr.get())) {
+            if (g_precomp.ctx.fin.fail()) {
               printf("ERROR: Could not read input file\n");
               exit(1);
             }

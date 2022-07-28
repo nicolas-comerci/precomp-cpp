@@ -131,7 +131,7 @@ public:
     return str.length();
   }
 
-  bool fail() {
+  bool fail() const {
     return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
   }
 
