@@ -62,6 +62,7 @@ public:
 
   int close() {
     int result = is_open() ? 0 : std::char_traits<char>::eof();
+    if (file_ptr != nullptr) result = std::fclose(file_ptr.get());
     file_ptr = nullptr;
     return result;
   }

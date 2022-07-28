@@ -86,7 +86,6 @@ std::string temp_files_tag();
 long long get_time_ms();
 void printf_time(long long t);
 char get_char_with_echo();
-void safe_fclose(FileWrapper& f);
 void print_work_sign(bool with_backspace);
 void print_debug_percent();
 void show_progress(float percent, bool use_backspaces, bool check_time);
