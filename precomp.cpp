@@ -4673,7 +4673,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       remove(tempfile.c_str());
 
       if (penalty_bytes_stored) {
-        fflush(g_precomp.ctx.fout.file_ptr.get());
+        g_precomp.ctx.fout.flush();
 
         long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
 
@@ -4990,7 +4990,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       }
 
       if (penalty_bytes_stored) {
-        fflush(g_precomp.ctx.fout.file_ptr.get());
+        g_precomp.ctx.fout.flush();
 
         long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
         int pb_pos = 0;
@@ -8148,17 +8148,16 @@ char get_char_with_echo() {
 }
 
 void print_work_sign(bool with_backspace) {
-  if (!g_precomp.switches.DEBUG_MODE) {
-    if ((get_time_ms() - work_sign_start_time) >= 250) {
-      work_sign_var = (work_sign_var + 1) % 4;
-      work_sign_start_time = get_time_ms();
-      if (with_backspace) printf("\b\b\b\b\b\b");
-      printf("%c     ", work_signs[work_sign_var]);
-      fflush(stdout);
-    } else if (!with_backspace) {
-      printf("%c     ", work_signs[work_sign_var]);
-      fflush(stdout);
-    }
+  if (g_precomp.switches.DEBUG_MODE) return;
+  if ((get_time_ms() - work_sign_start_time) >= 250) {
+    work_sign_var = (work_sign_var + 1) % 4;
+    work_sign_start_time = get_time_ms();
+    if (with_backspace) printf("\b\b\b\b\b\b");
+    printf("%c     ", work_signs[work_sign_var]);
+    fflush(stdout);
+  } else if (!with_backspace) {
+    printf("%c     ", work_signs[work_sign_var]);
+    fflush(stdout);
   }
 }
 

@@ -67,6 +67,10 @@ public:
     return result;
   }
 
+  int flush() {
+    return is_open() ? std::fflush(file_ptr.get()) : std::char_traits<char>::eof();
+  }
+
   size_t read(void* s, std::streamsize n) const {
     return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }
