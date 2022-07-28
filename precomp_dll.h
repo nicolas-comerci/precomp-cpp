@@ -61,7 +61,7 @@ public:
   }
 
   int close() {
-    int result = is_open() ? 0 : 1;
+    int result = is_open() ? 0 : std::char_traits<char>::eof();
     file_ptr = nullptr;
     return result;
   }
@@ -70,12 +70,8 @@ public:
     return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }
 
-  size_t write(const char* s, std::streamsize n) {
-    return file_ptr != nullptr ? fwrite(s, sizeof(char), n, file_ptr.get()) : 0;
-  }
-
-  size_t write(const unsigned char* s, std::streamsize n) {
-    return file_ptr != nullptr ? fwrite(s, sizeof(unsigned char), n, file_ptr.get()) : 0;
+  size_t write(const void* s, std::streamsize n) const {
+    return file_ptr != nullptr ? fwrite(s, 1, n, file_ptr.get()) : 0;
   }
 
   int putc(int chr) {

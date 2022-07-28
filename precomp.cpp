@@ -2991,7 +2991,7 @@ recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::stri
             continue;
           }
           f.open(namebuf, "wb");
-          fwrite(orgdata.data(), 1, orgdata.size(), f.file_ptr.get());
+          f.write(orgdata.data(), orgdata.size());
           break;
         }
       }
@@ -5357,7 +5357,7 @@ void convert_header() {
     printf("Input file %s has no valid PCF header\n", g_precomp.ctx.input_file_name.c_str());
     exit(1);
   }
-  fwrite(in, 1, 3, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.write(in, 3);
 
   g_precomp.ctx.fin.read(in, 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
@@ -5366,7 +5366,7 @@ void convert_header() {
     printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
-  fwrite(in, 1, 3, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.write(in, 3);
 
   g_precomp.ctx.fin.read(in, 1);
   conversion_from_method = in[0];
@@ -5375,7 +5375,7 @@ void convert_header() {
     exit(1);
   }
   in[0] = conversion_to_method;
-  fwrite(in, 1, 1, g_precomp.ctx.fout.file_ptr.get());
+  g_precomp.ctx.fout.write(in, 1);
 
   std::string header_filename = "";
   char c;
@@ -5478,7 +5478,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
   }
 
   if (!use_otf) {
-    result = fwrite(ptr, size, count, stream.file_ptr.get());
+    result = stream.write(ptr, size * count);
     if (result != count) {
       error(ERR_DISK_FULL);
     }
@@ -5499,7 +5499,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_bz2_stream_c.next_out = (char*)otf_out;
           ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
           have = CHUNK - otf_bz2_stream_c.avail_out;
-          if (fwrite(otf_out, 1, have, stream.file_ptr.get()) != have || ferror(stream.file_ptr.get())) {
+          if (stream.write(otf_out, have) != have || ferror(stream.file_ptr.get())) {
             result = 0;
             error(ERR_DISK_FULL);
           }
@@ -5524,7 +5524,7 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_xz_stream_c.next_out = (uint8_t *)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
-          if (fwrite(otf_out, 1, have, stream.file_ptr.get()) != have || ferror(stream.file_ptr.get())) {
+          if (stream.write(otf_out, have) != have || ferror(stream.file_ptr.get())) {
             result = 0;
             error(ERR_DISK_FULL);
           }
