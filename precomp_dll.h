@@ -71,6 +71,28 @@ public:
     return is_open() ? std::fflush(file_ptr.get()) : std::char_traits<char>::eof();
   }
 
+  void seek_64(unsigned long long pos) const {
+#ifndef __unix
+    fpos_t fpt_pos = pos;
+    fsetpos(file_ptr.get(), &fpt_pos);
+#else
+    fseeko(file_ptr.get(), pos, SEEK_SET);
+#endif
+  }
+
+  void seekg(long long offset, int origin) const {
+    if (origin == SEEK_SET) {
+      seek_64(offset);
+    }
+    else {
+      std::fseek(file_ptr.get(), offset, origin);
+    }
+  }
+
+  void seekp(long long offset, int origin) const {
+    seekg(offset, origin);
+  }
+
   size_t read(void* s, std::streamsize n) const {
     return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }

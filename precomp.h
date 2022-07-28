@@ -66,13 +66,12 @@ void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compresse
 void write_header();
 void read_header();
 void convert_header();
-void fast_copy(FileWrapper& file1, FileWrapper& file2, long long bytecount, bool update_progress = false);
-void fast_copy(FileWrapper& file, unsigned char* mem, long long bytecount);
-void fast_copy(unsigned char* mem, FileWrapper& file, long long bytecount);
-size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte = false, bool update_lzma_progress = false);
-size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream);
-void seek_64(FileWrapper& f, unsigned long long pos);
-unsigned long long tell_64(FileWrapper& f);
+void fast_copy(FileWrapper& in, FileWrapper& out, long long bytecount, bool update_progress = false);
+void fast_copy(FileWrapper& in, unsigned char* out, long long bytecount);
+void fast_copy(unsigned char* in, FileWrapper& out, long long bytecount);
+size_t own_fwrite(const void* ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte = false, bool update_lzma_progress = false);
+size_t own_fread(void* ptr, size_t size, size_t count, FileWrapper& stream);
+unsigned long long tell_64(const FileWrapper& f);
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
