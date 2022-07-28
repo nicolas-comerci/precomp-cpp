@@ -1211,59 +1211,60 @@ int init_comfort(int argc, char* argv[]) {
       exit(1);
     } else {
       FileWrapper fnewini;
-      fnewini.open(precomf_ini,"w");
-      fprintf(fnewini.file_ptr.get(), ";; Precomp Comfort v%i.%i.%i %s %s - %s version - INI file\n",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
-      fprintf(fnewini.file_ptr.get(), ";; Use a semicolon (;) for comments\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Compression method to use\n");
-      fprintf(fnewini.file_ptr.get(), ";; 0 = none, 1 = bZip2, 2 = lzma2 multi-threaded\n");
-      fprintf(fnewini.file_ptr.get(), "Compression_Method=2\n");
-      fprintf(fnewini.file_ptr.get(), ";; Maximal memory (in MiB) for LZMA compression method\n");
-      fprintf(fnewini.file_ptr.get(), "LZMA_Maximal_Memory=2048\n");
-      fprintf(fnewini.file_ptr.get(), ";; Thread count for LZMA compression method\n");
-      fprintf(fnewini.file_ptr.get(), ";; 0 = auto-detect\n");
-      fprintf(fnewini.file_ptr.get(), "LZMA_Thread_Count=0\n");
-      fprintf(fnewini.file_ptr.get(), ";; LZMA filters to use (up to 3 of the them can be combined)\n");
-      fprintf(fnewini.file_ptr.get(), ";; X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
-      fprintf(fnewini.file_ptr.get(), ";; S = SPARC, D = delta (must be followed by distance 1..256))\n");
-      fprintf(fnewini.file_ptr.get(), ";; The default is to disable all filters\n");
-      fprintf(fnewini.file_ptr.get(), "; LZMA_Filters=XPIATSD2\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Fast mode (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "Fast_Mode=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Intense mode (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "Intense_Mode=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Brute mode (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "Brute_Mode=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Preserve Input's file extension (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "Preserve_Extension=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Wrap BMP header around PDF images (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "PDF_BMP_Mode=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Recompress progressive JPGs only (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "JPG_progressive_only=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; MJPEG recompression (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "MJPEG_recompression=on\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Minimal identical byte size\n");
-	  fprintf(fnewini.file_ptr.get(),  "JPG_brunsli=on\n\n");
-	  fprintf(fnewini.file_ptr.get(),  ";; Prefer brunsli to packJPG for JPG streams (on/off)");
-	  fprintf(fnewini.file_ptr.get(),  "JPG_brotli=off\n\n");
-	  fprintf(fnewini.file_ptr.get(),  ";; Use brotli to compress metadata in JPG streams (on/off)");
-	  fprintf(fnewini.file_ptr.get(),  "JPG_packjpg=on\n\n");
-	  fprintf(fnewini.file_ptr.get(),  ";; Use packJPG for JPG streams (fallback if brunsli fails) (on/off)");
-      fprintf(fnewini.file_ptr.get(), "Minimal_Size=4\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Verbose mode (on/off)\n");
-      fprintf(fnewini.file_ptr.get(), "Verbose=off\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Compression types to use\n");
-      fprintf(fnewini.file_ptr.get(), ";; P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG, S = SWF\n");
-      fprintf(fnewini.file_ptr.get(), ";; M = MIME Base64, B = bZip2, 3 = MP3\n");
-      fprintf(fnewini.file_ptr.get(), "; Compression_Types_Enable=PZGNFJSMB3\n");
-      fprintf(fnewini.file_ptr.get(), "; Compression_Types_Disable=PZGNFJSMB3\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; zLib levels to use\n");
-      fprintf(fnewini.file_ptr.get(), "; zLib_Levels=\n");
-      fprintf(fnewini.file_ptr.get(), ";; Maximal recursion depth to use\n");
-      fprintf(fnewini.file_ptr.get(), "Maximal_Recursion_Depth=10\n\n");
-      fprintf(fnewini.file_ptr.get(), ";; Use this to ignore streams at certain positions in the file\n");
-      fprintf(fnewini.file_ptr.get(), ";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
-      fprintf(fnewini.file_ptr.get(), "; Ignore_Positions=0\n");
-      fnewini.close();
+      fnewini.open(precomf_ini, "w");
+      std::stringstream title;
+      title << ";; Precomp Comfort v" << V_MAJOR << "." << V_MINOR << "." << V_MINOR2 << " " << V_OS << " " << V_BIT << " - " << V_STATE << " version - INI file\n";
+      fnewini.printf(title.str());
+      fnewini.printf(";; Use a semicolon (;) for comments\n\n");
+      fnewini.printf(";; Compression method to use\n");
+      fnewini.printf(";; 0 = none, 1 = bZip2, 2 = lzma2 multi-threaded\n");
+      fnewini.printf("Compression_Method=2\n");
+      fnewini.printf(";; Maximal memory (in MiB) for LZMA compression method\n");
+      fnewini.printf("LZMA_Maximal_Memory=2048\n");
+      fnewini.printf(";; Thread count for LZMA compression method\n");
+      fnewini.printf(";; 0 = auto-detect\n");
+      fnewini.printf("LZMA_Thread_Count=0\n");
+      fnewini.printf(";; LZMA filters to use (up to 3 of the them can be combined)\n");
+      fnewini.printf(";; X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
+      fnewini.printf(";; S = SPARC, D = delta (must be followed by distance 1..256))\n");
+      fnewini.printf(";; The default is to disable all filters\n");
+      fnewini.printf("; LZMA_Filters=XPIATSD2\n\n");
+      fnewini.printf(";; Fast mode (on/off)\n");
+      fnewini.printf("Fast_Mode=off\n\n");
+      fnewini.printf(";; Intense mode (on/off)\n");
+      fnewini.printf("Intense_Mode=off\n\n");
+      fnewini.printf(";; Brute mode (on/off)\n");
+      fnewini.printf("Brute_Mode=off\n\n");
+      fnewini.printf(";; Preserve Input's file extension (on/off)\n");
+      fnewini.printf("Preserve_Extension=off\n\n");
+      fnewini.printf(";; Wrap BMP header around PDF images (on/off)\n");
+      fnewini.printf("PDF_BMP_Mode=off\n\n");
+      fnewini.printf(";; Recompress progressive JPGs only (on/off)\n");
+      fnewini.printf("JPG_progressive_only=off\n\n");
+      fnewini.printf(";; MJPEG recompression (on/off)\n");
+      fnewini.printf("MJPEG_recompression=on\n\n");
+      fnewini.printf(";; Minimal identical byte size\n");
+	  fnewini.printf( "JPG_brunsli=on\n\n");
+	  fnewini.printf( ";; Prefer brunsli to packJPG for JPG streams (on/off)");
+	  fnewini.printf( "JPG_brotli=off\n\n");
+	  fnewini.printf( ";; Use brotli to compress metadata in JPG streams (on/off)");
+	  fnewini.printf( "JPG_packjpg=on\n\n");
+	  fnewini.printf( ";; Use packJPG for JPG streams (fallback if brunsli fails) (on/off)");
+      fnewini.printf("Minimal_Size=4\n\n");
+      fnewini.printf(";; Verbose mode (on/off)\n");
+      fnewini.printf("Verbose=off\n\n");
+      fnewini.printf(";; Compression types to use\n");
+      fnewini.printf(";; P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG, S = SWF\n");
+      fnewini.printf(";; M = MIME Base64, B = bZip2, 3 = MP3\n");
+      fnewini.printf("; Compression_Types_Enable=PZGNFJSMB3\n");
+      fnewini.printf("; Compression_Types_Disable=PZGNFJSMB3\n\n");
+      fnewini.printf(";; zLib levels to use\n");
+      fnewini.printf("; zLib_Levels=\n");
+      fnewini.printf(";; Maximal recursion depth to use\n");
+      fnewini.printf("Maximal_Recursion_Depth=10\n\n");
+      fnewini.printf(";; Use this to ignore streams at certain positions in the file\n");
+      fnewini.printf(";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
+      fnewini.printf("; Ignore_Positions=0\n");
       g_precomp.switches.min_ident_size = 4;
       min_ident_size_set = true;
       g_precomp.switches.compression_otf_max_memory = 2048;
@@ -4445,7 +4446,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore PDF header
-      fprintf(g_precomp.ctx.fout.file_ptr.get(), "/FlateDecode");
+      g_precomp.ctx.fout.printf("/FlateDecode");
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, false);
       fin_fget_recon_data(rdres);
       int bmp_c = (header1 >> 6);
@@ -4532,7 +4533,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore IDAT
-      fprintf(g_precomp.ctx.fout.file_ptr.get(), "IDAT");
+      g_precomp.ctx.fout.printf("IDAT");
 
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
       fin_fget_recon_data(rdres);
@@ -4552,7 +4553,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore first IDAT
-      fprintf(g_precomp.ctx.fout.file_ptr.get(), "IDAT");
+      g_precomp.ctx.fout.printf("IDAT");
       
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
 
@@ -5242,7 +5243,7 @@ void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compresse
 void write_header() {
   char* input_file_name_without_path = new char[g_precomp.ctx.input_file_name.length() + 1];
 
-  fprintf(g_precomp.ctx.fout.file_ptr.get(), "PCF");
+  g_precomp.ctx.fout.printf("PCF");
 
   // version number
   g_precomp.ctx.fout.put(V_MAJOR);
@@ -5260,7 +5261,7 @@ void write_header() {
     strcpy(input_file_name_without_path, g_precomp.ctx.input_file_name.c_str());
   }
 
-  fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", input_file_name_without_path);
+  g_precomp.ctx.fout.printf(input_file_name_without_path);
   g_precomp.ctx.fout.put(0);
 
   delete[] input_file_name_without_path;
@@ -5383,7 +5384,7 @@ void convert_header() {
     c = fgetc(g_precomp.ctx.fin.file_ptr.get());
     if (c != 0) header_filename += c;
   } while (c != 0);
-  fprintf(g_precomp.ctx.fout.file_ptr.get(), "%s", header_filename.c_str());
+  g_precomp.ctx.fout.printf(header_filename);
   g_precomp.ctx.fout.put(0);
 }
 

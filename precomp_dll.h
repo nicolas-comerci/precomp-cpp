@@ -79,6 +79,14 @@ public:
     return file_ptr != nullptr ? std::fputc(chr, file_ptr.get()) : 0;
   }
 
+  int printf(std::string str) {
+    for (char character : str) {
+      int result = put(character);
+      if (result == 0) return 0;
+    }
+    return str.length();
+  }
+
   bool fail() {
     return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
   }
