@@ -93,6 +93,24 @@ public:
     seekg(offset, origin);
   }
 
+  unsigned long long tell_64() const {
+#ifndef __unix
+    fpos_t fpt_pos;
+    fgetpos(file_ptr.get(), &fpt_pos);
+    return fpt_pos;
+#else
+    return ftello(file_ptr.get());
+#endif
+  }
+
+  long long tellg() const {
+    return tell_64();
+  }
+
+  long long tellp() const {
+    return tellg();
+  }
+
   size_t read(void* s, std::streamsize n) const {
     return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
   }

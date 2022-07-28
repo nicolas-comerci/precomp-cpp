@@ -71,7 +71,6 @@ void fast_copy(FileWrapper& in, unsigned char* out, long long bytecount);
 void fast_copy(unsigned char* in, FileWrapper& out, long long bytecount);
 size_t own_fwrite(const void* ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte = false, bool update_lzma_progress = false);
 size_t own_fread(void* ptr, size_t size, size_t count, FileWrapper& stream);
-unsigned long long tell_64(const FileWrapper& f);
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();

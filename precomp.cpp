@@ -2692,8 +2692,8 @@ long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& dec
   long long retval;
 
   tmpfile.seekg(0, SEEK_END);
-  decompressed_bytes_total = tell_64(tmpfile);
-  if (tmpfile == NULL) {
+  decompressed_bytes_total = tmpfile.tellg();
+  if (tmpfile == nullptr) {
     error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
   }
 
@@ -2759,8 +2759,7 @@ long long compare_file_mem_penalty(FileWrapper& file1, unsigned char* input_byte
   int size1;
   int i;
 
-  unsigned long long old_pos;
-  old_pos = tell_64(file1);
+  unsigned long long old_pos = file1.tellg();
   file1.seekg(pos1, SEEK_SET);
 
   size1 = file1.read(input_bytes1, bytecount);
@@ -3086,12 +3085,12 @@ void debug_sums(const recompress_deflate_result& rdres) {
     sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
     sum_recon += rdres.recon_data.size();
     //printf("deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
-    //       sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)tell_64(fin), (uint64_t)tell_64(fout));
+    //       sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)g_precomp.ctx.fin.tellg(), (uint64_t)g_precomp.ctx.fout.tellp());
   }
 }
 void debug_pos() {
   if (g_precomp.switches.DEBUG_MODE) {
-    //printf("deflate pos: i %I64d, o %I64d\n", (uint64_t)tell_64(fin), (uint64_t)tell_64(fout));
+    //printf("deflate pos: i %I64d, o %I64d\n", (uint64_t)g_precomp.ctx.fin.tellg(), (uint64_t)g_precomp.ctx.fout.tellp());
   }
 }
 void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile) {
@@ -3812,7 +3811,7 @@ bool compress_file(float min_percent, float max_percent) {
           g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos - 4, SEEK_SET);
 
          if (g_precomp.ctx.fin.read(in, 10) == 10) {
-          g_precomp.ctx.fin.seekg(tell_64(g_precomp.ctx.fin) - 2, SEEK_SET);
+          g_precomp.ctx.fin.seekg(g_precomp.ctx.fin.tellg() - 2, SEEK_SET);
 
           idat_lengths[0] = (in[0] << 24) + (in[1] << 16) + (in[2] << 8) + in[3];
          if (idat_lengths[0] > 2) {
@@ -3835,7 +3834,7 @@ bool compress_file(float min_percent, float max_percent) {
 
             // go through additional IDATs
             for (;;) {
-              g_precomp.ctx.fin.seekg(tell_64(g_precomp.ctx.fin) + idat_lengths[idat_count - 1], SEEK_SET);
+              g_precomp.ctx.fin.seekg(g_precomp.ctx.fin.tellg() + idat_lengths[idat_count - 1], SEEK_SET);
               if (g_precomp.ctx.fin.read(in, 12) != 12) { // CRC, length, "IDAT"
                 idat_count = 0;
                 break;
@@ -3885,7 +3884,7 @@ bool compress_file(float min_percent, float max_percent) {
           idat_lengths[0] -= 2; // zLib header length
           for (int i = 0; i < idat_count; i++) {
             fast_copy(g_precomp.ctx.fin, tmp_png, idat_lengths[i]);
-            g_precomp.ctx.fin.seekg(tell_64(g_precomp.ctx.fin) + 12, SEEK_SET);
+            g_precomp.ctx.fin.seekg(g_precomp.ctx.fin.tellg() + 12, SEEK_SET);
           }
           idat_lengths[0] += 2;
 
@@ -4405,7 +4404,7 @@ void decompress_file() {
     read_header();
   }
 
-  fin_pos = tell_64(g_precomp.ctx.fin);
+  fin_pos = g_precomp.ctx.fin.tellg();
 
 while (fin_pos < g_precomp.ctx.fin_length) {
   tempfile = tempfile_base;
@@ -4652,7 +4651,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         }
       }
 
-      long long old_fout_pos = tell_64(g_precomp.ctx.fout);
+      long long old_fout_pos = g_precomp.ctx.fout.tellp();
 
       {
         PrecompTmpFile frecomp;
@@ -4667,7 +4666,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       if (penalty_bytes_stored) {
         g_precomp.ctx.fout.flush();
 
-        long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
+        long long fsave_fout_pos = g_precomp.ctx.fout.tellp();
 
         int pb_pos = 0;
         for (int pbc = 0; pbc < g_precomp.ctx.penalty_bytes_len; pbc += 5) {
@@ -4961,7 +4960,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         }
       }
 
-      long long old_fout_pos = tell_64(g_precomp.ctx.fout);
+      long long old_fout_pos = g_precomp.ctx.fout.tellp();
 
       if (recursion_used) {
         PrecompTmpFile tmp_bzip2;
@@ -4984,7 +4983,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       if (penalty_bytes_stored) {
         g_precomp.ctx.fout.flush();
 
-        long long fsave_fout_pos = tell_64(g_precomp.ctx.fout);
+        long long fsave_fout_pos = g_precomp.ctx.fout.tellp();
         int pb_pos = 0;
         for (int pbc = 0; pbc < g_precomp.ctx.penalty_bytes_len; pbc += 5) {
           pb_pos = ((unsigned char)g_precomp.ctx.penalty_bytes[pbc]) << 24;
@@ -5110,7 +5109,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
   }
 
-  fin_pos = tell_64(g_precomp.ctx.fin);
+  fin_pos = g_precomp.ctx.fin.tellg();
   if (g_precomp.ctx.compression_otf_method != OTF_NONE) {
     if (g_precomp.ctx.decompress_otf_end) break;
     if (fin_pos >= g_precomp.ctx.fin_length) fin_pos = g_precomp.ctx.fin_length - 1;
@@ -5151,7 +5150,7 @@ void convert_file() {
       break;
     }
 
-    g_precomp.ctx.input_file_pos = tell_64(g_precomp.ctx.fin);
+    g_precomp.ctx.input_file_pos = g_precomp.ctx.fin.tellg();
     print_work_sign(true);
     if (!g_precomp.switches.DEBUG_MODE) {
       float percent = (g_precomp.ctx.input_file_pos / (float)g_precomp.ctx.fin_length) * 100;
@@ -5663,16 +5662,6 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
   return 0;
 }
 
-unsigned long long tell_64(const FileWrapper& f) {
-  #ifndef __unix
-    fpos_t fpt_pos;
-    fgetpos(f.file_ptr.get(), &fpt_pos);
-    return fpt_pos;
-  #else
-    return ftello(f);
-  #endif
-}
-
 bool file_exists(const char* filename) {
   std::fstream fin;
   bool retval = false;
@@ -5703,11 +5692,11 @@ long long compare_files_penalty(FileWrapper& file1, FileWrapper& file2, long lon
   long long compare_end;
   if (file1.file_ptr == g_precomp.ctx.fin.file_ptr) {
     file2.seekg(0, SEEK_END);
-    compare_end = ftell(file2.file_ptr.get());
+    compare_end = file2.tellg();
   } else {
     file1.seekg(0, SEEK_END);
     file2.seekg(0, SEEK_END);
-    compare_end = std::min(ftell(file1.file_ptr.get()), ftell(file2.file_ptr.get()));
+    compare_end = std::min(file1.tellg(), file2.tellg());
   }
 
   file1.seekg(pos1, SEEK_SET);
@@ -6006,7 +5995,7 @@ bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char bl
   frecompress_gif = &dstfile;
   newgif_may_write = false;
 
-  init_src_pos = tell_64(srcfile);
+  init_src_pos = srcfile.tellg();
 
   myGifFile = DGifOpenPCF(NULL, readFunc);
   if (myGifFile == NULL) {
@@ -6040,14 +6029,14 @@ bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char bl
           return r_gif_error(ScreenBuff, myGifFile, newGifFile);
         }
 
-        src_pos = tell_64(srcfile);
+        src_pos = srcfile.tellg();
         if (last_pos != src_pos) {
           if (last_pos == -1) {
             srcfile.seekg(init_src_pos, SEEK_SET);
             fast_copy(srcfile, dstfile, src_pos - init_src_pos);
             srcfile.seekg(src_pos, SEEK_SET);
 
-            long long dstfile_pos = tell_64(dstfile);
+            long long dstfile_pos = dstfile.tellp();
             dstfile.seekp(0, SEEK_SET);
             // change PGF8xa to GIF8xa
             dstfile.put('G');
@@ -6090,7 +6079,7 @@ bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char bl
 
         newgif_may_write = false;
 
-        last_pos = tell_64(srcfile);
+        last_pos = srcfile.tellg();
 
         break;
       case EXTENSION_RECORD_TYPE:
@@ -6112,7 +6101,7 @@ bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char bl
     }
   } while (RecordType != TERMINATE_RECORD_TYPE);
 
-  src_pos = tell_64(srcfile);
+  src_pos = srcfile.tellg();
   if (last_pos != src_pos) {
     srcfile.seekg(last_pos, SEEK_SET);
     fast_copy(srcfile, dstfile, src_pos - last_pos);
@@ -6172,14 +6161,14 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
           }
         }
 
-        srcfile_pos = tell_64(srcfile);
+        srcfile_pos = srcfile.tellg();
         if (last_pos != srcfile_pos) {
           if (last_pos == -1) {
             srcfile.seekg(src_pos, SEEK_SET);
             fast_copy(srcfile, dstfile, srcfile_pos - src_pos);
             srcfile.seekg(srcfile_pos, SEEK_SET);
 
-            long long dstfile_pos = tell_64(dstfile);
+            long long dstfile_pos = dstfile.tellp();
             dstfile.seekp(0, SEEK_SET);
             // change GIF8xa to PGF8xa
             dstfile.put('P');
@@ -6234,7 +6223,7 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
           }
         }
 
-        last_pos = tell_64(srcfile);
+        last_pos = srcfile.tellg();
 
         break;
       case EXTENSION_RECORD_TYPE:
@@ -6256,7 +6245,7 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
     }
   } while (RecordType != TERMINATE_RECORD_TYPE);
 
-  srcfile_pos = tell_64(srcfile);
+  srcfile_pos = srcfile.tellg();
   if (last_pos != srcfile_pos) {
     srcfile.seekg(last_pos, SEEK_SET);
     fast_copy(srcfile, dstfile, srcfile_pos - last_pos);
@@ -6264,7 +6253,7 @@ bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_po
   }
 
   gif_length = srcfile_pos - src_pos;
-  decomp_length = tell_64(dstfile);
+  decomp_length = dstfile.tellp();
 
   return d_gif_ok(ScreenBuff, myGifFile);
 }
@@ -6661,7 +6650,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             FileWrapper ftempout;
             ftempout.open(tmpfile.file_path, "rb");
             ftempout.seekg(0, SEEK_END);
-            jpg_new_length = ftell(ftempout.file_ptr.get());
+            jpg_new_length = ftempout.tellg();
             ftempout.close();
           }
 
@@ -6841,7 +6830,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
             FileWrapper ftempout;
             ftempout.open(tmpfile.file_path, "rb");
             ftempout.seekg(0, SEEK_END);
-            mp3_new_length = ftell(ftempout.file_ptr.get());
+            mp3_new_length = ftempout.tellg();
             ftempout.close();
           }
 
@@ -7006,7 +6995,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
           FileWrapper ftempout;
           ftempout.open(tmpfile.file_path, "rb");
           ftempout.seekg(0, SEEK_END);
-          std::cout << "Can be decompressed to " << tell_64(ftempout) << " bytes" << std::endl;
+          std::cout << "Can be decompressed to " << ftempout.tellg() << " bytes" << std::endl;
           ftempout.close();
           }
 
@@ -7193,234 +7182,237 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
   init_decompression_variables();
   tmpfile.close();
 
-        // try to decode at current position
-        remove(tmpfile.file_path.c_str());
-        g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos, SEEK_SET);
+  // try to decode at current position
+  remove(tmpfile.file_path.c_str());
+  g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos, SEEK_SET);
 
-        unsigned char base64_data[CHUNK >> 2];
-        unsigned int* base64_line_len = new unsigned int[65536];
+  unsigned char base64_data[CHUNK >> 2];
+  unsigned int* base64_line_len = new unsigned int[65536];
 
-        int avail_in = 0;
-        int i, j, k;
-        unsigned char a, b, c, d;
-        int cr_count = 0;
-        bool decoding_failed = false;
-        bool stream_finished = false;
-        k = 0;
+  int avail_in = 0;
+  int i, j, k;
+  unsigned char a, b, c, d;
+  int cr_count = 0;
+  bool decoding_failed = false;
+  bool stream_finished = false;
+  k = 0;
 
-        unsigned int line_nr = 0;
-        int line_count = 0;
-        unsigned int act_line_len = 0;
+  unsigned int line_nr = 0;
+  int line_count = 0;
+  unsigned int act_line_len = 0;
 
-        FileWrapper ftempout;
-        ftempout.open(tmpfile.file_path, "wb");
-        do {
-          avail_in = g_precomp.ctx.fin.read(in, CHUNK);
-          for (i = 0; i < (avail_in >> 2); i++) {
-            // are these valid base64 chars?
-            for (j = (i << 2); j < ((i << 2) + 4); j++) {
-              c = base64_char_decode(in[j]);
-              if (c < 64) {
-                base64_data[k] = c;
-                k++;
-                cr_count = 0;
-                act_line_len++;
-                continue;
+  {
+    FileWrapper ftempout;
+    ftempout.open(tmpfile.file_path, "wb");
+    do {
+      avail_in = g_precomp.ctx.fin.read(in, CHUNK);
+      for (i = 0; i < (avail_in >> 2); i++) {
+        // are these valid base64 chars?
+        for (j = (i << 2); j < ((i << 2) + 4); j++) {
+          c = base64_char_decode(in[j]);
+          if (c < 64) {
+            base64_data[k] = c;
+            k++;
+            cr_count = 0;
+            act_line_len++;
+            continue;
+          }
+          if ((in[j] == 13) || (in[j] == 10)) {
+            if (in[j] == 13) {
+              cr_count++;
+              if (cr_count == 2) { // double CRLF -> base64 end
+                stream_finished = true;
+                break;
               }
-              if ((in[j] == 13) || (in[j] == 10)) {
-                if (in[j] == 13) {
-                  cr_count++;
-                  if (cr_count == 2) { // double CRLF -> base64 end
-                    stream_finished = true;
-                    break;
-                  }
-                  base64_line_len[line_nr] = act_line_len;
-                  line_nr++;
-                  if (line_nr == 65534) stream_finished = true;
-                  act_line_len = 0;
-                }
-                continue;
-              } else {
-                cr_count = 0;
-              }
-              stream_finished = true;
               base64_line_len[line_nr] = act_line_len;
               line_nr++;
+              if (line_nr == 65534) stream_finished = true;
               act_line_len = 0;
-              // "=" -> Padding
-              if (in[j] == '=') {
-                while ((k % 4) != 0) {
-                  base64_data[k] = 0;
-                  k++;
-                }
-                break;
-              }
-              // "-" -> base64 end
-              if (in[j] == '-') break;
-              // invalid char found -> decoding failed
-              decoding_failed = true;
-              break;
             }
-            if (decoding_failed) break;
-
-            for (j = 0; j < (k >> 2); j++) {
-              a = base64_data[(j << 2)];
-              b = base64_data[(j << 2) + 1];
-              c = base64_data[(j << 2) + 2];
-              d = base64_data[(j << 2) + 3];
-              ftempout.put((a << 2) | (b >> 4));
-              ftempout.put(((b << 4) & 0xFF) | (c >> 2));
-              ftempout.put(((c << 6) & 0xFF) | d);
-            }
-            if (stream_finished) break;
-            for (j = 0; j < (k % 4); j++) {
-              base64_data[j] = base64_data[((k >> 2) << 2) + j];
-            }
-            k = k % 4;
+            continue;
           }
-        } while ((avail_in == CHUNK) && (!decoding_failed) && (!stream_finished));
-
-        line_count = line_nr;
-        // if one of the lines is longer than 255 characters -> decoding failed
-        for (i = 0; i < line_count; i++) {
-          if (base64_line_len[i] > 255) {
-            decoding_failed = true;
+          else {
+            cr_count = 0;
+          }
+          stream_finished = true;
+          base64_line_len[line_nr] = act_line_len;
+          line_nr++;
+          act_line_len = 0;
+          // "=" -> Padding
+          if (in[j] == '=') {
+            while ((k % 4) != 0) {
+              base64_data[k] = 0;
+              k++;
+            }
             break;
           }
+          // "-" -> base64 end
+          if (in[j] == '-') break;
+          // invalid char found -> decoding failed
+          decoding_failed = true;
+          break;
         }
-        ftempout.close();
+        if (decoding_failed) break;
 
-        if (!decoding_failed) {
-          int line_case = -1;
-          // check line case
-          if (line_count == 1) {
-            line_case = 0; // one length for all lines
-          }
-          else {
-            for (i = 1; i < (line_count - 1); i++) {
-              if (base64_line_len[i] != base64_line_len[0]) {
-                line_case = 2; // save complete line length list
-                break;
-              }
-            }
-            if (line_case == -1) {
-              // check last line
-              if (base64_line_len[line_count - 1] == base64_line_len[0]) {
-                line_case = 0; // one length for all lines
-              }
-              else {
-                line_case = 1; // first length for all lines, second length for last line
-              }
-            }
-          }
-
-          g_precomp.statistics.decompressed_streams_count++;
-          g_precomp.statistics.decompressed_base64_count++;
-
-          {
-            FileWrapper ftempout;
-            ftempout.open(tmpfile.file_path, "rb");
-            ftempout.seekg(0, SEEK_END);
-            g_precomp.ctx.identical_bytes = ftell(ftempout.file_ptr.get());
-          }
-
-          if (g_precomp.switches.DEBUG_MODE) {
-            print_debug_percent();
-            std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << g_precomp.ctx.saved_input_file_pos << std::endl;
-            std::cout << "Can be decoded to " << g_precomp.ctx.identical_bytes << " bytes" << std::endl;
-          }
-
-          // try to re-encode Base64 data
-          {
-            FileWrapper ftempout;
-            ftempout.open(tmpfile.file_path, "rb");
-            if (ftempout == NULL) {
-              error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
-            }
-
-            std::string frecomp_filename = tmpfile.file_path + "_rec";
-            remove(frecomp_filename.c_str());
-            PrecompTmpFile frecomp;
-            frecomp.open(frecomp_filename, "w+b");
-
-            base64_reencode(ftempout, frecomp, line_count, base64_line_len);
-
-            ftempout.close();
-
-            g_precomp.ctx.identical_bytes_decomp = compare_files(g_precomp.ctx.fin, frecomp, g_precomp.ctx.input_file_pos, 0);
-          }
-
-          if (g_precomp.ctx.identical_bytes_decomp > g_precomp.switches.min_ident_size) {
-            g_precomp.statistics.recompressed_streams_count++;
-            g_precomp.statistics.recompressed_base64_count++;
-            if (g_precomp.switches.DEBUG_MODE) {
-              std::cout << "Match: encoded to " << g_precomp.ctx.identical_bytes_decomp << " bytes" << std::endl;
-            }
-
-            // end uncompressed data
-
-            g_precomp.ctx.compressed_data_found = true;
-            end_uncompressed_data();
-
-            // check recursion
-            tmpfile.reopen();
-            recursion_result r = recursion_compress(g_precomp.ctx.identical_bytes_decomp, g_precomp.ctx.identical_bytes, tmpfile);
-
-            // write compressed data header (Base64)
-            int header_byte = 1 + (line_case << 2);
-            if (r.success) {
-              header_byte += 128;
-            }
-            fout_fputc(header_byte);
-            fout_fputc(D_BASE64); // Base64
-
-            fout_fput_vlint(base64_header_length);
-
-            // write "header", but change first char to prevent re-detection
-            fout_fputc(g_precomp.ctx.in_buf[g_precomp.ctx.cb] - 1);
-            own_fwrite(g_precomp.ctx.in_buf + g_precomp.ctx.cb + 1, 1, base64_header_length - 1, g_precomp.ctx.fout);
-
-            fout_fput_vlint(line_count);
-            if (line_case == 2) {
-              for (i = 0; i < line_count; i++) {
-                fout_fputc(base64_line_len[i]);
-              }
-            }
-            else {
-              fout_fputc(base64_line_len[0]);
-              if (line_case == 1) fout_fputc(base64_line_len[line_count - 1]);
-            }
-
-            delete[] base64_line_len;
-
-            fout_fput_vlint(g_precomp.ctx.identical_bytes);
-            fout_fput_vlint(g_precomp.ctx.identical_bytes_decomp);
-
-            if (r.success) {
-              fout_fput_vlint(r.file_length);
-            }
-
-            // write decompressed data
-            if (r.success) {
-              write_decompressed_data(r.file_length, r.file_name.c_str());
-              remove(r.file_name.c_str());
-            } else {
-              write_decompressed_data(g_precomp.ctx.identical_bytes, tmpfile.file_path.c_str());
-            }
-
-            // start new uncompressed data
-
-            // set input file pointer after recompressed data
-            g_precomp.ctx.input_file_pos += g_precomp.ctx.identical_bytes_decomp - 1;
-            g_precomp.ctx.cb += g_precomp.ctx.identical_bytes_decomp - 1;
-          }
-          else {
-            if (g_precomp.switches.DEBUG_MODE) {
-              printf("No match\n");
-            }
-          }
-
+        for (j = 0; j < (k >> 2); j++) {
+          a = base64_data[(j << 2)];
+          b = base64_data[(j << 2) + 1];
+          c = base64_data[(j << 2) + 2];
+          d = base64_data[(j << 2) + 3];
+          ftempout.put((a << 2) | (b >> 4));
+          ftempout.put(((b << 4) & 0xFF) | (c >> 2));
+          ftempout.put(((c << 6) & 0xFF) | d);
         }
+        if (stream_finished) break;
+        for (j = 0; j < (k % 4); j++) {
+          base64_data[j] = base64_data[((k >> 2) << 2) + j];
+        }
+        k = k % 4;
+      }
+    } while ((avail_in == CHUNK) && (!decoding_failed) && (!stream_finished));
+
+    line_count = line_nr;
+    // if one of the lines is longer than 255 characters -> decoding failed
+    for (i = 0; i < line_count; i++) {
+      if (base64_line_len[i] > 255) {
+        decoding_failed = true;
+        break;
+      }
+    }
+    ftempout.close();
+  }
+
+  if (!decoding_failed) {
+    int line_case = -1;
+    // check line case
+    if (line_count == 1) {
+      line_case = 0; // one length for all lines
+    }
+    else {
+      for (i = 1; i < (line_count - 1); i++) {
+        if (base64_line_len[i] != base64_line_len[0]) {
+          line_case = 2; // save complete line length list
+          break;
+        }
+      }
+      if (line_case == -1) {
+        // check last line
+        if (base64_line_len[line_count - 1] == base64_line_len[0]) {
+          line_case = 0; // one length for all lines
+        }
+        else {
+          line_case = 1; // first length for all lines, second length for last line
+        }
+      }
+    }
+
+    g_precomp.statistics.decompressed_streams_count++;
+    g_precomp.statistics.decompressed_base64_count++;
+
+    {
+      FileWrapper ftempout;
+      ftempout.open(tmpfile.file_path, "rb");
+      ftempout.seekg(0, SEEK_END);
+      g_precomp.ctx.identical_bytes = ftempout.tellg();
+    }
+
+    if (g_precomp.switches.DEBUG_MODE) {
+      print_debug_percent();
+      std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << g_precomp.ctx.saved_input_file_pos << std::endl;
+      std::cout << "Can be decoded to " << g_precomp.ctx.identical_bytes << " bytes" << std::endl;
+    }
+
+    // try to re-encode Base64 data
+    {
+      FileWrapper ftempout;
+      ftempout.open(tmpfile.file_path, "rb");
+      if (ftempout == NULL) {
+        error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
+      }
+
+      std::string frecomp_filename = tmpfile.file_path + "_rec";
+      remove(frecomp_filename.c_str());
+      PrecompTmpFile frecomp;
+      frecomp.open(frecomp_filename, "w+b");
+
+      base64_reencode(ftempout, frecomp, line_count, base64_line_len);
+
+      ftempout.close();
+
+      g_precomp.ctx.identical_bytes_decomp = compare_files(g_precomp.ctx.fin, frecomp, g_precomp.ctx.input_file_pos, 0);
+    }
+
+    if (g_precomp.ctx.identical_bytes_decomp > g_precomp.switches.min_ident_size) {
+      g_precomp.statistics.recompressed_streams_count++;
+      g_precomp.statistics.recompressed_base64_count++;
+      if (g_precomp.switches.DEBUG_MODE) {
+        std::cout << "Match: encoded to " << g_precomp.ctx.identical_bytes_decomp << " bytes" << std::endl;
+      }
+
+      // end uncompressed data
+
+      g_precomp.ctx.compressed_data_found = true;
+      end_uncompressed_data();
+
+      // check recursion
+      tmpfile.reopen();
+      recursion_result r = recursion_compress(g_precomp.ctx.identical_bytes_decomp, g_precomp.ctx.identical_bytes, tmpfile);
+
+      // write compressed data header (Base64)
+      int header_byte = 1 + (line_case << 2);
+      if (r.success) {
+        header_byte += 128;
+      }
+      fout_fputc(header_byte);
+      fout_fputc(D_BASE64); // Base64
+
+      fout_fput_vlint(base64_header_length);
+
+      // write "header", but change first char to prevent re-detection
+      fout_fputc(g_precomp.ctx.in_buf[g_precomp.ctx.cb] - 1);
+      own_fwrite(g_precomp.ctx.in_buf + g_precomp.ctx.cb + 1, 1, base64_header_length - 1, g_precomp.ctx.fout);
+
+      fout_fput_vlint(line_count);
+      if (line_case == 2) {
+        for (i = 0; i < line_count; i++) {
+          fout_fputc(base64_line_len[i]);
+        }
+      }
+      else {
+        fout_fputc(base64_line_len[0]);
+        if (line_case == 1) fout_fputc(base64_line_len[line_count - 1]);
+      }
+
+      delete[] base64_line_len;
+
+      fout_fput_vlint(g_precomp.ctx.identical_bytes);
+      fout_fput_vlint(g_precomp.ctx.identical_bytes_decomp);
+
+      if (r.success) {
+        fout_fput_vlint(r.file_length);
+      }
+
+      // write decompressed data
+      if (r.success) {
+        write_decompressed_data(r.file_length, r.file_name.c_str());
+        remove(r.file_name.c_str());
+      } else {
+        write_decompressed_data(g_precomp.ctx.identical_bytes, tmpfile.file_path.c_str());
+      }
+
+      // start new uncompressed data
+
+      // set input file pointer after recompressed data
+      g_precomp.ctx.input_file_pos += g_precomp.ctx.identical_bytes_decomp - 1;
+      g_precomp.ctx.cb += g_precomp.ctx.identical_bytes_decomp - 1;
+    }
+    else {
+      if (g_precomp.switches.DEBUG_MODE) {
+        printf("No match\n");
+      }
+    }
+
+  }
 
 }
 
