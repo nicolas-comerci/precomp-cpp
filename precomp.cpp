@@ -67,6 +67,10 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include <array>
 #include <signal.h>
 #include <random>
+// I have no idea why std::filesystem is not available when importing <filesystem> even after I set CMAKE_CXX_STANDARD 17
+// For now we just use the deprecated one on <experimental/filesystem>
+#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#include <experimental/filesystem>
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
 #include <thread>
@@ -6771,13 +6775,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
                 recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
               } else {
-                {
-                  FileWrapper decompressed_mp3;
-                  decompressed_mp3.open(decompressed_mp3_filename, "r+b");
-                  ftruncate(fileno(decompressed_mp3.file_ptr.get()), pos);
-                  decompressed_mp3.close();
-                  remove(tmpfile.file_path.c_str());
-                }
+                std::experimental::filesystem::resize_file(decompressed_mp3_filename, pos);
 
                 // workaround for bugs, similar to packJPG
                 FileWrapper fworkaround;
@@ -7612,10 +7610,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
-    FileWrapper ftempfile1;
-    ftempfile1.open(tmpfile.file_path, "r+b");
-    ftruncate(fileno(ftempfile1.file_ptr.get()), decompressed_bytes);
-    ftempfile1.close();
+    std::experimental::filesystem::resize_file(tmpfile.file_path, decompressed_bytes);
   }
 
   g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
