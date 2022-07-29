@@ -7510,47 +7510,9 @@ FileWrapper& tryOpen(const char* filename, const char* mode) {
   return fptr;
 }
 
-#ifdef _MSC_VER
-wchar_t* convertCharArrayToLPCWSTR(const char* charArray)
-{
-    wchar_t* wString=new wchar_t[4096];
-    MultiByteToWideChar(CP_ACP, 0, charArray, -1, wString, 4096);
-    return wString;
-}
-#endif
-
 long long fileSize64(const char* filename) {
-  #ifndef __unix
-    unsigned long s1 = 0, s2 = 0;
-
-    #ifdef _MSC_VER
-    wchar_t* wfilename = convertCharArrayToLPCWSTR(filename);
-    HANDLE h = CreateFile(wfilename, 0, (FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE), NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    delete[] wfilename;
-    #else
-    HANDLE h = CreateFile(filename, 0, (FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE), NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    #endif
-
-    s2 = GetFileSize(h, &s1);
-
-    if (GetLastError() != NO_ERROR) {
-      printf("ERROR: Could not get file size of file %s\n", filename);
-
-      CloseHandle(h);
-      exit(0);
-    }
-
-    CloseHandle(h);
-
-    return ((long long)(s1) << 32) + s2;
-  #else
-    FileWrapper f;
-    f.open(filename, "rb");
-    if (f.file_ptr == nullptr) return 0;
-    fseeko(f.file_ptr.get(), 0, SEEK_END);
-    long long result=ftello(f.file_ptr.get());
-    return result;
-  #endif // __unix
+  std::error_code ec;
+  return std::experimental::filesystem::file_size(filename, ec);
 }
 
 std::string temp_files_tag() {
