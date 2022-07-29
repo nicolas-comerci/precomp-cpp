@@ -17,21 +17,33 @@ protected:
   bool is_tmp_file = false;
 public:
   std::string file_path;
-  std::string file_mode;
+  std::ios_base::openmode file_mode;
 
   ~FileWrapper() {
     file_ptr = nullptr;
     if (is_tmp_file) std::remove(file_path.c_str());
   }
 
-  void open(std::string file_path, std::string mode) {
+  void open(std::string file_path, std::ios_base::openmode mode) {
+    std::string mode_str;
+    if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc)) {
+      mode_str = "w+b";
+    }
+    else if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::app)) {
+      mode_str = "a+";
+    }
+    else {
+      if (mode & std::ios_base::in) mode_str += "r";
+      if (mode & std::ios_base::out) mode_str += "w";
+      if (mode & std::ios_base::binary) mode_str += "b";
+    }
     this->file_path = file_path;
     this->file_mode = mode;
     // shared_ptr to FILE that closes itself when last instance is destroyed
     file_ptr = std::shared_ptr<std::FILE>(
-      std::fopen(file_path.c_str(), mode.c_str()),
+      std::fopen(file_path.c_str(), mode_str.c_str()),
       [file_path](FILE* raw_file_ptr) {
-        if (raw_file_ptr != nullptr) std::fclose(raw_file_ptr);
+        std::fclose(raw_file_ptr);
       }
     );
   }

@@ -233,14 +233,14 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
 
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
-  g_precomp.ctx.fin.open(in_file, "rb");
+  g_precomp.ctx.fin.open(in_file, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx.fin.is_open()) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  g_precomp.ctx.fout.open(out_file, "wb");
+  g_precomp.ctx.fout.open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!g_precomp.ctx.fout.is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
@@ -273,14 +273,14 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
 
   g_precomp.ctx.fin_length = fileSize64(in_file);
 
-  g_precomp.ctx.fin.open(in_file, "rb");
+  g_precomp.ctx.fin.open(in_file, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx.fin.is_open()) {
     sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
 
     return false;
   }
 
-  g_precomp.ctx.fout.open(out_file, "wb");
+  g_precomp.ctx.fout.open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!g_precomp.ctx.fout.is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
 
@@ -947,7 +947,7 @@ int init(int argc, char* argv[]) {
 
       g_precomp.ctx.fin_length = fileSize64(argv[i]);
 
-      g_precomp.ctx.fin.open(argv[i],"rb");
+      g_precomp.ctx.fin.open(argv[i],std::ios_base::in | std::ios_base::binary);
       if (!g_precomp.ctx.fin.is_open()) {
         printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
 
@@ -1077,7 +1077,7 @@ int init(int argc, char* argv[]) {
         #endif
       }
     }
-    g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
+    g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!g_precomp.ctx.fout.is_open()) {
       printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
       exit(1);
@@ -1179,7 +1179,7 @@ int init_comfort(int argc, char* argv[]) {
 
     g_precomp.ctx.fin_length = fileSize64(g_precomp.ctx.input_file_name.c_str());
 
-    g_precomp.ctx.fin.open(g_precomp.ctx.input_file_name.c_str(), "rb");
+    g_precomp.ctx.fin.open(g_precomp.ctx.input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
     if (!g_precomp.ctx.fin.is_open()) {
       printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx.input_file_name.c_str());
       wait_for_key();
@@ -1215,7 +1215,7 @@ int init_comfort(int argc, char* argv[]) {
       exit(1);
     } else {
       FileWrapper fnewini;
-      fnewini.open(precomf_ini, "w");
+      fnewini.open(precomf_ini, std::ios_base::out);
       std::stringstream title;
       title << ";; Precomp Comfort v" << V_MAJOR << "." << V_MINOR << "." << V_MINOR2 << " " << V_OS << " " << V_BIT << " - " << V_STATE << " version - INI file\n";
       fnewini.printf(title.str());
@@ -2122,7 +2122,7 @@ int init_comfort(int argc, char* argv[]) {
   } else {
     printf("\n");
   }
-  g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
+  g_precomp.ctx.fout.open(g_precomp.ctx.output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!g_precomp.ctx.fout.is_open()) {
     printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx.output_file_name.c_str());
     wait_for_key();
@@ -2712,7 +2712,7 @@ long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& dec
 
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name) {
   FileWrapper ftempout;
-  ftempout.open(decompressed_file_name, "rb");
+  ftempout.open(decompressed_file_name, std::ios_base::in | std::ios_base::binary);
   if (!ftempout.is_open()) error(ERR_TEMP_FILE_DISAPPEARED, decompressed_file_name);
 
   ftempout.seekg(0, SEEK_SET);
@@ -2912,7 +2912,7 @@ public:
   std::string tmp_filename;
   FileWrapper ftempout;
   UncompressedOutStream(bool& in_memory, std::string tmp_filename) : _written(0), _in_memory(in_memory), tmp_filename(tmp_filename) {
-    ftempout.open(tmp_filename, "wb");
+    ftempout.open(tmp_filename, std::ios_base::out | std::ios_base::binary);
   }
   ~UncompressedOutStream() {
     if (!_in_memory) {
@@ -2986,11 +2986,11 @@ recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::stri
         while (true) {
           snprintf(namebuf, 49, "preflate_error_%04d.raw", counter++);
           FileWrapper f;
-          f.open(namebuf, "rb");
+          f.open(namebuf, std::ios_base::in | std::ios_base::binary);
           if (f.is_open()) {
             continue;
           }
-          f.open(namebuf, "wb");
+          f.open(namebuf, std::ios_base::out | std::ios_base::binary);
           f.write(orgdata.data(), orgdata.size());
           break;
         }
@@ -3255,7 +3255,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       } else {
         FileWrapper ftempout;
         if (!rdres.uncompressed_in_memory) {
-          ftempout.open(tmpfile.file_path, "rb");
+          ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
           if (!ftempout.is_open()) {
             error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
           }
@@ -3552,7 +3552,7 @@ bool compress_file(float min_percent, float max_percent) {
 
           tempfile += "zip";
           PrecompTmpFile tmp_zip;
-          tmp_zip.open(tempfile, "a+");
+          tmp_zip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_zip(header_length, tmp_zip);
 
           g_precomp.ctx.cb += header_length;
@@ -3634,7 +3634,7 @@ bool compress_file(float min_percent, float max_percent) {
 
             tempfile += "gzip";
             PrecompTmpFile tmp_gzip;
-            tmp_gzip.open(tempfile, "a+");
+            tmp_gzip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
             try_decompression_gzip(header_length, tmp_gzip);
 
             g_precomp.ctx.cb += header_length;
@@ -3767,7 +3767,7 @@ bool compress_file(float min_percent, float max_percent) {
 
                   tempfile += "pdf";
                   PrecompTmpFile tmp_pdf;
-                  tmp_pdf.open(tempfile, "a+");
+                  tmp_pdf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
                   try_decompression_pdf(-windowbits, act_search_pos + 10, width_val, height_val, bpc_val, tmp_pdf);
 
                   g_precomp.ctx.cb += act_search_pos + 10;
@@ -3784,7 +3784,7 @@ bool compress_file(float min_percent, float max_percent) {
 
                   tempfile += "pdf";
                   PrecompTmpFile tmp_pdf;
-                  tmp_pdf.open(tempfile, "a+");
+                  tmp_pdf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
                   try_decompression_pdf(-windowbits, act_search_pos + 9, width_val, height_val, bpc_val, tmp_pdf);
 
                   g_precomp.ctx.cb += act_search_pos + 9;
@@ -3878,7 +3878,7 @@ bool compress_file(float min_percent, float max_percent) {
           g_precomp.ctx.input_file_pos += 6;
           tempfile += "png";
           PrecompTmpFile tmp_png;
-          tmp_png.open(tempfile, "a+");
+          tmp_png.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_png(-windowbits, tmp_png);
           g_precomp.ctx.cb += 6;
         } else if (idat_count > 1) {
@@ -3886,7 +3886,7 @@ bool compress_file(float min_percent, float max_percent) {
           std::string png_tmp_filename = tempfile + "png";
           remove(png_tmp_filename.c_str());
           PrecompTmpFile tmp_png;
-          tmp_png.open(png_tmp_filename, "w+b");
+          tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
           g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos + 6, SEEK_SET); // start after zLib header
 
@@ -3900,7 +3900,7 @@ bool compress_file(float min_percent, float max_percent) {
           g_precomp.ctx.input_file_pos += 6;
           tempfile += "pngmulti";
           PrecompTmpFile tmp_pngmulti;
-          tmp_pngmulti.open(tempfile, "a+");
+          tmp_pngmulti.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_png_multi(tmp_png, -windowbits, tmp_pngmulti);
           g_precomp.ctx.cb += 6;
 
@@ -3936,7 +3936,7 @@ bool compress_file(float min_percent, float max_percent) {
 
             tempfile += "gif";
             PrecompTmpFile tmp_gif;
-            tmp_gif.open(tempfile, "a+");
+            tmp_gif.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
             try_decompression_gif(version, tmp_gif);
 
             if (!g_precomp.ctx.compressed_data_found) {
@@ -4019,7 +4019,7 @@ bool compress_file(float min_percent, float max_percent) {
           long long jpg_length = g_precomp.ctx.input_file_pos - g_precomp.ctx.saved_input_file_pos;
           g_precomp.ctx.input_file_pos = g_precomp.ctx.saved_input_file_pos;
           PrecompTmpFile tmp_jpg;
-          tmp_jpg.open(tempfile + "jpg", "a+");
+          tmp_jpg.open(tempfile + "jpg", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_jpg(jpg_length, progressive_flag, tmp_jpg);
         }
         if (!found || !g_precomp.ctx.compressed_data_found) {
@@ -4156,7 +4156,7 @@ bool compress_file(float min_percent, float max_percent) {
                && (g_precomp.ctx.suppress_mp3_inconsistent_original_bit != position_length_sum)) {
               tempfile += "mp3";
               PrecompTmpFile tmp_mp3;
-              tmp_mp3.open(tempfile, "a+");
+              tmp_mp3.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
               try_decompression_mp3(mp3_length, tmp_mp3);
             }
           } else if (type > 0) {
@@ -4193,7 +4193,7 @@ bool compress_file(float min_percent, float max_percent) {
 
             tempfile += "swf";
             PrecompTmpFile tmp_swf;
-            tmp_swf.open(tempfile, "a+");
+            tmp_swf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
             try_decompression_swf(-windowbits, tmp_swf);
 
             g_precomp.ctx.cb += 10;
@@ -4241,7 +4241,7 @@ bool compress_file(float min_percent, float max_percent) {
 
           tempfile += "base64";
           PrecompTmpFile tmp_base64;
-          tmp_base64.open(tempfile, "a+");
+          tmp_base64.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_base64(base64_header_length, tmp_base64);
 
           g_precomp.ctx.cb += base64_header_length;
@@ -4265,7 +4265,7 @@ bool compress_file(float min_percent, float max_percent) {
 
           tempfile += "bzip2";
           PrecompTmpFile tmp_bzip2;
-          tmp_bzip2.open(tempfile, "a+");
+          tmp_bzip2.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_bzip2(compression_level, tmp_bzip2);
 
           if (!g_precomp.ctx.compressed_data_found) {
@@ -4312,7 +4312,7 @@ bool compress_file(float min_percent, float max_percent) {
 
               tempfile += "zlib";
               PrecompTmpFile tmp_zlib;
-              tmp_zlib.open(tempfile, "a+");
+              tmp_zlib.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
               try_decompression_zlib(-windowbits, tmp_zlib);
 
               g_precomp.ctx.cb += 2;
@@ -4355,7 +4355,7 @@ bool compress_file(float min_percent, float max_percent) {
         if (check_inf_result(g_precomp.ctx.cb, -15, true)) {
           tempfile += "brute";
           PrecompTmpFile tmp_brute;
-          tmp_brute.open(tempfile, "a+");
+          tmp_brute.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           try_decompression_brute(tmp_brute);
         }
 
@@ -4499,7 +4499,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       g_precomp.ctx.fout.put(4);
       tempfile += "zip";
       PrecompTmpFile tmp_zip;
-      tmp_zip.open(tempfile, "a+");
+      tmp_zip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_zip);
 
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
@@ -4518,7 +4518,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       g_precomp.ctx.fout.put(139);
       tempfile += "gzip";
       PrecompTmpFile tmp_gzip;
-      tmp_gzip.open(tempfile, "a+");
+      tmp_gzip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_gzip);
 
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
@@ -4632,7 +4632,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       remove(tempfile.c_str());
       {
         FileWrapper ftempout;
-        ftempout.open(tempfile, "wb");
+        ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
         fast_copy(g_precomp.ctx.fin, ftempout, decompressed_data_length);
         ftempout.close();
       }
@@ -4641,10 +4641,10 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       {
         FileWrapper ftempout;
-        ftempout.open(tempfile, "rb");
+        ftempout.open(tempfile, std::ios_base::in | std::ios_base::binary);
         remove(tempfile2.c_str());
         FileWrapper frecomp;
-        frecomp.open(tempfile2, "wb");
+        frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
 
         // recompress data
         recompress_success = recompress_gif(ftempout, frecomp, block_size, NULL, &gDiff);
@@ -4664,7 +4664,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       {
         PrecompTmpFile frecomp;
-        frecomp.open(tempfile2, "rb");
+        frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
         fast_copy(frecomp, g_precomp.ctx.fout, recompressed_data_length);
         frecomp.close();
       }
@@ -4751,7 +4751,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
         {
           FileWrapper ftempout;
-          ftempout.open(tempfile, "wb");
+          ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(g_precomp.ctx.fin, ftempout, decompressed_data_length);
           ftempout.close();
         }
@@ -4769,7 +4769,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       PrecompTmpFile frecomp;
       if (!in_memory) {
-        frecomp.open(tempfile2, "rb");
+        frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
       }
 
       if (mjpg_dht_used) {
@@ -4849,7 +4849,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       g_precomp.ctx.fout.put('S');
       tempfile += "swf";
       PrecompTmpFile tmp_swf;
-      tmp_swf.open(tempfile, "a+");
+      tmp_swf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tmp_swf);
 
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
@@ -4917,7 +4917,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       if (recursion_used) {
         PrecompTmpFile tmp_base64;
-        tmp_base64.open(tempfile, "a+");
+        tmp_base64.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
         tmp_base64.close();
         recursion_result r = recursion_decompress(recursion_data_length, tmp_base64);
         base64_reencode(r.frecurse, g_precomp.ctx.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
@@ -4973,7 +4973,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
       if (recursion_used) {
         PrecompTmpFile tmp_bzip2;
-        tmp_bzip2.open(tempfile, "a+");
+        tmp_bzip2.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
         tmp_bzip2.close();
         recursion_result r = recursion_decompress(recursion_data_length, tmp_bzip2);
         g_precomp.ctx.retval = def_part_bzip2(r.frecurse, g_precomp.ctx.fout, level, decompressed_data_length, recompressed_data_length);
@@ -5043,7 +5043,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
 
         {
           FileWrapper ftempout;
-          ftempout.open(tempfile, "wb");
+          ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(g_precomp.ctx.fin, ftempout, decompressed_data_length);
           ftempout.close();
         }
@@ -5067,7 +5067,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       } else {
         {
           PrecompTmpFile frecomp;
-          frecomp.open(tempfile2, "rb");
+          frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
           fast_copy(frecomp, g_precomp.ctx.fout, recompressed_data_length);
           frecomp.close();
         }
@@ -5083,7 +5083,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       int64_t recursion_data_length;
       tempfile += "brute";
       PrecompTmpFile tmp_brute;
-      tmp_brute.open(tempfile, "a+");
+      tmp_brute.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_brute);
 
       debug_deflate_reconstruct(rdres, "brute mode", hdr_length, recursion_data_length);
@@ -5100,7 +5100,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       int64_t recursion_data_length;
       tempfile += "zlib";
       PrecompTmpFile tmp_zlib;
-      tmp_zlib.open(tempfile, "a+");
+      tmp_zlib.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
       bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tmp_zlib);
 
       debug_deflate_reconstruct(rdres, "raw zLib", hdr_length, recursion_data_length);
@@ -5181,7 +5181,7 @@ long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long
 
   remove(tmpfile.file_path.c_str());
   FileWrapper ftempout;
-  ftempout.open(tmpfile.file_path, "wb");
+  ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
   file.seekg(&file == &g_precomp.ctx.fin ? g_precomp.ctx.input_file_pos : 0, SEEK_SET);
 
@@ -6287,7 +6287,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   // read GIF file
   {
     FileWrapper ftempout;
-    ftempout.open(tmpfile.file_path, "wb");
+    ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
     if (!decompress_gif(g_precomp.ctx.fin, ftempout, g_precomp.ctx.input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
       ftempout.close();
@@ -6306,17 +6306,17 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   g_precomp.statistics.decompressed_gif_count++;
 
   FileWrapper ftempout;
-  ftempout.open(tmpfile.file_path, "rb");
+  ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   std::string tempfile2 = tmpfile.file_path + "_rec_";
   PrecompTmpFile frecomp;
-  frecomp.open(tempfile2, "wb");
+  frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
 
     frecomp.close();
     ftempout.close();
 
     frecomp.close();
-    frecomp.open(tempfile2, "rb");
+    frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
     g_precomp.ctx.best_identical_bytes = compare_files_penalty(g_precomp.ctx.fin, frecomp, g_precomp.ctx.input_file_pos, 0);
     frecomp.close();
 
@@ -6552,21 +6552,23 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 			printf("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
-      {
-        FileWrapper decompressed_jpg;
-        decompressed_jpg.open(decompressed_jpg_filename, "wb");
-        g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos, SEEK_SET);
-        fast_copy(g_precomp.ctx.fin, decompressed_jpg, jpg_length);
-        decompressed_jpg.close();
-        remove(tmpfile.file_path.c_str());
-      }
+          {
+            FileWrapper decompressed_jpg;
+            decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
+            g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos, SEEK_SET);
+            fast_copy(g_precomp.ctx.fin, decompressed_jpg, jpg_length);
+            decompressed_jpg.close();
+          }
 
           // Workaround for JPG bugs. Sometimes tempfile1 is removed, but still
           // not accessible by packJPG, so we prevent that by opening it here
           // ourselves.
-          FileWrapper fworkaround;
-          fworkaround.open(tmpfile.file_path, "wb");
-          fworkaround.close();
+          {
+            remove(tmpfile.file_path.c_str());
+            FileWrapper fworkaround;
+            fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
+            fworkaround.close();
+          }
 
           recompress_success = pjglib_convert_file2file(const_cast<char*>(decompressed_jpg_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
 		  brunsli_used = false;
@@ -6601,7 +6603,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             }
           } else {
             FileWrapper decompressed_jpg;
-            decompressed_jpg.open(tmpfile.file_path, "rb");
+            decompressed_jpg.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
             do {
               ffda_pos++;
               if (decompressed_jpg.read(in, 1) != 1) break;
@@ -6616,7 +6618,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             std::string mjpgdht_tempfile = tmpfile.file_path + "_mjpgdht";
             if (found_ffda) {
               FileWrapper decompressed_jpg_w_MJPGDHT;
-              decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, "wb");
+              decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
               decompressed_jpg.seekg(0, SEEK_SET);
               fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
               // insert MJPGDHT
@@ -6653,7 +6655,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             jpg_new_length = jpg_mem_out_size;
           } else {
             FileWrapper ftempout;
-            ftempout.open(tmpfile.file_path, "rb");
+            ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
             ftempout.seekg(0, SEEK_END);
             jpg_new_length = ftempout.tellg();
             ftempout.close();
@@ -6748,17 +6750,19 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
           // try to decompress at current position
           {
             FileWrapper decompressed_mp3;
-            decompressed_mp3.open(decompressed_mp3_filename, "wb");
+            decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
             g_precomp.ctx.fin.seekg(g_precomp.ctx.input_file_pos, SEEK_SET);
             fast_copy(g_precomp.ctx.fin, decompressed_mp3, mp3_length);
             decompressed_mp3.close();
-            remove(tmpfile.file_path.c_str());
           }
-
+          
           // workaround for bugs, similar to packJPG
-          FileWrapper fworkaround;
-          fworkaround.open(tmpfile.file_path, "wb");
-          fworkaround.close();
+          {
+            remove(tmpfile.file_path.c_str());
+            FileWrapper fworkaround;
+            fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
+            fworkaround.close();
+          }
 
           recompress_success = pmplib_convert_file2file(const_cast<char*>(decompressed_mp3_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
         }
@@ -6779,9 +6783,11 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
                 std::experimental::filesystem::resize_file(decompressed_mp3_filename, pos);
 
                 // workaround for bugs, similar to packJPG
-                FileWrapper fworkaround;
-                fworkaround.open(tmpfile.file_path, "wb");
-                fworkaround.close();
+                {
+                  remove(tmpfile.file_path.c_str());
+                  FileWrapper fworkaround;
+                  fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
+                }
 
                 recompress_success = pmplib_convert_file2file(const_cast<char*>(decompressed_mp3_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
               }
@@ -6827,7 +6833,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
             mp3_new_length = mp3_mem_out_size;
           } else {
             FileWrapper ftempout;
-            ftempout.open(tmpfile.file_path, "rb");
+            ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
             ftempout.seekg(0, SEEK_END);
             mp3_new_length = ftempout.tellg();
             ftempout.close();
@@ -6992,7 +6998,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
 
           FileWrapper ftempout;
-          ftempout.open(tmpfile.file_path, "rb");
+          ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
           ftempout.seekg(0, SEEK_END);
           std::cout << "Can be decompressed to " << ftempout.tellg() << " bytes" << std::endl;
           ftempout.close();
@@ -7202,7 +7208,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
   {
     FileWrapper ftempout;
-    ftempout.open(tmpfile.file_path, "wb");
+    ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
     do {
       avail_in = g_precomp.ctx.fin.read(in, CHUNK);
       for (i = 0; i < (avail_in >> 2); i++) {
@@ -7310,7 +7316,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
     {
       FileWrapper ftempout;
-      ftempout.open(tmpfile.file_path, "rb");
+      ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
       ftempout.seekg(0, SEEK_END);
       g_precomp.ctx.identical_bytes = ftempout.tellg();
     }
@@ -7324,7 +7330,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
     // try to re-encode Base64 data
     {
       FileWrapper ftempout;
-      ftempout.open(tmpfile.file_path, "rb");
+      ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
       if (!ftempout.is_open()) {
         error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
       }
@@ -7332,7 +7338,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       std::string frecomp_filename = tmpfile.file_path + "_rec";
       remove(frecomp_filename.c_str());
       PrecompTmpFile frecomp;
-      frecomp.open(frecomp_filename, "w+b");
+      frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
       base64_reencode(ftempout, frecomp, line_count, base64_line_len);
 
@@ -7488,9 +7494,8 @@ void error(int error_nr, std::string tmp_filename) {
   exit(error_nr);
 }
 
-FileWrapper& tryOpen(const char* filename, const char* mode) {
+FileWrapper& tryOpen(const char* filename, std::ios_base::openmode mode) {
   FileWrapper fptr;
-
   fptr.open(filename,mode);
 
   if (fptr.is_open()) return fptr;
@@ -7542,7 +7547,7 @@ void recursion_pop() {
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile) {
   if (in_memory) {
     FileWrapper ftempout;
-    ftempout.open(tmpfile.file_path, "wb");
+    ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
     fast_copy(g_precomp.ctx.decomp_io_buf, ftempout, byte_count);
     ftempout.close();
   }
@@ -7577,7 +7582,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   }
 
   g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
-  g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
+  g_precomp.ctx.fin.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx.fin.is_open()) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
@@ -7587,7 +7592,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx.output_file_name = tmpfile.file_path;
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx.output_file_name;
-  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
+  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx.fout = recursion_fout;
 
   g_precomp.ctx.intense_ignore_offsets = new std::set<long long>();
@@ -7666,14 +7671,14 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   recursion_push();
 
   remove(tmpfile.file_path.c_str());
-  recursion_fin.open(tmpfile.file_path,"wb");
+  recursion_fin.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
   fast_copy(g_precomp.ctx.fin, recursion_fin, recursion_data_length);
 
   recursion_fin.close();
 
   g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
-  g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
+  g_precomp.ctx.fin.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx.fin.is_open()) {
     printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
@@ -7683,7 +7688,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   g_precomp.ctx.output_file_name = tmpfile.file_path;
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx.output_file_name;
-  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
+  recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx.fout = recursion_fout;
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
@@ -7707,7 +7712,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   // get recursion file size
   tmp_r.file_length = fileSize64(tmp_r.file_name.c_str());
 
-  tmp_r.frecurse.open(tmp_r.file_name, "rb");
+  tmp_r.frecurse.open(tmp_r.file_name, std::ios_base::in | std::ios_base::binary);
 
   return tmp_r;
 }

@@ -77,7 +77,7 @@ bool file_exists(const char* filename);
   void wait_for_key();
 #endif
 void error(int error_nr, std::string tmp_filename = "");
-FileWrapper& tryOpen(const char* filename, const char* mode);
+FileWrapper& tryOpen(const char* filename, std::ios_base::openmode mode);
 long long fileSize64(const char* filename);
 void print64(long long i64);
 std::string temp_files_tag();
