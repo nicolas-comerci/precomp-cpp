@@ -2457,7 +2457,8 @@ int def_part_bzip2(FileWrapper& source, FileWrapper& dest, int level, long long 
       }
       pos_out += have;
 
-      if (own_fwrite(out, 1, have, dest) != have || dest.bad()) {
+      own_fwrite(out, 1, have, dest);
+      if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2628,7 +2629,8 @@ int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stre
       avail_in_before = strm.avail_in;
       
       have = CHUNK - strm.avail_out;
-      if (own_fwrite(out, 1, have, dest) != have || dest.bad()) {
+      own_fwrite(out, 1, have, dest);
+      if (dest.bad()) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2680,7 +2682,8 @@ int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
 
       have = CHUNK - strm.avail_out;
 
-      if (own_fwrite(out, 1, have, dest) != have || dest.bad()) {
+      own_fwrite(out, 1, have, dest);
+      if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
       }
@@ -2931,7 +2934,8 @@ public:
       }
     }
     _written += size;
-    return own_fwrite(buffer, 1, size, ftempout);
+    own_fwrite(buffer, 1, size, ftempout);
+    return ftempout.bad() ? 0 : size;
   }
 
   uint64_t written() const {
@@ -3001,7 +3005,8 @@ public:
   OwnFileOutputStream(FileWrapper* f) : _f(f) {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
-    return own_fwrite(buffer, 1, size, *_f);
+    own_fwrite(buffer, 1, size, *_f);
+    return _f->bad() ? 0 : size;
   }
 private:
   FileWrapper* _f;
@@ -5454,8 +5459,7 @@ void fast_copy(unsigned char* mem, FileWrapper& file, long long bytecount) {
   }
 }
 
-size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte, bool update_lzma_progress) {
-  size_t result = 0;
+void own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte, bool update_lzma_progress) {
   bool use_otf = false;
 
   if (g_precomp.ctx.comp_decomp_state == P_CONVERT) {
@@ -5470,8 +5474,8 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
   }
 
   if (!use_otf) {
-    result = stream.write(ptr, size * count);
-    if (result != count) {
+    stream.write(ptr, size * count);
+    if (stream.bad()) {
       error(ERR_DISK_FULL);
     }
   } else {
@@ -5491,8 +5495,8 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_bz2_stream_c.next_out = (char*)otf_out;
           ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
           have = CHUNK - otf_bz2_stream_c.avail_out;
-          if (stream.write(otf_out, have) != have || stream.bad()) {
-            result = 0;
+          stream.write(otf_out, have);
+          if (stream.bad()) {
             error(ERR_DISK_FULL);
           }
         } while (otf_bz2_stream_c.avail_out == 0);
@@ -5500,7 +5504,6 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           printf("ERROR: bZip2 compression failed - return value %i\n", ret);
           exit(1);
         }
-        result = size * count;
         break;
       }
       case OTF_XZ_MT: {
@@ -5516,8 +5519,8 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           otf_xz_stream_c.next_out = (uint8_t *)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
-          if (stream.write(otf_out, have) != have || stream.bad()) {
-            result = 0;
+          stream.write(otf_out, have);
+          if (stream.bad()) {
             error(ERR_DISK_FULL);
           }
           if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
@@ -5544,13 +5547,10 @@ size_t own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& strea
           } // .avail_out == 0
           if ((!g_precomp.switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
         } while ((otf_xz_stream_c.avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
-        result = size * count;
         break;
       }
     }
   }
-
-  return result;
 }
 
 size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
@@ -5929,7 +5929,8 @@ int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
 int writeFunc(GifFileType* GifFile, const GifByteType* buf, int count)
 {
   if (newgif_may_write) {
-    return own_fwrite(buf, 1, count, *frecompress_gif);
+    own_fwrite(buf, 1, count, *frecompress_gif);
+    return frecompress_gif->bad() ? 0 : count;
   } else {
     return count;
   }
