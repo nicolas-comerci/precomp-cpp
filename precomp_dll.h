@@ -122,6 +122,10 @@ public:
     return str.length();
   }
 
+  bool bad() const {
+    return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
+  }
+
   bool fail() const {
     return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
   }
