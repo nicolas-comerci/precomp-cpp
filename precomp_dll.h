@@ -110,14 +110,14 @@ public:
     return file_ptr != nullptr ? fwrite(s, 1, n, file_ptr.get()) : 0;
   }
 
-  int put(int chr) const {
-    return file_ptr != nullptr ? std::fputc(chr, file_ptr.get()) : 0;
+  void put(int chr) const {
+    if (file_ptr != nullptr) std::fputc(chr, file_ptr.get());
   }
 
   int printf(std::string str) {
     for (char character : str) {
-      int result = put(character);
-      if (result == 0) return 0;
+      put(character);
+      if (bad()) return 0;
     }
     return str.length();
   }
