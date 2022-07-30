@@ -243,7 +243,6 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
   g_precomp.ctx.fout.open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!g_precomp.ctx.fout.is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
-
     return false;
   }
 

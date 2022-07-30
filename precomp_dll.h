@@ -12,118 +12,97 @@
 // the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
 class FileWrapper {
 private:
-  std::shared_ptr<std::FILE> file_ptr = nullptr;
+  std::shared_ptr<std::fstream> file_stream = nullptr;
 protected:
   bool is_tmp_file = false;
+
 public:
   std::string file_path;
   std::ios_base::openmode file_mode;
 
   ~FileWrapper() {
-    file_ptr = nullptr;
-    if (is_tmp_file) std::remove(file_path.c_str());
+    if (is_tmp_file) {
+      file_stream = nullptr;
+      std::remove(file_path.c_str());
+    }
   }
 
   void open(std::string file_path, std::ios_base::openmode mode) {
-    std::string mode_str;
-    if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc)) {
-      mode_str = "w+b";
-    }
-    else if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::app)) {
-      mode_str = "a+";
-    }
-    else {
-      if (mode & std::ios_base::in) mode_str += "r";
-      if (mode & std::ios_base::out) mode_str += "w";
-      if (mode & std::ios_base::binary) mode_str += "b";
-    }
     this->file_path = file_path;
     this->file_mode = mode;
-    // shared_ptr to FILE that closes itself when last instance is destroyed
-    file_ptr = std::shared_ptr<std::FILE>(
-      std::fopen(file_path.c_str(), mode_str.c_str()),
-      [file_path](FILE* raw_file_ptr) {
-        std::fclose(raw_file_ptr);
+    file_stream = std::shared_ptr<std::fstream>(
+      new std::fstream(),
+      [file_path](std::fstream* fstream_ptr) {
+        fstream_ptr->close();
       }
     );
+    file_stream->open(file_path, mode);
   }
 
-  void reopen(std::string mode = "") {
-    if (mode.empty()) mode = "a+";
+  void reopen(std::ios_base::openmode mode = std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary) {
     if (is_open()) close();
     open(file_path, file_mode);
-    if (mode.compare("a+") == 0) fseek(file_ptr.get(), 0, SEEK_SET);
+    if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary)) {
+      file_stream->seekg(0, SEEK_SET);
+      file_stream->seekp(0, SEEK_SET);
+    }
   }
 
-  bool is_open() {
-    return file_ptr != nullptr;
+  bool is_open() const {
+    return file_stream != nullptr && file_stream->is_open();
   }
 
   int close() {
+    if (!is_open()) return std::char_traits<char>::eof();
     int result = is_open() ? 0 : std::char_traits<char>::eof();
-    if (file_ptr != nullptr) result = std::fclose(file_ptr.get());
-    file_ptr = nullptr;
+    file_stream->close();
+    file_stream->clear();
     return result;
   }
 
   int flush() {
-    return is_open() ? std::fflush(file_ptr.get()) : std::char_traits<char>::eof();
+    if (!is_open()) return std::char_traits<char>::eof();
+    file_stream->flush();
+    return is_open() ? file_stream->bad() : std::char_traits<char>::eof();
   }
 
-  void seek_64(unsigned long long pos) const {
-#ifndef __unix
-    fpos_t fpt_pos = pos;
-    fsetpos(file_ptr.get(), &fpt_pos);
-#else
-    fseeko(file_ptr.get(), pos, SEEK_SET);
-#endif
+  void clear() const {
+    file_stream->clear();
   }
 
-  void seekg(long long offset, int origin) const {
-    if (origin == SEEK_SET) {
-      seek_64(offset);
-    }
-    else {
-      std::fseek(file_ptr.get(), offset, origin);
-    }
+  void seekg(long long offset, int origin) {
+    file_stream->clear();
+    file_stream->seekg(offset, origin);
   }
 
-  void seekp(long long offset, int origin) const {
-    seekg(offset, origin);
-  }
-
-  unsigned long long tell_64() const {
-#ifndef __unix
-    fpos_t fpt_pos;
-    fgetpos(file_ptr.get(), &fpt_pos);
-    return fpt_pos;
-#else
-    return ftello(file_ptr.get());
-#endif
+  void seekp(long long offset, int origin) {
+    file_stream->clear();
+    file_stream->seekp(offset, origin);
   }
 
   long long tellg() const {
-    return tell_64();
+    return file_stream->tellg();
   }
 
   long long tellp() const {
-    return tellg();
+    return file_stream->tellp();
   }
 
-  size_t read(void* s, std::streamsize n) const {
-    return file_ptr != nullptr ? fread(s, 1, n, file_ptr.get()) : 0;
+  size_t read(void* s, std::streamsize n) {
+    file_stream->read(reinterpret_cast<char*>(s), n);
+    return file_stream->gcount();
   }
 
   int get() const {
-    return file_ptr != nullptr ? fgetc(file_ptr.get()) : 0;
+    return file_stream->is_open() ? file_stream->get() : 0;
   }
 
-  size_t write(const void* s, std::streamsize n) const {
-    return file_ptr != nullptr ? fwrite(s, 1, n, file_ptr.get()) : 0;
+  void write(const void* s, std::streamsize n) const {
+    file_stream->write(reinterpret_cast<const char*>(s), n);;
   }
 
-  void put(int chr) const {
-    if (file_ptr != nullptr) std::fputc(chr, file_ptr.get());
+  void put(int chr) {
+    if (is_open()) file_stream->put(chr);
   }
 
   int printf(std::string str) {
@@ -135,15 +114,15 @@ public:
   }
 
   bool bad() const {
-    return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
+    return file_stream->bad();
   }
 
   bool fail() const {
-    return file_ptr != nullptr ? ferror(file_ptr.get()) : true;
+    return file_stream->fail();
   }
 
   bool eof() const {
-    return file_ptr != nullptr ? feof(file_ptr.get()) : false;
+    return file_stream->eof();
   }
 };
 
