@@ -312,6 +312,7 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
 
   start_time = get_time_ms();
 
+  read_header();
   decompress_file();
 
   return true;
@@ -1204,10 +1205,8 @@ int init_comfort(int argc, char* argv[]) {
       exit(1);
     }
 
-    if (g_precomp.ctx->fin_length > 6) {
-      if (check_for_pcf_file()) {
-        operation = P_DECOMPRESS;
-      }
+    if (check_for_pcf_file()) {
+      operation = P_DECOMPRESS;
     }
   }
 
@@ -4442,12 +4441,11 @@ void decompress_file() {
 
   if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) show_progress(0, false, false);
-    read_header();
   }
 
   fin_pos = g_precomp.ctx->fin.tellg();
 
-while (fin_pos < g_precomp.ctx->fin_length) {
+while (g_precomp.ctx->fin.good()) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
@@ -4457,6 +4455,7 @@ while (fin_pos < g_precomp.ctx->fin_length) {
   }
 
   unsigned char header1 = fin_fgetc();
+  if (g_precomp.ctx->fin.eof()) break;
   if (header1 == 0) { // uncompressed data
     long long uncompressed_data_length;
     uncompressed_data_length = fin_fget_vlint();
@@ -5346,8 +5345,6 @@ bool check_for_pcf_file() {
 #endif
 
 void read_header() {
-  force_seekg(g_precomp.ctx->fin, 0, SEEK_SET);
-
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
