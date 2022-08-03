@@ -67,6 +67,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include <array>
 #include <signal.h>
 #include <random>
+#include <fcntl.h>
 // I have no idea why std::filesystem is not available when importing <filesystem> even after I set CMAKE_CXX_STANDARD 17
 // For now we just use the deprecated one on <experimental/filesystem>
 #define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
@@ -91,11 +92,13 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #ifndef __unix
 #include <conio.h>
 #include <windows.h>
+#include <io.h>
 #define PATH_DELIM '\\'
 #else
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <unistd.h>
 #define PATH_DELIM '/'
 #endif
 
@@ -105,9 +108,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #define STDIN  0
 #define STDOUT 1
 #define STDERR 2
-#ifdef _WIN32
-# include <io.h>
-# include <fcntl.h>
+#ifndef __unix
 # define SET_BINARY_MODE(handle) setmode(handle, O_BINARY)
 #else
 # define SET_BINARY_MODE(handle) ((void)0)
@@ -206,6 +207,29 @@ enum {
   D_BRUTE    = 254,
 };
 
+
+#include <cassert>
+// This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
+template< typename... Args >
+void print_to_console(const char* format, Args... args) {
+  int length = std::snprintf(nullptr, 0, format, args...);
+  assert(length >= 0);
+
+  char* buf = new char[length + 1];
+  std::snprintf(buf, length + 1, format, args...);
+
+  std::string str(buf);
+  delete[] buf;
+#ifdef _WIN32
+  for (char chr : str) {
+    putch(chr);
+  }
+#else
+  int ttyfd = open("/dev/tty", O_RDWR);  // We need to close this at some point, should we only open this once? TODO: try on linux/mac later
+  write(ttyfd, str.c_str(), str.length());
+#endif
+}
+
 int ostream_printf(std::ostream& out, std::string str) {
   for (char character : str) {
     out.put(character);
@@ -218,7 +242,7 @@ int ostream_printf(std::ostream& out, std::string str) {
 // This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
 void force_seekg(std::istream& stream, long long offset, int origin) {
   if (stream.bad()) {
-    printf("Input stream went bad");
+    print_to_console("Input stream went bad");
     exit(1);
   }
   stream.clear();
@@ -404,14 +428,14 @@ bool parseSwitch(bool& val, const char* c, const char* ref) {
     val = false;
     return true;
   }
-  printf("ERROR: Only + or - for this switch (%s) allowed\n", c);
+  print_to_console("ERROR: Only + or - for this switch (%s) allowed\n", c);
   exit(1);
   return false;
 }
 
 int parseInt(const char*& c, const char* context, int too_big_error_code = 0) {
   if (*c < '0' || *c > '9') {
-    printf("ERROR: Number needed to set %s\n", context);
+    print_to_console("ERROR: Number needed to set %s\n", context);
     exit(1);
   }
   int val = *c++ - '0';
@@ -420,7 +444,7 @@ int parseInt(const char*& c, const char* context, int too_big_error_code = 0) {
       if (too_big_error_code != 0) {
         error(too_big_error_code);
       }
-      printf("ERROR: Number too big for %s\n", context);
+      print_to_console("ERROR: Number too big for %s\n", context);
       exit(1);
     }
     val = val * 10 + *c++ - '0';
@@ -430,7 +454,7 @@ int parseInt(const char*& c, const char* context, int too_big_error_code = 0) {
 int parseIntUntilEnd(const char* c, const char* context, int too_big_error_code = 0) {
   for (int i = 0; c[i]; ++i) {
     if (c[i] < '0' || c[i] > '9') {
-      printf("ERROR: Only numbers allowed for %s\n", context);
+      print_to_console("ERROR: Only numbers allowed for %s\n", context);
       exit(1);
     }
   }
@@ -439,7 +463,7 @@ int parseIntUntilEnd(const char* c, const char* context, int too_big_error_code 
 }
 int64_t parseInt64(const char*& c, const char* context, int too_big_error_code = 0) {
   if (*c < '0' || *c > '9') {
-    printf("ERROR: Number needed to set %s\n", context);
+    print_to_console("ERROR: Number needed to set %s\n", context);
     exit(1);
   }
   int64_t val = *c++ - '0';
@@ -448,7 +472,7 @@ int64_t parseInt64(const char*& c, const char* context, int too_big_error_code =
       if (too_big_error_code != 0) {
         error(too_big_error_code);
       }
-      printf("ERROR: Number too big for %s\n", context);
+      print_to_console("ERROR: Number too big for %s\n", context);
       exit(1);
     }
     val = val * 10 + *c++ - '0';
@@ -458,7 +482,7 @@ int64_t parseInt64(const char*& c, const char* context, int too_big_error_code =
 int64_t parseInt64UntilEnd(const char* c, const char* context, int too_big_error_code = 0) {
   for (int i = 0; c[i]; ++i) {
     if (c[i] < '0' || c[i] > '9') {
-      printf("ERROR: Only numbers allowed for %s\n", context);
+      print_to_console("ERROR: Only numbers allowed for %s\n", context);
       exit(1);
     }
   }
@@ -472,15 +496,15 @@ int init(int argc, char* argv[]) {
   int i, j;
   bool appended_pcf = false;
 
-  printf("\n");
+  print_to_console("\n");
   if (V_MINOR2 == 0) {
-    printf("Precomp v%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_OS,V_BIT,V_STATE);
+    print_to_console("Precomp v%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_OS,V_BIT,V_STATE);
   } else {
-    printf("Precomp v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
+    print_to_console("Precomp v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
   }
-  printf(" - %s\n",V_MSG);
-  printf("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n");
-  printf("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n\n");
+  print_to_console(" - %s\n",V_MSG);
+  print_to_console("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n");
+  print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n\n");
 
   // init compression and memory level count
   bool use_zlib_level[81];
@@ -572,7 +596,7 @@ int init(int argc, char* argv[]) {
 			}
 			else if (!parseSwitch(g_precomp.switches.use_brunsli, argv[i] + 1, "brunsli")
 				  && !parseSwitch(g_precomp.switches.use_brotli, argv[i] + 1, "brotli")) {
-			  printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+			  print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
 			  exit(1);
 			}
             break;
@@ -599,7 +623,7 @@ int init(int argc, char* argv[]) {
                 int lclp = (otf_xz_extra_params.lc != 0 ? otf_xz_extra_params.lc - 1 : LZMA_LC_DEFAULT)
                   + (otf_xz_extra_params.lp != 0 ? otf_xz_extra_params.lp - 1 : LZMA_LP_DEFAULT);
                 if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
-                  printf("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
+                  print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                          LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
                   exit(1);
                 }
@@ -608,12 +632,12 @@ int init(int argc, char* argv[]) {
                   int lclp = (otf_xz_extra_params.lc != 0 ? otf_xz_extra_params.lc - 1 : LZMA_LC_DEFAULT)
                     + (otf_xz_extra_params.lp != 0 ? otf_xz_extra_params.lp - 1 : LZMA_LP_DEFAULT);
                   if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
-                    printf("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
+                    print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                            LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
                     exit(1);
                   }
               } else {
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
               }
             } else if (toupper(argv[i][2]) == 'P') {
@@ -621,12 +645,12 @@ int init(int argc, char* argv[]) {
                 otf_xz_extra_params.pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
                 int pb = otf_xz_extra_params.pb != 0 ? otf_xz_extra_params.pb - 1 : LZMA_PB_DEFAULT;
                 if (pb < LZMA_PB_MIN || pb > LZMA_PB_MAX) {
-                  printf("LZMA pb (default %d) must be inside %d..%d\n",
+                  print_to_console("LZMA pb (default %d) must be inside %d..%d\n",
                          LZMA_PB_DEFAULT, LZMA_PB_MIN, LZMA_PB_MAX);
                   exit(1);
                 }
               } else {
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
               }
             } else if (toupper(argv[i][2]) == 'F') { // LZMA filters
@@ -638,13 +662,13 @@ int init(int argc, char* argv[]) {
                   break;
                 case '-':
                   if (argv[i][4] != 0) {
-                    printf("ERROR: \"-lf-\" must not be followed by anything\n");
+                    print_to_console("ERROR: \"-lf-\" must not be followed by anything\n");
                     exit(1);
                     break;
                   }
                   break;
                 default:
-                  printf("ERROR: Only + or - after \"-lf\" allowed\n");
+                  print_to_console("ERROR: Only + or - after \"-lf\" allowed\n");
                   exit(1);
                   break;
               }
@@ -675,7 +699,7 @@ int init(int argc, char* argv[]) {
                       argindex++;
                       char nextchar = argv[i][argindex];
                       if ((nextchar < '0') || (nextchar > '9')) {
-                        printf("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
+                        print_to_console("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
                       }
@@ -687,7 +711,7 @@ int init(int argc, char* argv[]) {
                       }
                       if (otf_xz_extra_params.filter_delta_distance < LZMA_DELTA_DIST_MIN 
                            || otf_xz_extra_params.filter_delta_distance > LZMA_DELTA_DIST_MAX) {
-                        printf("ERROR: LZMA delta filter distance must be in range %d..%d\n",
+                        print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
                       }
@@ -695,13 +719,13 @@ int init(int argc, char* argv[]) {
                     }
                     break;
                   default:
-                    printf("ERROR: Unknown LZMA filter type \"%c\"\n", argv[i][argindex]);
+                    print_to_console("ERROR: Unknown LZMA filter type \"%c\"\n", argv[i][argindex]);
                     exit(1);
                     break;
                 }
                 otf_xz_filter_used_count++;
                 if (otf_xz_filter_used_count > LZMA_FILTERS_MAX - 1) {
-                  printf("ERROR: Only up to %d LZMA filters can be used at the same time\n",
+                  print_to_console("ERROR: Only up to %d LZMA filters can be used at the same time\n",
                          LZMA_FILTERS_MAX - 1);
                   exit(1);
                 }
@@ -710,7 +734,7 @@ int init(int argc, char* argv[]) {
               lzma_filters_set = true;
               break;
             } else {
-              printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+              print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
               exit(1);
             }
             break;
@@ -724,12 +748,12 @@ int init(int argc, char* argv[]) {
               if (parsePrefixText(argv[i] + 1, "pfmeta")) {
                 int mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
                 if (mbsize >= INT_MAX / 1024) {
-                  printf("preflate meta block size set too big\n");
+                  print_to_console("preflate meta block size set too big\n");
                   exit(1);
                 }
                 preflate_meta_block_size = mbsize * 1024;
               } else {
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
               }
             }
@@ -766,7 +790,7 @@ int init(int argc, char* argv[]) {
                 set_to = false;
                 break;
               default:
-                printf("ERROR: Only + or - for type switch allowed\n");
+                print_to_console("ERROR: Only + or - for type switch allowed\n");
                 exit(1);
                 break;
             }
@@ -803,7 +827,7 @@ int init(int argc, char* argv[]) {
                   g_precomp.switches.use_bzip2 = set_to;
                   break;
                 default:
-                  printf("ERROR: Invalid compression type %c\n", argv[i][j]);
+                  print_to_console("ERROR: Invalid compression type %c\n", argv[i][j]);
                   exit(1);
                   break;
               }
@@ -823,12 +847,12 @@ int init(int argc, char* argv[]) {
                 g_precomp.ctx->compression_otf_method = OTF_XZ_MT;
                 break;
               default:
-                printf("ERROR: Invalid compression method %c\n", argv[i][2]);
+                print_to_console("ERROR: Invalid compression method %c\n", argv[i][2]);
                 exit(1);
                 break;
             }
             if (argv[i][3] != 0) { // Extra Parameters?
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
             break;
@@ -846,12 +870,12 @@ int init(int argc, char* argv[]) {
                 conversion_to_method = OTF_XZ_MT;
                 break;
               default:
-                printf("ERROR: Invalid conversion method %c\n", argv[i][2]);
+                print_to_console("ERROR: Invalid conversion method %c\n", argv[i][2]);
                 exit(1);
                 break;
             }
             if (argv[i][3] != 0) { // Extra Parameters?
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
             operation = P_CONVERT;
@@ -861,7 +885,7 @@ int init(int argc, char* argv[]) {
           {
             g_precomp.switches.DEBUG_MODE = true;
             if (argv[i][2] != 0) { // Extra Parameters?
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
             break;
@@ -870,7 +894,7 @@ int init(int argc, char* argv[]) {
           {
             operation = P_DECOMPRESS;
             if (argv[i][2] != 0) { // Extra Parameters?
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
             break;
@@ -887,12 +911,12 @@ int init(int argc, char* argv[]) {
             for (j = 0; j < ((int)strlen(argv[i])-3); j += 3) {
               if ((j+5) < (int)strlen(argv[i])) {
                 if (argv[i][j+5] != ',') {
-                  printf("ERROR: zLib levels have to be separated with commas\n");
+                  print_to_console("ERROR: zLib levels have to be separated with commas\n");
                   exit(1);
                 }
               }
               if ((j+4) >= (int)strlen(argv[i])) {
-                printf("ERROR: Last zLib level is incomplete\n");
+                print_to_console("ERROR: Last zLib level is incomplete\n");
                 exit(1);
               }
               int comp_level_to_use = (char(argv[i][j+3]) - '1');
@@ -901,13 +925,13 @@ int init(int argc, char* argv[]) {
                   && ((mem_level_to_use >= 0) && (mem_level_to_use <= 8))) {
                 use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
               } else {
-                printf("ERROR: Invalid zlib level %c%c\n", argv[i][j+3], argv[i][j+4]);
+                print_to_console("ERROR: Invalid zlib level %c%c\n", argv[i][j+3], argv[i][j+4]);
                 exit(1);
               }
             }
             break;
            } else {
-             printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+             print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
              exit(1);
            }
           }
@@ -940,7 +964,7 @@ int init(int argc, char* argv[]) {
         case 'M':
           {
             if (!parseSwitch(g_precomp.switches.use_mjpeg, argv[i] + 1, "mjpeg")) {
-              printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+              print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
               exit(1);
             }
             break;
@@ -950,7 +974,7 @@ int init(int argc, char* argv[]) {
           {
              g_precomp.switches.fast_mode = true;
              if (argv[i][2] != 0) { // Extra Parameters?
-                printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
             }
             break;
@@ -959,14 +983,14 @@ int init(int argc, char* argv[]) {
             {
                 preserve_extension = true;
                 if (argv[i][2] != 0) { // Extra Parameters?
-                  printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+                  print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                   exit(1);
                 }
                 break;
             }
         default:
           {
-            printf("ERROR: Unknown switch \"%s\"\n", argv[i]);
+            print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
             exit(1);
           }
       }
@@ -980,7 +1004,7 @@ int init(int argc, char* argv[]) {
  
       if (g_precomp.ctx->input_file_name.compare("stdin") == 0) {
         if (operation != P_DECOMPRESS) {
-          printf("ERROR: Reading from stdin only supported for recompressing.\n");
+          print_to_console("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n");
           exit(1);
         }
         // Read binary from stdin
@@ -991,7 +1015,7 @@ int init(int argc, char* argv[]) {
 
         g_precomp.ctx->fin.open(argv[i], std::ios_base::in | std::ios_base::binary);
         if (!g_precomp.ctx->fin.is_open()) {
-          printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
+          print_to_console("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
 
           exit(1);
         }
@@ -1022,7 +1046,7 @@ int init(int argc, char* argv[]) {
         }
         output_file_given = true;
       } else if ((!output_file_given) && (operation == P_CONVERT)) {
-        printf("ERROR: Please specify an output file for conversion\n");
+        print_to_console("ERROR: Please specify an output file for conversion\n");
         exit(1);
       }
 
@@ -1032,114 +1056,126 @@ int init(int argc, char* argv[]) {
   }
 
   if (!valid_syntax) {
-    printf("Usage: precomp [-switches] input_file\n\n");
+    print_to_console("Usage: precomp [-switches] input_file\n\n");
     if (long_help) {
-      printf("Switches (and their <default values>):\n");
+      print_to_console("Switches (and their <default values>):\n");
     } else {
-      printf("Common switches (and their <default values>):\n");
+      print_to_console("Common switches (and their <default values>):\n");
     }
-    printf("  r            \"Recompress\" PCF file (restore original file)\n");
-    printf("  o[filename]  Write output to [filename] <[input_file].pcf or file in header>\n");
-    printf("  e            preserve original extension of input name for output name <off>\n");
-    printf("  c[lbn]       Compression method to use, l = lzma2, b = bZip2, n = none <l>\n");
-    printf("  lm[amount]   Set maximal LZMA memory in MiB <%i>\n", lzma_max_memory_default());
-    printf("  lt[count]    Set LZMA thread count <auto-detect: %i>\n", auto_detected_thread_count());
+    print_to_console("  r            \"Recompress\" PCF file (restore original file)\n");
+    print_to_console("  o[filename]  Write output to [filename] <[input_file].pcf or file in header>\n");
+    print_to_console("  e            preserve original extension of input name for output name <off>\n");
+    print_to_console("  c[lbn]       Compression method to use, l = lzma2, b = bZip2, n = none <l>\n");
+    print_to_console("  lm[amount]   Set maximal LZMA memory in MiB <%i>\n", lzma_max_memory_default());
+    print_to_console("  lt[count]    Set LZMA thread count <auto-detect: %i>\n", auto_detected_thread_count());
     if (long_help) {
-      printf("  lf[+-][xpiatsd] Set LZMA filters (up to %d of them can be combined) <none>\n",
+      print_to_console("  lf[+-][xpiatsd] Set LZMA filters (up to %d of them can be combined) <none>\n",
                                 LZMA_FILTERS_MAX - 1);
-      printf("                  lf+[xpiatsd] = enable these filters, lf- = disable all\n");
-      printf("                  X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
-      printf("                  S = SPARC, D = delta (must be followed by distance %d..%d)\n",
+      print_to_console("                  lf+[xpiatsd] = enable these filters, lf- = disable all\n");
+      print_to_console("                  X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
+      print_to_console("                  S = SPARC, D = delta (must be followed by distance %d..%d)\n",
                                 LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
-      printf("  llc[bits]    Set LZMA literal context bits <%d>\n", LZMA_LC_DEFAULT);
-      printf("  llp[bits]    Set LZMA literal position bits <%d>\n", LZMA_LP_DEFAULT);
-      printf("               The sum of lc and lp must be inside %d..%d\n", LZMA_LCLP_MIN, LZMA_LCLP_MAX);
-      printf("  lpb[bits]    Set LZMA position bits, must be inside %d..%d <%d>\n", 
+      print_to_console("  llc[bits]    Set LZMA literal context bits <%d>\n", LZMA_LC_DEFAULT);
+      print_to_console("  llp[bits]    Set LZMA literal position bits <%d>\n", LZMA_LP_DEFAULT);
+      print_to_console("               The sum of lc and lp must be inside %d..%d\n", LZMA_LCLP_MIN, LZMA_LCLP_MAX);
+      print_to_console("  lpb[bits]    Set LZMA position bits, must be inside %d..%d <%d>\n", 
                             LZMA_PB_MIN, LZMA_PB_MAX, LZMA_PB_DEFAULT);
     } else {
-      printf("  lf[+-][xpiatsd] Set LZMA filters (up to 3, see long help for details) <none>\n");
+      print_to_console("  lf[+-][xpiatsd] Set LZMA filters (up to 3, see long help for details) <none>\n");
     }
-    printf("  n[lbn]       Convert a PCF file to this compression (same as above) <off>\n");
-    printf("  v            Verbose (debug) mode <off>\n");
-    printf("  d[depth]     Set maximal recursion depth <10>\n");
-    //printf("  zl[1..9][1..9] zLib levels to try for compression (comma separated) <all>\n");
+    print_to_console("  n[lbn]       Convert a PCF file to this compression (same as above) <off>\n");
+    print_to_console("  v            Verbose (debug) mode <off>\n");
+    print_to_console("  d[depth]     Set maximal recursion depth <10>\n");
+    //print_to_console("  zl[1..9][1..9] zLib levels to try for compression (comma separated) <all>\n");
     if (long_help) {
-      printf("  pfmeta[amount] Split deflate streams into meta blocks of this size in KiB <2048>\n");
-      printf("  pfverify       Force preflate to verify its generated reconstruction data\n");
+      print_to_console("  pfmeta[amount] Split deflate streams into meta blocks of this size in KiB <2048>\n");
+      print_to_console("  pfverify       Force preflate to verify its generated reconstruction data\n");
     }
-    printf("  intense      Detect raw zLib headers, too. Slower and more sensitive <off>\n");
+    print_to_console("  intense      Detect raw zLib headers, too. Slower and more sensitive <off>\n");
     if (long_help) {
-      printf("  brute        Brute force zLib detection. VERY Slow and most sensitive <off>\n");
+      print_to_console("  brute        Brute force zLib detection. VERY Slow and most sensitive <off>\n");
     }
-    printf("  t[+-][pzgnfjsmb3] Compression type switch <all enabled>\n");
-    printf("              t+ = enable these types only, t- = enable all types except these\n");
-    printf("              P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG\n");
-    printf("              S = SWF, M = MIME Base64, B = bZip2, 3 = MP3\n");
+    print_to_console("  t[+-][pzgnfjsmb3] Compression type switch <all enabled>\n");
+    print_to_console("              t+ = enable these types only, t- = enable all types except these\n");
+    print_to_console("              P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG\n");
+    print_to_console("              S = SWF, M = MIME Base64, B = bZip2, 3 = MP3\n");
 
     if (!long_help) {
-      printf("  longhelp     Show long help\n");
+      print_to_console("  longhelp     Show long help\n");
     } else {
-      printf("  f            Fast mode, use first found compression lvl for all streams <off>\n");
-      printf("  i[pos]       Ignore stream at input file position [pos] <none>\n");
-      printf("  s[size]      Set minimal identical byte size to [size] <4 (64 intense mode)>\n");
-      printf("  pdfbmp[+-]   Wrap a BMP header around PDF images <off>\n");
-      printf("  progonly[+-] Recompress progressive JPGs only (useful for PAQ) <off>\n");
-      printf("  mjpeg[+-]    Insert huffman table for MJPEG recompression <on>\n");
-	  printf("  brunsli[+-]  Prefer brunsli to packJPG for JPG streams <on>\n");
-	  printf("  brotli[+-]   Use brotli to compress metadata in JPG streams <off>\n");
-	  printf("  packjpg[+-]  Use packJPG for JPG streams and fallback if brunsli fails <on>\n");
-	  printf("\n");
-      printf("  You can use an optional number following -intense and -brute to set a\n");
-      printf("  limit for how deep in recursion they should be used. E.g. -intense0 means\n");
-      printf("  that intense mode will be used but not in recursion, -intense2 that only\n");
-      printf("  streams up to recursion depth 2 will be treated intense (3 or higher in\n");
-      printf("  this case won't). Using a sensible setting here can save you some time.\n");
+      print_to_console("  f            Fast mode, use first found compression lvl for all streams <off>\n");
+      print_to_console("  i[pos]       Ignore stream at input file position [pos] <none>\n");
+      print_to_console("  s[size]      Set minimal identical byte size to [size] <4 (64 intense mode)>\n");
+      print_to_console("  pdfbmp[+-]   Wrap a BMP header around PDF images <off>\n");
+      print_to_console("  progonly[+-] Recompress progressive JPGs only (useful for PAQ) <off>\n");
+      print_to_console("  mjpeg[+-]    Insert huffman table for MJPEG recompression <on>\n");
+	  print_to_console("  brunsli[+-]  Prefer brunsli to packJPG for JPG streams <on>\n");
+	  print_to_console("  brotli[+-]   Use brotli to compress metadata in JPG streams <off>\n");
+	  print_to_console("  packjpg[+-]  Use packJPG for JPG streams and fallback if brunsli fails <on>\n");
+	  print_to_console("\n");
+      print_to_console("  You can use an optional number following -intense and -brute to set a\n");
+      print_to_console("  limit for how deep in recursion they should be used. E.g. -intense0 means\n");
+      print_to_console("  that intense mode will be used but not in recursion, -intense2 that only\n");
+      print_to_console("  streams up to recursion depth 2 will be treated intense (3 or higher in\n");
+      print_to_console("  this case won't). Using a sensible setting here can save you some time.\n");
     }
 
     exit(1);
-  } else {
-    if (operation == P_DECOMPRESS) {
-      // if .pcf was appended, remove it
-      if (appended_pcf) {
-        g_precomp.ctx->output_file_name = g_precomp.ctx->output_file_name.substr(0, g_precomp.ctx->output_file_name.length() - 4);
-      }
-      read_header();
-    }
+  }
 
+  if (operation == P_DECOMPRESS) {
+    // if .pcf was appended, remove it
+    if (appended_pcf) {
+      g_precomp.ctx->output_file_name = g_precomp.ctx->output_file_name.substr(0, g_precomp.ctx->output_file_name.length() - 4);
+    }
+    read_header();
+  }
+
+  if (output_file_given && g_precomp.ctx->output_file_name.compare("stdout") == 0) {
+    if (operation != P_DECOMPRESS) {
+      print_to_console("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n");
+      exit(1);
+    }
+    // Write binary to stdout
+    SET_BINARY_MODE(STDOUT);
+    ((std::ostream&)g_precomp.ctx->fout).rdbuf(std::cout.rdbuf());
+  }
+  else {
     if (file_exists(g_precomp.ctx->output_file_name.c_str())) {
-      printf("Output file \"%s\" exists. Overwrite (y/n)? ", g_precomp.ctx->output_file_name.c_str());
+      print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", g_precomp.ctx->output_file_name.c_str());
       char ch = get_char_with_echo();
       if ((ch != 'Y') && (ch != 'y')) {
-        printf("\n");
+        print_to_console("\n");
         exit(0);
-      } else {
-        #ifndef __unix
-        printf("\n\n");
-        #else
-        printf("\n");
-        #endif
+      }
+      else {
+#ifndef __unix
+        print_to_console("\n\n");
+#else
+        print_to_console("\n");
+#endif
       }
     }
     g_precomp.ctx->fout.open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!g_precomp.ctx->fout.is_open()) {
-      printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
+      print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
       exit(1);
     }
 
-    printf("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
-    printf("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
+    print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
+    print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
     if (g_precomp.switches.DEBUG_MODE) {
       if (min_ident_size_set) {
-        printf("\n");
-        printf("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
+        print_to_console("\n");
+        print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
       }
       if (!g_precomp.switches.ignore_list.empty()) {
-        printf("\n");
-        printf("Ignore position list:\n");
+        print_to_console("\n");
+        print_to_console("Ignore position list:\n");
         for (auto ignore_pos : g_precomp.switches.ignore_list) {
           std::cout << ignore_pos << std::endl;
         }
-        printf("\n");
+        print_to_console("\n");
       }
     }
 
@@ -1177,14 +1213,14 @@ int init_comfort(int argc, char* argv[]) {
   bool lzma_filters_set = false;
   bool preserve_extension = false;
 
-  printf("\n");
+  print_to_console("\n");
   if (V_MINOR2 == 0) {
-    printf("Precomp Comfort v%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_OS,V_BIT,V_STATE);
+    print_to_console("Precomp Comfort v%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_OS,V_BIT,V_STATE);
   } else {
-    printf("Precomp Comfort v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
+    print_to_console("Precomp Comfort v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
   }
-  printf(" - %s\n",V_MSG);
-  printf("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n\n");
+  print_to_console(" - %s\n",V_MSG);
+  print_to_console("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n\n");
 
   // init compression and memory level count
   bool use_zlib_level[81];
@@ -1209,9 +1245,9 @@ int init_comfort(int argc, char* argv[]) {
 
   // parse parameters (should be input file only)
   if (argc == 1) {
-    printf("Usage:\n");
-    printf("Drag and drop a file on the executable to precompress/restore it.\n");
-    printf("Edit INI file for parameters.\n");
+    print_to_console("Usage:\n");
+    print_to_console("Drag and drop a file on the executable to precompress/restore it.\n");
+    print_to_console("Edit INI file for parameters.\n");
     wait_for_key();
     exit(1);
   }
@@ -1224,7 +1260,7 @@ int init_comfort(int argc, char* argv[]) {
 
     g_precomp.ctx->fin.open(g_precomp.ctx->input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
     if (!g_precomp.ctx->fin.is_open()) {
-      printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
+      print_to_console("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
       wait_for_key();
       exit(1);
     }
@@ -1245,12 +1281,12 @@ int init_comfort(int argc, char* argv[]) {
   // truncate to get directory of executable only
   char* lastslash = strrchr(precomf_ini, PATH_DELIM) + 1;
   strcpy(lastslash, "precomf.ini");
-  printf("INI file: %s\n", precomf_ini);
+  print_to_console("INI file: %s\n", precomf_ini);
 
   if (!file_exists(precomf_ini)) {
-    printf("INI file not found. Create it (y/n)?");
+    print_to_console("INI file not found. Create it (y/n)?");
     char ch = getche();
-    printf("\n");
+    print_to_console("\n");
     if ((ch != 'Y') && (ch != 'y')) {
       wait_for_key();
       exit(1);
@@ -1410,25 +1446,25 @@ int init_comfort(int argc, char* argv[]) {
           g_precomp.switches.min_ident_size = ident_size;
           min_ident_size_set = true;
 
-          printf("INI: Set minimal identical byte size to %i\n", g_precomp.switches.min_ident_size);
+          print_to_console("INI: Set minimal identical byte size to %i\n", g_precomp.switches.min_ident_size);
 
           valid_param = true;
         }
 
         if (strcmp(param, "verbose") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled verbose mode\n");
+            print_to_console("INI: Disabled verbose mode\n");
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled verbose mode\n");
+            print_to_console("INI: Enabled verbose mode\n");
             g_precomp.switches.DEBUG_MODE = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid verbose value: %s\n", value);
+            print_to_console("ERROR: Invalid verbose value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1436,25 +1472,25 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "compression_method") == 0) {
           if (strcmp(value, "0") == 0) {
-            printf("INI: Using no compression method\n");
+            print_to_console("INI: Using no compression method\n");
             g_precomp.ctx->compression_otf_method = OTF_NONE;
             valid_param = true;
           }
 
           if (strcmp(value, "1") == 0) {
-            printf("INI: Using bZip2 compression method\n");
+            print_to_console("INI: Using bZip2 compression method\n");
             g_precomp.ctx->compression_otf_method = OTF_BZIP2;
             valid_param = true;
           }
 
           if (strcmp(value, "2") == 0) {
-            printf("INI: Using lzma2 multithreaded compression method\n");
+            print_to_console("INI: Using lzma2 multithreaded compression method\n");
             g_precomp.ctx->compression_otf_method = OTF_XZ_MT;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid compression method value: %s\n", value);
+            print_to_console("ERROR: Invalid compression method value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1475,7 +1511,7 @@ int init_comfort(int argc, char* argv[]) {
           lzma_max_memory_set = true;
 
           if (g_precomp.switches.compression_otf_max_memory > 0) {
-            printf("INI: Set LZMA maximal memory to %i MiB\n", (int)g_precomp.switches.compression_otf_max_memory);
+            print_to_console("INI: Set LZMA maximal memory to %i MiB\n", (int)g_precomp.switches.compression_otf_max_memory);
           }
 
           valid_param = true;
@@ -1496,7 +1532,7 @@ int init_comfort(int argc, char* argv[]) {
           lzma_thread_count_set = true;
 
           if (g_precomp.switches.compression_otf_thread_count > 0) {
-            printf("INI: Set LZMA thread count to %i\n", g_precomp.switches.compression_otf_thread_count);
+            print_to_console("INI: Set LZMA thread count to %i\n", g_precomp.switches.compression_otf_thread_count);
           }
 
           valid_param = true;
@@ -1532,7 +1568,7 @@ int init_comfort(int argc, char* argv[]) {
                   j++;
                   char nextchar = value[j];
                   if ((nextchar < '0') || (nextchar > '9')) {
-                    printf("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
+                    print_to_console("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
                         LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                     wait_for_key();
                     exit(1);
@@ -1545,7 +1581,7 @@ int init_comfort(int argc, char* argv[]) {
                   }
                   if (otf_xz_extra_params.filter_delta_distance < LZMA_DELTA_DIST_MIN 
                        || otf_xz_extra_params.filter_delta_distance > LZMA_DELTA_DIST_MAX) {
-                    printf("ERROR: LZMA delta filter distance must be in range %d..%d\n",
+                    print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                         LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                     wait_for_key();
                     exit(1);
@@ -1554,14 +1590,14 @@ int init_comfort(int argc, char* argv[]) {
                   break;
                 }
               default:
-                printf("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]);
+                print_to_console("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]);
                 wait_for_key();
                 exit(1);
                 break;
             }
             otf_xz_filter_used_count++;
             if (otf_xz_filter_used_count > 3) {
-              printf("ERROR: Only up to 3 LZMA filters can be used at the same time\n");
+              print_to_console("ERROR: Only up to 3 LZMA filters can be used at the same time\n");
               wait_for_key();
               exit(1);
             }
@@ -1573,18 +1609,18 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "fast_mode") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled fast mode\n");
+            print_to_console("INI: Disabled fast mode\n");
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled fast mode\n");
+            print_to_console("INI: Enabled fast mode\n");
             g_precomp.switches.fast_mode = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid fast mode value: %s\n", value);
+            print_to_console("ERROR: Invalid fast mode value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1592,13 +1628,13 @@ int init_comfort(int argc, char* argv[]) {
         // future note: params should be in lowercase for comparisons here only
         if (strcmp(param,"preserve_extension") == 0) {
             if (strcmp(value,"off") == 0) {
-                printf("INI: Not preserve extension\n");
+                print_to_console("INI: Not preserve extension\n");
                 preserve_extension = false;
             } else if (strcmp(value,"on") == 0) {
-                printf("INI: Preserve extension\n");
+                print_to_console("INI: Preserve extension\n");
                 preserve_extension = true;
             } else {
-                printf("ERROR: Invalid Preserve extension mode: %s\n",value);
+                print_to_console("ERROR: Invalid Preserve extension mode: %s\n",value);
                 wait_for_key();
                 exit(1);
             }
@@ -1607,18 +1643,18 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "intense_mode") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled intense mode\n");
+            print_to_console("INI: Disabled intense mode\n");
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled intense mode\n");
+            print_to_console("INI: Enabled intense mode\n");
             g_precomp.switches.intense_mode = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid intense mode value: %s\n", value);
+            print_to_console("ERROR: Invalid intense mode value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1626,18 +1662,18 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "brute_mode") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled brute mode\n");
+            print_to_console("INI: Disabled brute mode\n");
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled brute mode\n");
+            print_to_console("INI: Enabled brute mode\n");
             g_precomp.switches.brute_mode = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid brute mode value: %s\n", value);
+            print_to_console("ERROR: Invalid brute mode value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1645,19 +1681,19 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "pdf_bmp_mode") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled PDF BMP mode\n");
+            print_to_console("INI: Disabled PDF BMP mode\n");
             g_precomp.switches.pdf_bmp_mode = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled PDF BMP mode\n");
+            print_to_console("INI: Enabled PDF BMP mode\n");
             g_precomp.switches.pdf_bmp_mode = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid PDF BMP mode value: %s\n", value);
+            print_to_console("ERROR: Invalid PDF BMP mode value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1665,19 +1701,19 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "jpg_progressive_only") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled progressive only JPG mode\n");
+            print_to_console("INI: Disabled progressive only JPG mode\n");
             g_precomp.switches.prog_only = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled progressive only JPG mode\n");
+            print_to_console("INI: Enabled progressive only JPG mode\n");
             g_precomp.switches.prog_only = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid progressive only JPG mode value: %s\n", value);
+            print_to_console("ERROR: Invalid progressive only JPG mode value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1685,19 +1721,19 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "mjpeg_recompression") == 0) {
           if (strcmp(value, "off") == 0) {
-            printf("INI: Disabled MJPEG recompression\n");
+            print_to_console("INI: Disabled MJPEG recompression\n");
             g_precomp.switches.use_mjpeg = false;
             valid_param = true;
           }
 
           if (strcmp(value, "on") == 0) {
-            printf("INI: Enabled MJPEG recompression\n");
+            print_to_console("INI: Enabled MJPEG recompression\n");
             g_precomp.switches.use_mjpeg = true;
             valid_param = true;
           }
 
           if (!valid_param) {
-            printf("ERROR: Invalid MJPEG recompression value: %s\n", value);
+            print_to_console("ERROR: Invalid MJPEG recompression value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -1705,19 +1741,19 @@ int init_comfort(int argc, char* argv[]) {
 
 		if (strcmp(param, "jpg_brunsli") == 0) {
 			if (strcmp(value, "off") == 0) {
-				printf("INI: Disabled brunsli for JPG commpression\n");
+				print_to_console("INI: Disabled brunsli for JPG commpression\n");
         g_precomp.switches.use_brunsli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
-				printf("INI: Enabled brunsli for JPG compression\n");
+				print_to_console("INI: Enabled brunsli for JPG compression\n");
         g_precomp.switches.use_brunsli = true;
 				valid_param = true;
 			}
 
 			if (!valid_param) {
-				printf("ERROR: Invalid brunsli compression value: %s\n", value);
+				print_to_console("ERROR: Invalid brunsli compression value: %s\n", value);
 				wait_for_key();
 				exit(1);
 			}
@@ -1725,19 +1761,19 @@ int init_comfort(int argc, char* argv[]) {
 
 		if (strcmp(param, "jpg_brotli") == 0) {
 			if (strcmp(value, "off") == 0) {
-				printf("INI: Disabled brotli for JPG metadata compression\n");
+				print_to_console("INI: Disabled brotli for JPG metadata compression\n");
         g_precomp.switches.use_brotli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
-				printf("INI: Enabled brotli for JPG metadata compression\n");
+				print_to_console("INI: Enabled brotli for JPG metadata compression\n");
         g_precomp.switches.use_brotli = true;
 				valid_param = true;
 			}
 
 			if (!valid_param) {
-				printf("ERROR: Invalid brotli for metadata compression value: %s\n", value);
+				print_to_console("ERROR: Invalid brotli for metadata compression value: %s\n", value);
 				wait_for_key();
 				exit(1);
 			}
@@ -1745,19 +1781,19 @@ int init_comfort(int argc, char* argv[]) {
 
 		if (strcmp(param, "jpg_packjpg") == 0) {
 			if (strcmp(value, "off") == 0) {
-				printf("INI: Disabled packJPG for JPG compression\n");
+				print_to_console("INI: Disabled packJPG for JPG compression\n");
         g_precomp.switches.use_brotli = false;
 				valid_param = true;
 			}
 
 			if (strcmp(value, "on") == 0) {
-				printf("INI: Enabled packJPG for JPG compression\n");
+				print_to_console("INI: Enabled packJPG for JPG compression\n");
         g_precomp.switches.use_brotli = true;
 				valid_param = true;
 			}
 
 			if (!valid_param) {
-				printf("ERROR: Invalid packJPG for JPG compression value: %s\n", value);
+				print_to_console("ERROR: Invalid packJPG for JPG compression value: %s\n", value);
 				wait_for_key();
 				exit(1);
 			}
@@ -1765,7 +1801,7 @@ int init_comfort(int argc, char* argv[]) {
 
 		if (strcmp(param, "compression_types_enable") == 0) {
           if (compression_type_line_used) {
-            printf("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
+            print_to_console("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
             wait_for_key();
             exit(1);
           }
@@ -1815,70 +1851,70 @@ int init_comfort(int argc, char* argv[]) {
                   g_precomp.switches.use_bzip2 = true;
                   break;
                 default:
-                  printf("ERROR: Invalid compression type %c\n", value[j]);
+                  print_to_console("ERROR: Invalid compression type %c\n", value[j]);
                   exit(1);
                   break;
               }
           }
 
           if (g_precomp.switches.use_pdf) {
-            printf("INI: PDF compression enabled\n");
+            print_to_console("INI: PDF compression enabled\n");
           } else {
-            printf("INI: PDF compression disabled\n");
+            print_to_console("INI: PDF compression disabled\n");
           }
 
           if (g_precomp.switches.use_zip) {
-            printf("INI: ZIP compression enabled\n");
+            print_to_console("INI: ZIP compression enabled\n");
           } else {
-            printf("INI: ZIP compression disabled\n");
+            print_to_console("INI: ZIP compression disabled\n");
           }
 
           if (g_precomp.switches.use_gzip) {
-            printf("INI: GZip compression enabled\n");
+            print_to_console("INI: GZip compression enabled\n");
           } else {
-            printf("INI: GZip compression disabled\n");
+            print_to_console("INI: GZip compression disabled\n");
           }
 
           if (g_precomp.switches.use_png) {
-            printf("INI: PNG compression enabled\n");
+            print_to_console("INI: PNG compression enabled\n");
           } else {
-            printf("INI: PNG compression disabled\n");
+            print_to_console("INI: PNG compression disabled\n");
           }
 
           if (g_precomp.switches.use_gif) {
-            printf("INI: GIF compression enabled\n");
+            print_to_console("INI: GIF compression enabled\n");
           } else {
-            printf("INI: GIF compression disabled\n");
+            print_to_console("INI: GIF compression disabled\n");
           }
 
           if (g_precomp.switches.use_jpg) {
-            printf("INI: JPG compression enabled\n");
+            print_to_console("INI: JPG compression enabled\n");
           } else {
-            printf("INI: JPG compression disabled\n");
+            print_to_console("INI: JPG compression disabled\n");
           }
 
           if (g_precomp.switches.use_mp3) {
-            printf("INI: MP3 compression enabled\n");
+            print_to_console("INI: MP3 compression enabled\n");
           } else {
-            printf("INI: MP3 compression disabled\n");
+            print_to_console("INI: MP3 compression disabled\n");
           }
 
           if (g_precomp.switches.use_swf) {
-            printf("INI: SWF compression enabled\n");
+            print_to_console("INI: SWF compression enabled\n");
           } else {
-            printf("INI: SWF compression disabled\n");
+            print_to_console("INI: SWF compression disabled\n");
           }
 
           if (g_precomp.switches.use_base64) {
-            printf("INI: Base64 compression enabled\n");
+            print_to_console("INI: Base64 compression enabled\n");
           } else {
-            printf("INI: Base64 compression disabled\n");
+            print_to_console("INI: Base64 compression disabled\n");
           }
 
           if (g_precomp.switches.use_bzip2) {
-            printf("INI: bZip2 compression enabled\n");
+            print_to_console("INI: bZip2 compression enabled\n");
           } else {
-            printf("INI: bZip2 compression disabled\n");
+            print_to_console("INI: bZip2 compression disabled\n");
           }
 
           valid_param = true;
@@ -1886,7 +1922,7 @@ int init_comfort(int argc, char* argv[]) {
 
         if (strcmp(param, "compression_types_disable") == 0) {
           if (compression_type_line_used) {
-            printf("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
+            print_to_console("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
             wait_for_key();
             exit(1);
           }
@@ -1936,70 +1972,70 @@ int init_comfort(int argc, char* argv[]) {
                   g_precomp.switches.use_bzip2 = false;
                   break;
                 default:
-                  printf("ERROR: Invalid compression type %c\n", value[j]);
+                  print_to_console("ERROR: Invalid compression type %c\n", value[j]);
                   exit(1);
                   break;
               }
           }
 
           if (g_precomp.switches.use_pdf) {
-            printf("INI: PDF compression enabled\n");
+            print_to_console("INI: PDF compression enabled\n");
           } else {
-            printf("INI: PDF compression disabled\n");
+            print_to_console("INI: PDF compression disabled\n");
           }
 
           if (g_precomp.switches.use_zip) {
-            printf("INI: ZIP compression enabled\n");
+            print_to_console("INI: ZIP compression enabled\n");
           } else {
-            printf("INI: ZIP compression disabled\n");
+            print_to_console("INI: ZIP compression disabled\n");
           }
 
           if (g_precomp.switches.use_gzip) {
-            printf("INI: GZip compression enabled\n");
+            print_to_console("INI: GZip compression enabled\n");
           } else {
-            printf("INI: GZip compression disabled\n");
+            print_to_console("INI: GZip compression disabled\n");
           }
 
           if (g_precomp.switches.use_png) {
-            printf("INI: PNG compression enabled\n");
+            print_to_console("INI: PNG compression enabled\n");
           } else {
-            printf("INI: PNG compression disabled\n");
+            print_to_console("INI: PNG compression disabled\n");
           }
 
           if (g_precomp.switches.use_gif) {
-            printf("INI: GIF compression enabled\n");
+            print_to_console("INI: GIF compression enabled\n");
           } else {
-            printf("INI: GIF compression disabled\n");
+            print_to_console("INI: GIF compression disabled\n");
           }
 
           if (g_precomp.switches.use_jpg) {
-            printf("INI: JPG compression enabled\n");
+            print_to_console("INI: JPG compression enabled\n");
           } else {
-            printf("INI: JPG compression disabled\n");
+            print_to_console("INI: JPG compression disabled\n");
           }
 
           if (g_precomp.switches.use_mp3) {
-            printf("INI: MP3 compression enabled\n");
+            print_to_console("INI: MP3 compression enabled\n");
           } else {
-            printf("INI: MP3 compression disabled\n");
+            print_to_console("INI: MP3 compression disabled\n");
           }
 
           if (g_precomp.switches.use_swf) {
-            printf("INI: SWF compression enabled\n");
+            print_to_console("INI: SWF compression enabled\n");
           } else {
-            printf("INI: SWF compression disabled\n");
+            print_to_console("INI: SWF compression disabled\n");
           }
 
           if (g_precomp.switches.use_base64) {
-            printf("INI: Base64 compression enabled\n");
+            print_to_console("INI: Base64 compression enabled\n");
           } else {
-            printf("INI: Base64 compression disabled\n");
+            print_to_console("INI: Base64 compression disabled\n");
           }
 
           if (g_precomp.switches.use_bzip2) {
-            printf("INI: bZip2 compression enabled\n");
+            print_to_console("INI: bZip2 compression enabled\n");
           } else {
-            printf("INI: bZip2 compression disabled\n");
+            print_to_console("INI: bZip2 compression disabled\n");
           }
 
           valid_param = true;
@@ -2016,12 +2052,12 @@ int init_comfort(int argc, char* argv[]) {
           for (j = 0; j < ((int)strlen(value)); j += 3) {
             if ((j+2) < (int)strlen(value)) {
               if (value[j+2] != ',') {
-                printf("ERROR: zLib levels have to be separated with commas\n");
+                print_to_console("ERROR: zLib levels have to be separated with commas\n");
                 exit(1);
               }
             }
             if ((j+1) >= (int)strlen(value)) {
-              printf("ERROR: Last zLib level is incomplete\n");
+              print_to_console("ERROR: Last zLib level is incomplete\n");
               exit(1);
             }
             int comp_level_to_use = (char(value[j]) - '1');
@@ -2030,13 +2066,13 @@ int init_comfort(int argc, char* argv[]) {
                 && ((mem_level_to_use >= 0) && (mem_level_to_use <= 8))) {
               use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
             } else {
-              printf("ERROR: Invalid zlib level %c%c\n", value[j], value[j+1]);
+              print_to_console("ERROR: Invalid zlib level %c%c\n", value[j], value[j+1]);
               wait_for_key();
               exit(1);
             }
           }
 
-          printf("INI: Set zLib levels\n");
+          print_to_console("INI: Set zLib levels\n");
 
           valid_param = true;
         }
@@ -2058,7 +2094,7 @@ int init_comfort(int argc, char* argv[]) {
           max_recursion_depth = max_recursion_d;
           recursion_depth_set = true;
 
-          printf("INI: Set maximal recursion depth to %i\n", max_recursion_depth);
+          print_to_console("INI: Set maximal recursion depth to %i\n", max_recursion_depth);
 
           valid_param = true;
         }
@@ -2097,7 +2133,7 @@ int init_comfort(int argc, char* argv[]) {
               case ' ':
                 break;
               default:
-                printf("ERROR: Invalid char in ignore_positions: %c\n", value[j]);
+                print_to_console("ERROR: Invalid char in ignore_positions: %c\n", value[j]);
                 wait_for_key();
                 exit(1);
             }
@@ -2107,7 +2143,7 @@ int init_comfort(int argc, char* argv[]) {
           }
 
           if (print_ignore_positions_message) {
-            printf("INI: Set ignore positions\n");
+            print_to_console("INI: Set ignore positions\n");
             print_ignore_positions_message = false;
           }
 
@@ -2115,7 +2151,7 @@ int init_comfort(int argc, char* argv[]) {
         }
 
         if (!valid_param) {
-          printf("ERROR: Invalid INI parameter: %s\n", param);
+          print_to_console("ERROR: Invalid INI parameter: %s\n", param);
           wait_for_key();
           exit(1);
         }
@@ -2151,39 +2187,39 @@ int init_comfort(int argc, char* argv[]) {
   }
 
   if (file_exists(g_precomp.ctx->output_file_name.c_str())) {
-    printf("Output file \"%s\" exists. Overwrite (y/n)? ", g_precomp.ctx->output_file_name.c_str());
+    print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", g_precomp.ctx->output_file_name.c_str());
     char ch = getche();
     if ((ch != 'Y') && (ch != 'y')) {
-      printf("\n");
+      print_to_console("\n");
       wait_for_key();
       exit(0);
     } else {
-      printf("\n\n");
+      print_to_console("\n\n");
     }
   } else {
-    printf("\n");
+    print_to_console("\n");
   }
   g_precomp.ctx->fout.open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!g_precomp.ctx->fout.is_open()) {
-    printf("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
+    print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
     wait_for_key();
     exit(1);
   }
 
-  printf("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
-  printf("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
+  print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
+  print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
   if (g_precomp.switches.DEBUG_MODE) {
     if (min_ident_size_set) {
-      printf("\n");
-      printf("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
+      print_to_console("\n");
+      print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
     }
     if (!g_precomp.switches.ignore_list.empty()) {
-      printf("\n");
-      printf("Ignore position list:\n");
+      print_to_console("\n");
+      print_to_console("Ignore position list:\n");
       for (auto ignore_pos : g_precomp.switches.ignore_list) {
         std::cout << ignore_pos << std::endl;
       }
-      printf("\n");
+      print_to_console("\n");
     }
   }
 
@@ -2218,14 +2254,14 @@ void denit_compress(std::string tmp_filename) {
   g_precomp.ctx->fout.close();
 
   if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
-    printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+    print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   #ifndef PRECOMPDLL
    long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
    if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) {
-    printf("%s", std::string(14,'\b').c_str());
+    print_to_console("%s", std::string(14,'\b').c_str());
     std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
     } else {
     std::cout << "New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
@@ -2234,8 +2270,8 @@ void denit_compress(std::string tmp_filename) {
   #else
    if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) {
-    printf(std::string(14,'\b').c_str());
-    printf("100.00%% - ");
+    print_to_console(std::string(14,'\b').c_str());
+    print_to_console("100.00%% - ");
     printf_time(get_time_ms() - start_time);
     }
    }
@@ -2243,11 +2279,11 @@ void denit_compress(std::string tmp_filename) {
 
   #ifndef PRECOMPDLL
    if (recursion_depth == 0) {
-    printf("\nDone.\n");
+    print_to_console("\nDone.\n");
     printf_time(get_time_ms() - start_time);
 
     // statistics
-    printf("\nRecompressed streams: %i/%i\n", g_precomp.statistics.recompressed_streams_count, g_precomp.statistics.decompressed_streams_count);
+    print_to_console("\nRecompressed streams: %i/%i\n", g_precomp.statistics.recompressed_streams_count, g_precomp.statistics.decompressed_streams_count);
 
     if ((g_precomp.statistics.recompressed_streams_count > 0) || (g_precomp.statistics.decompressed_streams_count > 0)) {
       std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{{
@@ -2293,17 +2329,17 @@ void denit_decompress(std::string tmp_filename) {
   #ifndef PRECOMPDLL
    if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) {
-    printf("%s", std::string(14,'\b').c_str());
-    printf("100.00%%\n");
+    print_to_console("%s", std::string(14,'\b').c_str());
+    print_to_console("100.00%%\n");
     }
-    printf("\nDone.\n");
+    print_to_console("\nDone.\n");
     printf_time(get_time_ms() - start_time);
    }
   #else
    if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) {
-    printf(std::string(14,'\b').c_str());
-    printf("100.00%% - ");
+    print_to_console(std::string(14,'\b').c_str());
+    print_to_console("100.00%% - ");
     printf_time(get_time_ms() - start_time);
     }
    }
@@ -2321,22 +2357,22 @@ void denit_convert() {
   g_precomp.ctx->fout.close();
 
   if ((!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
-    printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+    print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
   #ifndef PRECOMPDLL
    if (!g_precomp.switches.DEBUG_MODE) {
-   printf("%s", std::string(14,'\b').c_str());
+   print_to_console("%s", std::string(14,'\b').c_str());
    std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
    } else {
    std::cout << "New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
    }
-   printf("\nDone.\n");
+   print_to_console("\nDone.\n");
    printf_time(get_time_ms() - start_time);
   #else
    if (!g_precomp.switches.DEBUG_MODE) {
-   printf(std::string(14,'\b').c_str());
+   print_to_console(std::string(14,'\b').c_str());
    std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
    printf_time(get_time_ms() - start_time);
    }
@@ -3137,13 +3173,13 @@ void debug_sums(const recompress_deflate_result& rdres) {
     sum_uncompressed += rdres.uncompressed_stream_size;
     sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
     sum_recon += rdres.recon_data.size();
-    //printf("deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
+    //print_to_console("deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
     //       sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)g_precomp.ctx->fin.tellg(), (uint64_t)g_precomp.ctx->fout.tellp());
   }
 }
 void debug_pos() {
   if (g_precomp.switches.DEBUG_MODE) {
-    //printf("deflate pos: i %I64d, o %I64d\n", (uint64_t)g_precomp.ctx->fin.tellg(), (uint64_t)g_precomp.ctx->fout.tellp());
+    //print_to_console("deflate pos: i %I64d, o %I64d\n", (uint64_t)g_precomp.ctx->fin.tellg(), (uint64_t)g_precomp.ctx->fout.tellp());
   }
 }
 void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile) {
@@ -3177,14 +3213,14 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
           bmp_header_type = 1;
           if (g_precomp.switches.DEBUG_MODE) {
-            printf("Image size did match (8 bit)\n");
+            print_to_console("Image size did match (8 bit)\n");
           }
           g_precomp.statistics.recompressed_pdf_count_8_bit++;
           g_precomp.statistics.recompressed_pdf_count--;
         } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
           bmp_header_type = 2;
           if (g_precomp.switches.DEBUG_MODE) {
-            printf("Image size did match (24 bit)\n");
+            print_to_console("Image size did match (24 bit)\n");
           }
           g_precomp.statistics.decompressed_pdf_count_8_bit--;
           g_precomp.statistics.decompressed_pdf_count_24_bit++;
@@ -3192,7 +3228,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
           g_precomp.statistics.recompressed_pdf_count--;
         } else {
           if (g_precomp.switches.DEBUG_MODE) {
-            printf("Image size didn't match with stream size\n");
+            print_to_console("Image size didn't match with stream size\n");
           }
           g_precomp.statistics.decompressed_pdf_count_8_bit--;
           g_precomp.statistics.decompressed_pdf_count++;
@@ -3337,7 +3373,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("No matches\n");
+        print_to_console("No matches\n");
       }
     }
   }
@@ -3404,7 +3440,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       if (type == D_SWF && intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (type != D_BRUTE && brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("No matches\n");
+        print_to_console("No matches\n");
       }
     }
 
@@ -3421,23 +3457,23 @@ void show_used_levels() {
   if (!g_precomp.ctx->anything_was_used) {
     if (!g_precomp.ctx->non_zlib_was_used) {
       if (g_precomp.ctx->compression_otf_method == OTF_NONE) {
-        printf("\nNone of the given compression and memory levels could be used.\n");
-        printf("There will be no gain compressing the output file.\n");
+        print_to_console("\nNone of the given compression and memory levels could be used.\n");
+        print_to_console("There will be no gain compressing the output file.\n");
       }
     } else {
       if ((!max_recursion_depth_reached) && (max_recursion_depth_used != max_recursion_depth)) {
         #ifdef COMFORT
-          printf("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
-          printf("Maximal_Recursion_Depth=");
+          print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
+          print_to_console("Maximal_Recursion_Depth=");
         #else
-          printf("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-          printf("-d");
+          print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+          print_to_console("-d");
         #endif
-        printf("%i\n", max_recursion_depth_used);
+        print_to_console("%i\n", max_recursion_depth_used);
       }
     }
     if (max_recursion_depth_reached) {
-      printf("\nMaximal recursion depth %i reached, increasing it could give better results.\n", max_recursion_depth);
+      print_to_console("\nMaximal recursion depth %i reached, increasing it could give better results.\n", max_recursion_depth);
     }
     return;
   }
@@ -3445,11 +3481,11 @@ void show_used_levels() {
   int i, i_sort;
   int level_count = 0;
   #ifdef COMFORT
-    printf("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
-    printf("zLib_Levels=");
+    print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
+    print_to_console("zLib_Levels=");
   #else
-    printf("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-    printf("-zl");
+    print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+    print_to_console("-zl");
   #endif
 
   bool first_one = true;
@@ -3457,11 +3493,11 @@ void show_used_levels() {
    i_sort = (i % 9) * 9 + (i / 9); // to get the displayed levels sorted
    if (g_precomp.obsolete.zlib_level_was_used[i_sort]) {
      if (!first_one) {
-       printf(",");
+       print_to_console(",");
      } else {
        first_one = false;
      }
-     printf("%i%i", (i_sort%9) + 1, (i_sort/9) + 1);
+     print_to_console("%i%i", (i_sort%9) + 1, (i_sort/9) + 1);
      level_count++;
    }
   }
@@ -3484,28 +3520,28 @@ void show_used_levels() {
   }
   if ( disable_methods.length() > 0 ) {
     #ifdef COMFORT
-      printf("\nCompression_Types_Disable=%s",disable_methods.c_str());
+      print_to_console("\nCompression_Types_Disable=%s",disable_methods.c_str());
     #else
-      printf(" -t-%s",disable_methods.c_str());
+      print_to_console(" -t-%s",disable_methods.c_str());
     #endif
   }
 
   if (max_recursion_depth_reached) {
-    printf("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", max_recursion_depth);
+    print_to_console("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", max_recursion_depth);
   } else if (max_recursion_depth_used != max_recursion_depth) {
     #ifdef COMFORT
-      printf("\nMaximal_Recursion_Depth=");
+      print_to_console("\nMaximal_Recursion_Depth=");
     #else
-      printf(" -d");
+      print_to_console(" -d");
     #endif
-    printf("%i", max_recursion_depth_used);
+    print_to_console("%i", max_recursion_depth_used);
   }
 
   if ((level_count == 1) && (!g_precomp.switches.fast_mode)) {
-    printf("\n\nFast mode does exactly the same for this file, only faster.\n");
+    print_to_console("\n\nFast mode does exactly the same for this file, only faster.\n");
   }
 
-  printf("\n");
+  print_to_console("\n");
 }
 
 bool compress_file(float min_percent, float max_percent) {
@@ -3569,7 +3605,7 @@ bool compress_file(float min_percent, float max_percent) {
       // local file header?
       if ((g_precomp.ctx->in_buf[g_precomp.ctx->cb + 2] == 3) && (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 3] == 4)) {
         if (g_precomp.switches.DEBUG_MODE) {
-        printf("ZIP header detected\n");
+        print_to_console("ZIP header detected\n");
         print_debug_percent();
         std::cout << "ZIP header detected at position " << g_precomp.ctx->input_file_pos << std::endl;
         }
@@ -3578,10 +3614,10 @@ bool compress_file(float min_percent, float max_percent) {
         unsigned int filename_length = (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 27] << 8) + g_precomp.ctx->in_buf[g_precomp.ctx->cb + 26];
         unsigned int extra_field_length = (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 29] << 8) + g_precomp.ctx->in_buf[g_precomp.ctx->cb + 28];
         if (g_precomp.switches.DEBUG_MODE) {
-        printf("compressed size: %i\n", compressed_size);
-        printf("uncompressed size: %i\n", uncompressed_size);
-        printf("file name length: %i\n", filename_length);
-        printf("extra field length: %i\n", extra_field_length);
+        print_to_console("compressed size: %i\n", compressed_size);
+        print_to_console("uncompressed size: %i\n", uncompressed_size);
+        print_to_console("file name length: %i\n", filename_length);
+        print_to_console("extra field length: %i\n", extra_field_length);
         }
 
         if ((filename_length + extra_field_length) <= CHECKBUF_SIZE
@@ -3792,7 +3828,7 @@ bool compress_file(float min_percent, float max_percent) {
 
             if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
               if (g_precomp.switches.DEBUG_MODE) {
-                printf("Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
+                print_to_console("Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
               }
             }
           }
@@ -4219,7 +4255,7 @@ bool compress_file(float min_percent, float max_percent) {
             if (g_precomp.switches.DEBUG_MODE) {
               print_debug_percent();
               std::cout << "Unsupported MP3 type found at position " << g_precomp.ctx->saved_input_file_pos << ", length " << mp3_length << std::endl;
-              printf ("Type: %s\n", filetype_description[type]);
+              print_to_console("Type: %s\n", filetype_description[type]);
             }
           }
         }
@@ -4508,8 +4544,8 @@ while (g_precomp.ctx->fin.good()) {
 
       debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
       if (g_precomp.switches.DEBUG_MODE) {
-        if (bmp_c == 1) printf("Skipping BMP header (8-Bit)\n");
-        if (bmp_c == 2) printf("Skipping BMP header (24-Bit)\n");
+        if (bmp_c == 1) print_to_console("Skipping BMP header (8-Bit)\n");
+        if (bmp_c == 2) print_to_console("Skipping BMP header (24-Bit)\n");
       }
 
       // read BMP header
@@ -4539,7 +4575,7 @@ while (g_precomp.ctx->fin.good()) {
         skip_part = (-bmp_width) & 3;
       }
       if (!try_reconstructing_deflate_skip(g_precomp.ctx->fin, g_precomp.ctx->fout, rdres, read_part, skip_part)) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
@@ -4560,7 +4596,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
 
       if (!ok) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
@@ -4579,7 +4615,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
 
       if (!ok) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
@@ -4598,7 +4634,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "PNG", hdr_length, 0);
 
       if (!try_reconstructing_deflate(g_precomp.ctx->fin, g_precomp.ctx->fout, rdres)) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       debug_pos();
@@ -4634,7 +4670,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
 
       if (!try_reconstructing_deflate_multipng(g_precomp.ctx->fin, g_precomp.ctx->fout, rdres, idat_count, idat_crcs, idat_lengths)) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       debug_pos();
@@ -4647,7 +4683,7 @@ while (g_precomp.ctx->fin.good()) {
     case D_GIF: { // GIF recompression
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Decompressed data - GIF\n");
+      print_to_console("Decompressed data - GIF\n");
       }
 
       unsigned char block_size = 255;
@@ -4663,7 +4699,7 @@ while (g_precomp.ctx->fin.good()) {
       gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
       own_fread(gDiff.GIFDiff, 1, gDiff.GIFDiffIndex, g_precomp.ctx->fin);
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
+        print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
       }
       gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
       gDiff.GIFDiffIndex = 0;
@@ -4709,7 +4745,7 @@ while (g_precomp.ctx->fin.good()) {
 
       if (recompress_success_needed) {
         if (!recompress_success) {
-          printf("Error recompressing data!");
+          print_to_console("Error recompressing data!");
           GifDiffFree(&gDiff);
           exit(0);
         }
@@ -4754,7 +4790,7 @@ while (g_precomp.ctx->fin.good()) {
       tempfile2 += "jpg";
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Decompressed data - JPG\n");
+      print_to_console("Decompressed data - JPG\n");
       }
 
       bool mjpg_dht_used = ((header1 & 4) == 4);
@@ -4817,8 +4853,8 @@ while (g_precomp.ctx->fin.good()) {
       }
 
       if (!recompress_success) {
-        if (g_precomp.switches.DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
-        printf("Error recompressing data!");
+        if (g_precomp.switches.DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
+        print_to_console("Error recompressing data!");
         exit(1);
       }
 
@@ -4861,7 +4897,7 @@ while (g_precomp.ctx->fin.good()) {
         }
 
         if ((!found_ffda) || ((ffda_pos - 1 - MJPGDHT_LEN) < 0)) {
-          printf("ERROR: Motion JPG stream corrupted\n");
+          print_to_console("ERROR: Motion JPG stream corrupted\n");
           exit(1);
         }
 
@@ -4911,7 +4947,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
 
       if (!ok) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
@@ -4920,7 +4956,7 @@ while (g_precomp.ctx->fin.good()) {
       tempfile += "base64";
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Decompressed data - Base64\n");
+      print_to_console("Decompressed data - Base64\n");
       }
 
       int line_case = (header1 >> 2) & 3;
@@ -4930,7 +4966,7 @@ while (g_precomp.ctx->fin.good()) {
       int base64_header_length = fin_fget_vlint();
 
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("Base64 header length: %i\n", base64_header_length);
+        print_to_console("Base64 header length: %i\n", base64_header_length);
       }
       own_fread(in, 1, base64_header_length, g_precomp.ctx->fin);
       g_precomp.ctx->fout.put(*(in)+1); // first char was decreased
@@ -4990,7 +5026,7 @@ while (g_precomp.ctx->fin.good()) {
       tempfile += "bzip2";
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Decompressed data - bZip2\n");
+      print_to_console("Decompressed data - bZip2\n");
       }
 
       unsigned char header2 = fin_fgetc();
@@ -5000,7 +5036,7 @@ while (g_precomp.ctx->fin.good()) {
       int level = header2;
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Compression level: %i\n", level);
+      print_to_console("Compression level: %i\n", level);
       }
 
       // read penalty bytes
@@ -5040,7 +5076,7 @@ while (g_precomp.ctx->fin.good()) {
       }
 
       if (g_precomp.ctx->retval != BZ_OK) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         std::cout << "retval = " << g_precomp.ctx->retval << std::endl;
         exit(0);
       }
@@ -5069,7 +5105,7 @@ while (g_precomp.ctx->fin.good()) {
       tempfile2 += "mp3";
 
       if (g_precomp.switches.DEBUG_MODE) {
-      printf("Decompressed data - MP3\n");
+      print_to_console("Decompressed data - MP3\n");
       }
 
       long long recompressed_data_length = fin_fget_vlint();
@@ -5110,8 +5146,8 @@ while (g_precomp.ctx->fin.good()) {
       }
 
       if (!recompress_success) {
-        if (g_precomp.switches.DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
-        printf("Error recompressing data!");
+        if (g_precomp.switches.DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
+        print_to_console("Error recompressing data!");
         exit(1);
       }
 
@@ -5145,7 +5181,7 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "brute mode", hdr_length, recursion_data_length);
 
       if (!ok) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
@@ -5162,13 +5198,13 @@ while (g_precomp.ctx->fin.good()) {
       debug_deflate_reconstruct(rdres, "raw zLib", hdr_length, recursion_data_length);
 
       if (!ok) {
-        printf("Error recompressing data!");
+        print_to_console("Error recompressing data!");
         exit(0);
       }
       break;
     }
     default:
-      printf("ERROR: Unsupported stream type %i\n", headertype);
+      print_to_console("ERROR: Unsupported stream type %i\n", headertype);
       exit(0);
     }
 
@@ -5284,11 +5320,11 @@ void try_recompress_bzip2(std::istream& origfile, int level, long long& compress
 					}
 				} else {
 					if (g_precomp.switches.DEBUG_MODE) {
-					printf("Not enough identical recompressed bytes\n");
+					print_to_console("Not enough identical recompressed bytes\n");
 					}
 				}
-              }
-            }
+    }
+  }
 }
 
 
@@ -5337,8 +5373,8 @@ bool check_for_pcf_file() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
-    printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
-    printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
+    print_to_console("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
+    print_to_console("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
 
@@ -5372,15 +5408,15 @@ void read_header() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
-    printf("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
+    print_to_console("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
     exit(1);
   }
 
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
-    printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
-    printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
+    print_to_console("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
+    print_to_console("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
 
@@ -5405,7 +5441,7 @@ void convert_header() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
-    printf("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
+    print_to_console("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
     exit(1);
   }
   g_precomp.ctx->fout.write(reinterpret_cast<char*>(in), 3);
@@ -5413,8 +5449,8 @@ void convert_header() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
-    printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name);
-    printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
+    print_to_console("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name);
+    print_to_console("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
   g_precomp.ctx->fout.write(reinterpret_cast<char*>(in), 3);
@@ -5422,7 +5458,7 @@ void convert_header() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 1);
   conversion_from_method = in[0];
   if (conversion_from_method == conversion_to_method) {
-    printf("Input file doesn't need to be converted\n");
+    print_to_console("Input file doesn't need to be converted\n");
     exit(1);
   }
   in[0] = conversion_to_method;
@@ -5555,7 +5591,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, std::ostream& stream
           }
         } while (otf_bz2_stream_c.avail_out == 0);
         if (ret < 0) {
-          printf("ERROR: bZip2 compression failed - return value %i\n", ret);
+          print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
           exit(1);
         }
         break;
@@ -5566,11 +5602,11 @@ void own_fwrite(const void *ptr, size_t size, size_t count, std::ostream& stream
         unsigned have;
 
         otf_xz_stream_c.avail_in = size * count;
-        otf_xz_stream_c.next_in = (uint8_t *)ptr;
+        otf_xz_stream_c.next_in = (uint8_t*)ptr;
         do {
           print_work_sign(true);
           otf_xz_stream_c.avail_out = CHUNK;
-          otf_xz_stream_c.next_out = (uint8_t *)otf_out;
+          otf_xz_stream_c.next_out = (uint8_t*)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
           stream.write(reinterpret_cast<char*>(otf_out), have);
@@ -5578,7 +5614,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, std::ostream& stream
             error(ERR_DISK_FULL);
           }
           if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-            const char *msg;
+            const char* msg;
             switch (ret) {
             case LZMA_MEM_ERROR:
               msg = "Memory allocation failed";
@@ -5593,7 +5629,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, std::ostream& stream
               break;
             }
 
-            printf("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+            print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
 #ifdef COMFORT
             wait_for_key();
 #endif // COMFORT
@@ -5647,7 +5683,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, std::istream& stream) {
           ret = BZ2_bzDecompress(&otf_bz2_stream_d);
           if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
             (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
-            printf("ERROR: bZip2 stream corrupted - return value %i\n", ret);
+            print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
             exit(1);
           }
 
@@ -5674,7 +5710,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, std::istream& stream) {
             otf_xz_stream_d.avail_in = g_precomp.ctx->fin.gcount();
 
             if (g_precomp.ctx->fin.bad()) {
-              printf("ERROR: Could not read input file\n");
+              print_to_console("ERROR: Could not read input file\n");
               exit(1);
             }
           }
@@ -5707,7 +5743,7 @@ size_t own_fread(void *ptr, size_t size, size_t count, std::istream& stream) {
               break;
             }
 
-            printf("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+            print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
 #ifdef COMFORT
             wait_for_key();
 #endif // COMFORT
@@ -5873,7 +5909,7 @@ void try_decompression_png (int windowbits, PrecompTmpFile& tmpfile) {
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("No matches\n");
+        print_to_console("No matches\n");
       }
     }
   }
@@ -5966,7 +6002,7 @@ void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpF
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("No matches\n");
+        print_to_console("No matches\n");
       }
     }
   }
@@ -6379,11 +6415,11 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
     if (g_precomp.ctx->best_identical_bytes < gif_length) {
       if (g_precomp.switches.DEBUG_MODE) {
-      printf ("Recompression failed\n");
+      print_to_console("Recompression failed\n");
       }
     } else {
       if (g_precomp.switches.DEBUG_MODE) {
-      printf ("Recompression successful\n");
+      print_to_console("Recompression successful\n");
       }
       recompress_success_needed = true;
 
@@ -6417,7 +6453,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
         fout_fput_vlint(gDiff.GIFDiffIndex);
         if(g_precomp.switches.DEBUG_MODE) {
           if (gDiff.GIFDiffIndex > 0)
-            printf("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
+            print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
         }
         for (int dbc = 0; dbc < gDiff.GIFDiffIndex; dbc++) {
           fout_fputc(gDiff.GIFDiff[dbc]);
@@ -6426,7 +6462,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
         // store penalty bytes, if any
         if (g_precomp.ctx->best_penalty_bytes_len != 0) {
           if (g_precomp.switches.DEBUG_MODE) {
-            printf("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
+            print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
           }
 
           fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
@@ -6454,7 +6490,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   } else {
 
     if (g_precomp.switches.DEBUG_MODE) {
-    printf ("No matches\n");
+    print_to_console("No matches\n");
     }
 
     frecomp.close();
@@ -6474,10 +6510,10 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
 void packjpg_mp3_dll_msg() {
 
-  printf("Using packJPG for JPG recompression, packMP3 for MP3 recompression.\n");
-  printf("%s\n", pjglib_version_info());
-  printf("%s\n", pmplib_version_info());
-  printf("More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
+  print_to_console("Using packJPG for JPG recompression, packMP3 for MP3 recompression.\n");
+  print_to_console("%s\n", pjglib_version_info());
+  print_to_console("%s\n", pmplib_version_info());
+  print_to_console("More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 
 }
 
@@ -6488,14 +6524,14 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         if (g_precomp.switches.DEBUG_MODE) {
           print_debug_percent();
           if (progressive_jpg) {
-            printf ("Possible JPG (progressive) found at position ");
+            print_to_console("Possible JPG (progressive) found at position ");
           } else {
-            printf ("Possible JPG found at position ");
+            print_to_console("Possible JPG found at position ");
           }
           std::cout << g_precomp.ctx->saved_input_file_pos << ", length " << jpg_length << std::endl;
           // do not recompress non-progressive JPGs when prog_only is set
           if ((!progressive_jpg) && (g_precomp.switches.prog_only)) {
-            printf("Skipping (only progressive JPGs mode set)\n");
+            print_to_console("Skipping (only progressive JPGs mode set)\n");
           }
         }
 
@@ -6522,7 +6558,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 
 		  if (g_precomp.switches.use_brunsli) {
 			  if (g_precomp.switches.DEBUG_MODE) {
-				  printf("Trying to compress using brunsli...\n");
+				  print_to_console("Trying to compress using brunsli...\n");
 			  }
 			  brunsli::JPEGData jpegData;
 			  if (brunsli::ReadJpeg(jpg_mem_in, jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
@@ -6540,7 +6576,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 			  }
 			  else {
 				  if (jpegData.error == brunsli::JPEGReadError::HUFFMAN_TABLE_NOT_FOUND) {
-					  if (g_precomp.switches.DEBUG_MODE) printf("huffman table missing, trying to use Motion JPEG DHT\n");
+					  if (g_precomp.switches.DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
 					  // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
 					  bool found_ffda = false;
 					  bool found_ff = false;
@@ -6591,9 +6627,9 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 			  }
 			  if (g_precomp.switches.DEBUG_MODE && !brunsli_success) {
 				  if (g_precomp.switches.use_packjpg_fallback) {
-					  printf("Brunsli compression failed, using packJPG fallback...\n");
+					  print_to_console("Brunsli compression failed, using packJPG fallback...\n");
 				  } else {
-					  printf("Brunsli compression failed\n");
+					  print_to_console("Brunsli compression failed\n");
 				  }
 			  }
 		  }
@@ -6606,7 +6642,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  }
         } else if (g_precomp.switches.use_packjpg_fallback) { // large stream => use temporary files
 		  if (g_precomp.switches.DEBUG_MODE) {
-			printf("JPG too large for brunsli, using packJPG fallback...\n");
+			print_to_console("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
           {
@@ -6633,7 +6669,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         }
 
         if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (g_precomp.switches.use_mjpeg) && (g_precomp.switches.use_packjpg_fallback)) {
-          if (g_precomp.switches.DEBUG_MODE) printf("huffman table missing, trying to use Motion JPEG DHT\n");
+          if (g_precomp.switches.DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
           // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
           bool found_ffda = false;
           bool found_ff = false;
@@ -6699,7 +6735,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         }
 
         if ((!recompress_success) && (g_precomp.switches.use_packjpg_fallback)) {
-          if (g_precomp.switches.DEBUG_MODE) printf ("packJPG error: %s\n", recompress_msg);
+          if (g_precomp.switches.DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6772,7 +6808,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 
         } else {
           if (g_precomp.switches.DEBUG_MODE) {
-          printf("No matches\n");
+          print_to_console("No matches\n");
           }
         }
 
@@ -6832,7 +6868,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
             if ((pos > 0) && (pos < mp3_length)) {
               mp3_length = pos;
 
-              if (g_precomp.switches.DEBUG_MODE) printf ("Too much garbage data at the end, retry with new length %i\n", pos);
+              if (g_precomp.switches.DEBUG_MODE) print_to_console("Too much garbage data at the end, retry with new length %i\n", pos);
 
               if (in_memory) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
@@ -6877,7 +6913,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
         g_precomp.statistics.decompressed_mp3_count++;
 
         if (!recompress_success) {
-          if (g_precomp.switches.DEBUG_MODE) printf ("packMP3 error: %s\n", recompress_msg);
+          if (g_precomp.switches.DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6942,7 +6978,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
 
         } else {
           if (g_precomp.switches.DEBUG_MODE) {
-          printf("No matches\n");
+          print_to_console("No matches\n");
           }
         }
 
@@ -7100,7 +7136,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
             // store penalty bytes, if any
             if (g_precomp.ctx->best_penalty_bytes_len != 0) {
               if (g_precomp.switches.DEBUG_MODE) {
-                printf("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
+                print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
               }
               fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
               for (int pbc = 0; pbc < g_precomp.ctx->best_penalty_bytes_len; pbc++) {
@@ -7131,11 +7167,11 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
 
           } else {
             if (g_precomp.switches.DEBUG_MODE) {
-            printf("No matches\n");
+            print_to_console("No matches\n");
             }
           }
 
-        }
+  }
 
 }
 
@@ -7472,7 +7508,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
     }
     else {
       if (g_precomp.switches.DEBUG_MODE) {
-        printf("No match\n");
+        print_to_console("No match\n");
       }
     }
 
@@ -7482,7 +7518,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
 #ifdef COMFORT
 void wait_for_key() {
-  printf("\nPress any key to continue\n");
+  print_to_console("\nPress any key to continue\n");
   // wait for key
   do {
     Sleep(55); // lower CPU cost
@@ -7491,60 +7527,60 @@ void wait_for_key() {
 #endif
 
 void error(int error_nr, std::string tmp_filename) {
-  printf("\nERROR %i: ", error_nr);
+  print_to_console("\nERROR %i: ", error_nr);
   switch (error_nr) {
     case ERR_IGNORE_POS_TOO_BIG:
-      printf("Ignore position too big");
+      print_to_console("Ignore position too big");
       break;
     case ERR_IDENTICAL_BYTE_SIZE_TOO_BIG:
-      printf("Identical bytes size bigger than 4 GB");
+      print_to_console("Identical bytes size bigger than 4 GB");
       break;
     case ERR_ONLY_SET_MIN_SIZE_ONCE:
-      printf("Minimal identical size can only be set once");
+      print_to_console("Minimal identical size can only be set once");
       break;
     case ERR_MORE_THAN_ONE_OUTPUT_FILE:
-      printf("More than one output file given");
+      print_to_console("More than one output file given");
       break;
     case ERR_MORE_THAN_ONE_INPUT_FILE:
-      printf("More than one input file given");
+      print_to_console("More than one input file given");
       break;
     case ERR_DONT_USE_SPACE:
-      printf("Please don't use a space between the -o switch and the output filename");
+      print_to_console("Please don't use a space between the -o switch and the output filename");
       break;
     case ERR_TEMP_FILE_DISAPPEARED:
-      printf("Temporary file %s disappeared", tmp_filename.c_str());
+      print_to_console("Temporary file %s disappeared", tmp_filename.c_str());
       break;
     case ERR_DISK_FULL:
-      printf("There is not enough space on disk");
+      print_to_console("There is not enough space on disk");
       // delete output file
       g_precomp.ctx->fout.close();
       remove(g_precomp.ctx->output_file_name.c_str());
       break;
     case ERR_RECURSION_DEPTH_TOO_BIG:
-      printf("Recursion depth too big");
+      print_to_console("Recursion depth too big");
       break;
     case ERR_ONLY_SET_RECURSION_DEPTH_ONCE:
-      printf("Recursion depth can only be set once");
+      print_to_console("Recursion depth can only be set once");
       break;
     case ERR_CTRL_C:
-      printf("CTRL-C detected");
+      print_to_console("CTRL-C detected");
       break;
     case ERR_INTENSE_MODE_LIMIT_TOO_BIG:
-      printf("Intense mode level limit too big");
+      print_to_console("Intense mode level limit too big");
       break;
     case ERR_BRUTE_MODE_LIMIT_TOO_BIG:
-      printf("Brute mode level limit too big");
+      print_to_console("Brute mode level limit too big");
       break;
     case ERR_ONLY_SET_LZMA_MEMORY_ONCE:
-      printf("LZMA maximal memory can only be set once");
+      print_to_console("LZMA maximal memory can only be set once");
       break;
     case ERR_ONLY_SET_LZMA_THREAD_ONCE:
-      printf("LZMA thread count can only be set once");
+      print_to_console("LZMA thread count can only be set once");
       break;
     default:
-      printf("Unknown error");
+      print_to_console("Unknown error");
   }
-  printf("\n");
+  print_to_console("\n");
 
   #ifdef COMFORT
     wait_for_key();
@@ -7564,13 +7600,13 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
     fptr.open(filename,mode);
   }
   if (!fptr.is_open()) {
-    printf("ERROR: Access denied for %s\n", filename);
+    print_to_console("ERROR: Access denied for %s\n", filename);
 
     exit(1);
   }
   if (g_precomp.switches.DEBUG_MODE) {
-    printf("Access problem for %s\n", filename);
-    printf("Time for getting access: %li ms\n", (long)(get_time_ms() - timeoutstart));
+    print_to_console("Access problem for %s\n", filename);
+    print_to_console("Time for getting access: %li ms\n", (long)(get_time_ms() - timeoutstart));
   }
   return fptr;
 }
@@ -7656,7 +7692,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx->fin_length = fileSize64(tmpfile.file_path.c_str());
   g_precomp.ctx->fin.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx->fin.is_open()) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
+    print_to_console("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
   }
@@ -7685,7 +7721,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   recursion_depth++;
   if (g_precomp.switches.DEBUG_MODE) {
-    printf("Recursion start - new recursion depth %i\n", recursion_depth);
+    print_to_console("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   tmp_r.success = compress_file(recursion_min_percent, recursion_max_percent);
 
@@ -7710,11 +7746,11 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   if (g_precomp.switches.DEBUG_MODE) {
     if (tmp_r.success) {
-      printf("Recursion streams found\n");
+      print_to_console("Recursion streams found\n");
     } else {
-      printf("No recursion streams found\n");
+      print_to_console("No recursion streams found\n");
     }
-    printf("Recursion end - back to recursion depth %i\n", recursion_depth);
+    print_to_console("Recursion end - back to recursion depth %i\n", recursion_depth);
   }
 
   if (!tmp_r.success) {
@@ -7750,7 +7786,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   g_precomp.ctx->fin_length = fileSize64(tmpfile.file_path.c_str());
   g_precomp.ctx->fin.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!g_precomp.ctx->fin.is_open()) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
+    print_to_console("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
   }
@@ -7765,7 +7801,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
 
   recursion_depth++;
   if (g_precomp.switches.DEBUG_MODE) {
-    printf("Recursion start - new recursion depth %i\n", recursion_depth);
+    print_to_console("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   decompress_file();
 
@@ -7775,7 +7811,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   recursion_pop();
 
   if (g_precomp.switches.DEBUG_MODE) {
-    printf("Recursion end - back to recursion depth %i\n", recursion_depth);
+    print_to_console("Recursion end - back to recursion depth %i\n", recursion_depth);
   }
 
   // get recursion file size
@@ -7997,7 +8033,7 @@ void init_compress_otf() {
       otf_bz2_stream_c.bzfree = NULL;
       otf_bz2_stream_c.opaque = NULL;
       if (BZ2_bzCompressInit(&otf_bz2_stream_c, 9, 0, 0) != BZ_OK) {
-        printf("ERROR: bZip2 init failed\n");
+        print_to_console("ERROR: bZip2 init failed\n");
         exit(1);
       }
       break;
@@ -8016,7 +8052,7 @@ void init_compress_otf() {
       }
 
       if (!init_encoder_mt(&otf_xz_stream_c, threads, max_memory, memory_usage, block_size, otf_xz_extra_params)) {
-        printf("ERROR: xz Multi-Threaded init failed\n");
+        print_to_console("ERROR: xz Multi-Threaded init failed\n");
         exit(1);
       }
 
@@ -8087,14 +8123,14 @@ void init_decompress_otf() {
       otf_bz2_stream_d.avail_in = 0;
       otf_bz2_stream_d.next_in = NULL;
       if (BZ2_bzDecompressInit(&otf_bz2_stream_d, 0, 0) != BZ_OK) {
-        printf("ERROR: bZip2 init failed\n");
+        print_to_console("ERROR: bZip2 init failed\n");
         exit(1);
       }
       break;
     }
     case OTF_XZ_MT: {
       if (!init_decoder(&otf_xz_stream_d)) {
-        printf("ERROR: liblzma init failed\n");
+        print_to_console("ERROR: liblzma init failed\n");
         exit(1);
       }
     }
@@ -8132,17 +8168,17 @@ long long get_time_ms() {
 // nice time output, input t in ms
 // 2^32 ms maximum, so will display incorrect negative values after about 49 days
 void printf_time(long long t) {
-  printf("Time: ");
+  print_to_console("Time: ");
   if (t < 1000) { // several milliseconds
-    printf("%li millisecond(s)\n", (long)t);
+    print_to_console("%li millisecond(s)\n", (long)t);
   } else if (t < 1000*60) { // several seconds
-    printf("%li second(s), %li millisecond(s)\n", (long)(t / 1000), (long)(t % 1000));
+    print_to_console("%li second(s), %li millisecond(s)\n", (long)(t / 1000), (long)(t % 1000));
   } else if (t < 1000*60*60) { // several minutes
-    printf("%li minute(s), %li second(s)\n", (long)(t / (1000*60)), (long)((t / 1000) % 60));
+    print_to_console("%li minute(s), %li second(s)\n", (long)(t / (1000*60)), (long)((t / 1000) % 60));
   } else if (t < 1000*60*60*24) { // several hours
-    printf("%li hour(s), %li minute(s), %li second(s)\n", (long)(t / (1000*60*60)), (long)((t / (1000*60)) % 60), (long)((t / 1000) % 60));
+    print_to_console("%li hour(s), %li minute(s), %li second(s)\n", (long)(t / (1000*60*60)), (long)((t / (1000*60)) % 60), (long)((t / 1000) % 60));
   } else {
-    printf("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000*60*60*24)), (long)((t / (1000*60*60)) % 24), (long)((t / (1000*60)) % 60));
+    print_to_console("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000*60*60*24)), (long)((t / (1000*60*60)) % 24), (long)((t / (1000*60)) % 60));
   }
 }
 
@@ -8159,23 +8195,21 @@ void print_work_sign(bool with_backspace) {
   if ((get_time_ms() - work_sign_start_time) >= 250) {
     work_sign_var = (work_sign_var + 1) % 4;
     work_sign_start_time = get_time_ms();
-    if (with_backspace) printf("\b\b\b\b\b\b");
-    printf("%c     ", work_signs[work_sign_var]);
-    fflush(stdout);
+    if (with_backspace) print_to_console("\b\b\b\b\b\b");
+    print_to_console("%c     ", work_signs[work_sign_var]);
   } else if (!with_backspace) {
-    printf("%c     ", work_signs[work_sign_var]);
-    fflush(stdout);
+    print_to_console("%c     ", work_signs[work_sign_var]);
   }
 }
 
 void print_debug_percent() {
-  printf("(%.2f%%) ", (g_precomp.ctx->input_file_pos / (float)g_precomp.ctx->fin_length) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent);
+  print_to_console("(%.2f%%) ", (g_precomp.ctx->input_file_pos / (float)g_precomp.ctx->fin_length) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent);
 }
 
 void show_progress(float percent, bool use_backspaces, bool check_time) {
   if (!check_time || ((get_time_ms() - g_precomp.ctx->sec_time) >= 250)) {
     if (use_backspaces) {
-      printf("%s", std::string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
+      print_to_console("%s", std::string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
     }
 
     bool new_lzma_text = false;
@@ -8184,19 +8218,19 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
       if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
         new_lzma_text = true;
         if ((old_lzma_progress_text_length > -1) && (use_backspaces)) {
-          printf("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
+          print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
         }
         old_lzma_progress_text_length = snprintf_ret;
       }
     }
 
     if (use_backspaces) {
-      printf("%s", std::string(8,'\b').c_str()); // backspaces to remove output from %6.2f%
+      print_to_console("%s", std::string(8,'\b').c_str()); // backspaces to remove output from %6.2f%
     }
-    printf("%6.2f%% ", percent);
+    print_to_console("%6.2f%% ", percent);
 
     if (new_lzma_text) {
-      printf("%s", lzma_progress_text);
+      print_to_console("%s", lzma_progress_text);
     }
 
     print_work_sign(false);
@@ -8205,7 +8239,7 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
 }
 
 void ctrl_c_handler(int sig) {
-  printf("\n\nCTRL-C detected\n");
+  print_to_console("\n\nCTRL-C detected\n");
   (void) signal(SIGINT, SIG_DFL);
 
   error(ERR_CTRL_C);
