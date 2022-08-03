@@ -99,6 +99,20 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #define PATH_DELIM '/'
 #endif
 
+// This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
+// (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
+// Supposedly it allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary, I only tested it on Windows though
+#define STDIN  0
+#define STDOUT 1
+#define STDERR 2
+#ifdef _WIN32
+# include <io.h>
+# include <fcntl.h>
+# define SET_BINARY_MODE(handle) setmode(handle, O_BINARY)
+#else
+# define SET_BINARY_MODE(handle) ((void)0)
+#endif
+
 #include "contrib/bzip2/bzlib.h"
 #include "contrib/giflib/precomp_gif.h"
 #include "contrib/packjpg/precomp_jpg.h"
@@ -963,14 +977,24 @@ int init(int argc, char* argv[]) {
 
       input_file_given = true;
       g_precomp.ctx->input_file_name = argv[i];
+ 
+      if (g_precomp.ctx->input_file_name.compare("stdin") == 0) {
+        if (operation != P_DECOMPRESS) {
+          printf("ERROR: Reading from stdin only supported for recompressing.\n");
+          exit(1);
+        }
+        // Read binary from stdin
+        SET_BINARY_MODE(STDIN);
+        ((std::istream&)g_precomp.ctx->fin).rdbuf(std::cin.rdbuf());
+      } else {
+        g_precomp.ctx->fin_length = fileSize64(argv[i]);
 
-      g_precomp.ctx->fin_length = fileSize64(argv[i]);
+        g_precomp.ctx->fin.open(argv[i], std::ios_base::in | std::ios_base::binary);
+        if (!g_precomp.ctx->fin.is_open()) {
+          printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
 
-      g_precomp.ctx->fin.open(argv[i],std::ios_base::in | std::ios_base::binary);
-      if (!g_precomp.ctx->fin.is_open()) {
-        printf("ERROR: Input file \"%s\" doesn't exist\n", g_precomp.ctx->input_file_name.c_str());
-
-        exit(1);
+          exit(1);
+        }
       }
 
       // output file given? If not, use input filename with .pcf extension
