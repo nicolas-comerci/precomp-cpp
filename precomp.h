@@ -22,7 +22,7 @@ int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stre
 int def_bzip2(FileWrapper& source, FileWrapper& dest, int level);
 long long file_recompress(FileWrapper& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
 long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total);
-void write_decompressed_data(long long byte_count, char* decompressed_file_name);
+void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, char* decompressed_file_name);
 unsigned long long compare_files(FileWrapper& file1, FileWrapper& file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(FileWrapper& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
@@ -132,7 +132,7 @@ public:
 };
 struct recompress_deflate_result;
 
-void write_ftempout_if_not_present(long long byte_count, bool in_memory, bool leave_open = false);
+void write_ftempout_if_not_present(long long byte_count, bool in_memory, std::string filename);
 recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, bool deflate_type = false, bool in_memory = true);
 recursion_result recursion_decompress(long long recursion_data_length);
 recursion_result recursion_write_file_and_compress(const recompress_deflate_result&);
@@ -184,13 +184,6 @@ class RecursionContext {
 
     FileWrapper fin;
     FileWrapper fout;
-    FileWrapper ftempout;
-    FileWrapper frecomp;
-    FileWrapper fdecomp;
-    FileWrapper fpack;
-    FileWrapper fpng;
-    FileWrapper fjpg;
-    FileWrapper fmp3;
 
     // name of temporary files
     char metatempfile[18] = "~temp00000000.dat";

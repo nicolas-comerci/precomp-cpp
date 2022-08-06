@@ -39,12 +39,11 @@ public:
     // shared_ptr to FILE that closes itself when last instance is destroyed
     file_ptr = std::shared_ptr<std::FILE>(
       std::fopen(file_path.c_str(), mode.c_str()),
-      [](FILE* raw_file_ptr){}/*,
       [tmp_file, file_path](FILE* raw_file_ptr) {
         std::fclose(raw_file_ptr);
         // We also delete tmp files after we are done with them
         if (tmp_file) std::remove(file_path.c_str());
-      }*/
+      }
     );
   }
 
