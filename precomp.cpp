@@ -123,10 +123,6 @@ unsigned char copybuf[COPY_BUF_SIZE];
 unsigned char in[CHUNK];
 unsigned char out[CHUNK];
 
-char* tempfilelist;
-int tempfilelist_count = 0;
-int tempfile_instance = 0;
-
 #include "precomp.h"
 
 static char work_signs[5] = "|/-\\";
@@ -2241,13 +2237,6 @@ void denit_compress(std::string tmp_filename) {
    }
   #endif
 
-  remove(tmp_filename.c_str());
-  remove("~temp000000002.dat");
-  remove("~temp000000003.dat");
-
-  tempfilelist_count -= 8;
-  tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
-
   if (g_precomp.ctx.decomp_io_buf != NULL) delete[] g_precomp.ctx.decomp_io_buf;
   g_precomp.ctx.decomp_io_buf = NULL;
 
@@ -2277,13 +2266,6 @@ void denit_decompress(std::string tmp_filename) {
   if (g_precomp.ctx.compression_otf_method != OTF_NONE) {
     denit_decompress_otf();
   }
-
-  remove(tmp_filename.c_str());
-  remove("~temp000000002.dat");
-  remove("~temp000000003.dat");
-
-  tempfilelist_count -= 8;
-  tempfilelist = (char*)realloc(tempfilelist, 20 * tempfilelist_count * sizeof(char));
 
   denit();
 }
@@ -4417,8 +4399,12 @@ void decompress_file() {
 
   g_precomp.ctx.comp_decomp_state = P_DECOMPRESS;
 
-  std::string tempfile_base = temp_files_tag() + "_recomp_";
+  std::string tmp_tag = temp_files_tag();
+  std::string tempfile_base = tmp_tag + "_recomp_";
+  std::string tempfile2_base = tmp_tag + "_recomp2_";
   std::string tempfile;
+  std::string tempfile2;
+  
   if (g_precomp.ctx.compression_otf_method != OTF_NONE) {
     init_decompress_otf();
   }
@@ -4432,6 +4418,7 @@ void decompress_file() {
 
 while (fin_pos < g_precomp.ctx.fin_length) {
   tempfile = tempfile_base;
+  tempfile2 = tempfile2_base;
 
   if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE)) {
     float percent = (fin_pos / (float)g_precomp.ctx.fin_length) * 100;
@@ -4642,6 +4629,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       }
 
       tempfile += "gif";
+      tempfile2 += "gif";
       remove(tempfile.c_str());
       {
         FileWrapper ftempout;
@@ -4655,9 +4643,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       {
         FileWrapper ftempout;
         ftempout.open(tempfile, "rb");
-        remove("~temp000000002.dat");
+        remove(tempfile2.c_str());
         FileWrapper frecomp;
-        frecomp.open("~temp000000002.dat", "wb");
+        frecomp.open(tempfile2, "wb");
 
         // recompress data
         recompress_success = recompress_gif(ftempout, frecomp, block_size, NULL, &gDiff);
@@ -4676,13 +4664,13 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       long long old_fout_pos = tell_64(g_precomp.ctx.fout);
 
       {
-        FileWrapper frecomp;
-        frecomp.open("~temp000000002.dat", "rb");
+        PrecompTmpFile frecomp;
+        frecomp.open(tempfile2, "rb");
         fast_copy(frecomp, g_precomp.ctx.fout, recompressed_data_length);
         safe_fclose(frecomp);
       }
 
-      remove("~temp000000002.dat");
+      remove(tempfile2.c_str());
       remove(tempfile.c_str());
 
       if (penalty_bytes_stored) {
@@ -4709,6 +4697,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
     }
     case D_JPG: { // JPG recompression
       tempfile += "jpg";
+      tempfile2 += "jpg";
 
       if (g_precomp.switches.DEBUG_MODE) {
       printf("Decompressed data - JPG\n");
@@ -4768,9 +4757,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
           safe_fclose(ftempout);
         }
 
-        remove("~temp000000002.dat");
+        remove(tempfile2.c_str());
 
-        recompress_success = pjglib_convert_file2file(const_cast<char*>(tempfile.c_str()), "~temp000000002.dat", recompress_msg);
+        recompress_success = pjglib_convert_file2file(const_cast<char*>(tempfile.c_str()), const_cast<char*>(tempfile2.c_str()), recompress_msg);
       }
 
       if (!recompress_success) {
@@ -4779,9 +4768,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         exit(1);
       }
 
-      FileWrapper frecomp;
+      PrecompTmpFile frecomp;
       if (!in_memory) {
-        frecomp.open("~temp000000002.dat", "rb");
+        frecomp.open(tempfile2, "rb");
       }
 
       if (mjpg_dht_used) {
@@ -4847,7 +4836,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       } else {
         safe_fclose(frecomp);
 
-        remove("~temp000000002.dat");
+        remove(tempfile2.c_str());
         remove(tempfile.c_str());
       }
       break;
@@ -5022,6 +5011,7 @@ while (fin_pos < g_precomp.ctx.fin_length) {
     }
     case D_MP3: { // MP3 recompression
       tempfile += "mp3";
+      tempfile2 += "mp3";
 
       if (g_precomp.switches.DEBUG_MODE) {
       printf("Decompressed data - MP3\n");
@@ -5059,9 +5049,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
           safe_fclose(ftempout);
         }
 
-        remove("~temp000000002.dat");
+        remove(tempfile2.c_str());
 
-        recompress_success = pmplib_convert_file2file(const_cast<char*>(tempfile.c_str()), "~temp000000002.dat", recompress_msg);
+        recompress_success = pmplib_convert_file2file(const_cast<char*>(tempfile.c_str()), const_cast<char*>(tempfile2.c_str()), recompress_msg);
       }
 
       if (!recompress_success) {
@@ -5077,13 +5067,13 @@ while (fin_pos < g_precomp.ctx.fin_length) {
         if (mp3_mem_out != NULL) delete[] mp3_mem_out;
       } else {
         {
-          FileWrapper frecomp;
-          frecomp.open("~temp000000002.dat", "rb");
+          PrecompTmpFile frecomp;
+          frecomp.open(tempfile2, "rb");
           fast_copy(frecomp, g_precomp.ctx.fout, recompressed_data_length);
           safe_fclose(frecomp);
         }
 
-        remove("~temp000000002.dat");
+        remove(tempfile2.c_str());
         remove(tempfile.c_str());
       }
       break;
@@ -6346,14 +6336,16 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
   FileWrapper ftempout;
   ftempout.open(tmpfile.file_path, "rb");
-  FileWrapper frecomp;
-  frecomp.open("~temp000000002.dat", "wb");
+  std::string tempfile2 = tmpfile.file_path + "_rec_";
+  PrecompTmpFile frecomp;
+  frecomp.open(tempfile2, "wb");
   if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
 
     safe_fclose(frecomp);
     safe_fclose(ftempout);
 
-    frecomp.open("~temp000000002.dat", "rb");
+    frecomp.close();
+    frecomp.open(tempfile2, "rb");
     g_precomp.ctx.best_identical_bytes = compare_files_penalty(g_precomp.ctx.fin, frecomp, g_precomp.ctx.input_file_pos, 0);
     safe_fclose(frecomp);
 
@@ -6445,7 +6437,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   GifDiffFree(&gDiff);
   GifCodeFree(&gCode);
 
-  remove("~temp000000002.dat");
+  remove(tempfile2.c_str());
   remove(tmpfile.file_path.c_str());
 
 }
@@ -6650,9 +6642,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
                 found_ff = (in[0] == 0xFF);
               }
             } while (!found_ffda);
+            std::string mjpgdht_tempfile = tmpfile.file_path + "_mjpgdht";
             if (found_ffda) {
               FileWrapper decompressed_jpg_w_MJPGDHT;
-              decompressed_jpg_w_MJPGDHT.open("~temp000000003.dat", "wb");
+              decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, "wb");
               seek_64(decompressed_jpg, 0);
               fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
               // insert MJPGDHT
@@ -6662,7 +6655,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
               safe_fclose(decompressed_jpg_w_MJPGDHT);
             }
             safe_fclose(decompressed_jpg);
-            recompress_success = pjglib_convert_file2file("~temp000000003.dat", const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
+            recompress_success = pjglib_convert_file2file(const_cast<char*>(mjpgdht_tempfile.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
           }
 
           mjpg_dht_used = recompress_success;
@@ -7369,9 +7362,10 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
               error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
             }
 
-            remove("~temp000000002.dat");
-            FileWrapper frecomp;
-            frecomp.open("~temp000000002.dat", "w+b");
+            std::string frecomp_filename = tmpfile.file_path + "_rec";
+            remove(frecomp_filename.c_str());
+            PrecompTmpFile frecomp;
+            frecomp.open(frecomp_filename, "w+b");
 
             base64_reencode(ftempout, frecomp, line_count, base64_line_len);
 
@@ -8218,14 +8212,6 @@ void show_progress(float percent, bool use_backspaces, bool check_time) {
 
 void ctrl_c_handler(int sig) {
   printf("\n\nCTRL-C detected\n");
-  if (tempfilelist_count > 0) {
-    printf("Removing temporary files...\n");
-    for (int i = 0; i < tempfilelist_count; i++) {
-      if ((tempfilelist[i * 20]) == '~') { // just to be safe
-        remove(tempfilelist + i * 20);
-      }
-    }
-  }
   (void) signal(SIGINT, SIG_DFL);
 
   error(ERR_CTRL_C);
