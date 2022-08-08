@@ -2705,20 +2705,18 @@ int def_bzip2(FileWrapper& source, FileWrapper& dest, int level) {
   return BZ_OK;
 }
 
-long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, std::string tmp_filename) {
+long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile) {
   long long retval;
 
-  FileWrapper ftempout;
-  ftempout.open(tmp_filename, "rb");
-  fseek(ftempout.file_ptr.get(), 0, SEEK_END);
-  decompressed_bytes_total = tell_64(ftempout);
-  if (ftempout == NULL) {
-    error(ERR_TEMP_FILE_DISAPPEARED, tmp_filename);
+  fseek(tmpfile.file_ptr.get(), 0, SEEK_END);
+  decompressed_bytes_total = tell_64(tmpfile);
+  if (tmpfile == NULL) {
+    error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
   }
 
-  fseek(ftempout.file_ptr.get(), 0, SEEK_SET);
-  retval = def_compare_bzip2(ftempout, origfile, level, decompressed_bytes_used);
-  safe_fclose(ftempout);
+  fseek(tmpfile.file_ptr.get(), 0, SEEK_SET);
+  retval = def_compare_bzip2(tmpfile, origfile, level, decompressed_bytes_used);
+  safe_fclose(tmpfile);
   return retval < 0 ? -1 : retval;
 }
 
@@ -3271,7 +3269,8 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       // write decompressed data
 
       if ((bmp_header_type == 0) || ((img_width % 4) == 0)) {
-        fout_fput_uncompressed(rdres, tmpfile.file_path);
+        tmpfile.reopen();
+        fout_fput_uncompressed(rdres, tmpfile);
       } else {
         FileWrapper ftempout;
         if (!rdres.uncompressed_in_memory) {
@@ -3351,7 +3350,8 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       end_uncompressed_data();
 
       // check recursion
-      recursion_result r = recursion_write_file_and_compress(rdres, tmpfile.file_path);
+      tmpfile.reopen();
+      recursion_result r = recursion_write_file_and_compress(rdres, tmpfile);
 
 #if 0
       // Do we really want to allow uncompressed streams that are smaller than the compressed
@@ -3366,7 +3366,8 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       debug_pos();
 
       // write compressed data header without first bytes
-      fout_fput_deflate_rec(type, rdres, hdr, hdr_length, inc_last, r, tmpfile.file_path);
+      tmpfile.reopen();
+      fout_fput_deflate_rec(type, rdres, hdr, hdr_length, inc_last, r, tmpfile);
 
       debug_pos();
 
@@ -4511,7 +4512,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       fputc(3, g_precomp.ctx.fout.file_ptr.get());
       fputc(4, g_precomp.ctx.fout.file_ptr.get());
       tempfile += "zip";
-      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tempfile);
+      PrecompTmpFile tmp_zip;
+      tmp_zip.open(tempfile, "a+");
+      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_zip);
 
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
 
@@ -4528,7 +4531,9 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       fputc(31, g_precomp.ctx.fout.file_ptr.get());
       fputc(139, g_precomp.ctx.fout.file_ptr.get());
       tempfile += "gzip";
-      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tempfile);
+      PrecompTmpFile tmp_gzip;
+      tmp_gzip.open(tempfile, "a+");
+      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_gzip);
 
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
 
@@ -4848,14 +4853,16 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       break;
     }
     case D_SWF: { // SWF recompression
-      tempfile += "swf";
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
       fputc('C', g_precomp.ctx.fout.file_ptr.get());
       fputc('W', g_precomp.ctx.fout.file_ptr.get());
       fputc('S', g_precomp.ctx.fout.file_ptr.get());
-      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tempfile);
+      tempfile += "swf";
+      PrecompTmpFile tmp_swf;
+      tmp_swf.open(tempfile, "a+");
+      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tmp_swf);
 
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
 
@@ -4921,7 +4928,10 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       // re-encode Base64
 
       if (recursion_used) {
-        recursion_result r = recursion_decompress(recursion_data_length, tempfile);
+        PrecompTmpFile tmp_base64;
+        tmp_base64.open(tempfile, "a+");
+        tmp_base64.close();
+        recursion_result r = recursion_decompress(recursion_data_length, tmp_base64);
         base64_reencode(r.frecurse, g_precomp.ctx.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
         safe_fclose(r.frecurse);
         remove(r.file_name.c_str());
@@ -4974,7 +4984,10 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       long long old_fout_pos = tell_64(g_precomp.ctx.fout);
 
       if (recursion_used) {
-        recursion_result r = recursion_decompress(recursion_data_length, tempfile);
+        PrecompTmpFile tmp_bzip2;
+        tmp_bzip2.open(tempfile, "a+");
+        tmp_bzip2.close();
+        recursion_result r = recursion_decompress(recursion_data_length, tmp_bzip2);
         g_precomp.ctx.retval = def_part_bzip2(r.frecurse, g_precomp.ctx.fout, level, decompressed_data_length, recompressed_data_length);
         safe_fclose(r.frecurse);
         remove(r.file_name.c_str());
@@ -5076,11 +5089,13 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       break;
     }
     case D_BRUTE: { // brute mode recompression
-      tempfile += "brute";
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tempfile);
+      tempfile += "brute";
+      PrecompTmpFile tmp_brute;
+      tmp_brute.open(tempfile, "a+");
+      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, false, recursion_data_length, tmp_brute);
 
       debug_deflate_reconstruct(rdres, "brute mode", hdr_length, recursion_data_length);
 
@@ -5091,11 +5106,13 @@ while (fin_pos < g_precomp.ctx.fin_length) {
       break;
     }
     case D_RAW: { // raw zLib recompression
-      tempfile += "zlib";
       recompress_deflate_result rdres;
       unsigned hdr_length;
       int64_t recursion_data_length;
-      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tempfile);
+      tempfile += "zlib";
+      PrecompTmpFile tmp_zlib;
+      tmp_zlib.open(tempfile, "a+");
+      bool ok = fin_fget_deflate_rec(rdres, header1, in, hdr_length, true, recursion_data_length, tmp_zlib);
 
       debug_deflate_reconstruct(rdres, "raw zLib", hdr_length, recursion_data_length);
 
@@ -5168,14 +5185,14 @@ void convert_file() {
   denit_convert();
 }
 
-long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size, std::string tmp_filename) {
+long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
   long long r, decompressed_stream_size;
 
   print_work_sign(true);
 
-  remove(tmp_filename.c_str());
+  remove(tmpfile.file_path.c_str());
   FileWrapper ftempout;
-  ftempout.open(tmp_filename, "wb");
+  ftempout.open(tmpfile.file_path, "wb");
 
   if (file.file_ptr == g_precomp.ctx.fin.file_ptr) {
     seek_64(file, g_precomp.ctx.input_file_pos);
@@ -5190,11 +5207,11 @@ long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long
   return r;
 }
 
-void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size, std::string tmp_filename) {
+void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
             print_work_sign(true);
 
             long long decomp_bytes_total;
-            g_precomp.ctx.identical_bytes = file_recompress_bzip2(origfile, level, g_precomp.ctx.identical_bytes_decomp, decomp_bytes_total, tmp_filename);
+            g_precomp.ctx.identical_bytes = file_recompress_bzip2(origfile, level, g_precomp.ctx.identical_bytes_decomp, decomp_bytes_total, tmpfile);
             if (g_precomp.ctx.identical_bytes > -1) { // successfully recompressed?
               if ((g_precomp.ctx.identical_bytes > g_precomp.ctx.best_identical_bytes)  || ((g_precomp.ctx.identical_bytes == g_precomp.ctx.best_identical_bytes) && (g_precomp.ctx.penalty_bytes_len < g_precomp.ctx.best_penalty_bytes_len))) {
                 if (g_precomp.ctx.identical_bytes > g_precomp.switches.min_ident_size) {
@@ -5826,7 +5843,8 @@ void try_decompression_png (int windowbits, PrecompTmpFile& tmpfile) {
 
       // write reconstruction and decompressed data
       fout_fput_recon_data(rdres);
-      fout_fput_uncompressed(rdres, tmpfile.file_path.c_str());
+      tmpfile.reopen();
+      fout_fput_uncompressed(rdres, tmpfile);
 
       debug_pos();
       // set input file pointer after recompressed data
@@ -5914,7 +5932,8 @@ void try_decompression_png_multi(FileWrapper& fpng, int windowbits, PrecompTmpFi
 
       // write reconstruction and decompressed data
       fout_fput_recon_data(rdres);
-      fout_fput_uncompressed(rdres, tmpfile.file_path);
+      tmpfile.reopen();
+      fout_fput_uncompressed(rdres, tmpfile);
 
       debug_pos();
 
@@ -7000,11 +7019,10 @@ void try_decompression_swf(int windowbits, PrecompTmpFile& tmpfile) {
 
 void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
   init_decompression_variables();
-  tmpfile.close();
 
         // try to decompress at current position
         long long compressed_stream_size = -1;
-        g_precomp.ctx.retval = try_to_decompress_bzip2(g_precomp.ctx.fin, compression_level, compressed_stream_size, tmpfile.file_path);
+        g_precomp.ctx.retval = try_to_decompress_bzip2(g_precomp.ctx.fin, compression_level, compressed_stream_size, tmpfile);
 
         if (g_precomp.ctx.retval > 0) { // seems to be a zLib-Stream
 
@@ -7023,7 +7041,8 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
           safe_fclose(ftempout);
           }
 
-          try_recompress_bzip2(g_precomp.ctx.fin, compression_level, compressed_stream_size, tmpfile.file_path);
+          tmpfile.reopen();
+          try_recompress_bzip2(g_precomp.ctx.fin, compression_level, compressed_stream_size, tmpfile);
 
           if ((g_precomp.ctx.best_identical_bytes > g_precomp.switches.min_ident_size) && (g_precomp.ctx.best_identical_bytes < g_precomp.ctx.best_identical_bytes_decomp)) {
             g_precomp.statistics.recompressed_streams_count++;
@@ -7041,7 +7060,8 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
             end_uncompressed_data();
 
             // check recursion
-            recursion_result r = recursion_compress(g_precomp.ctx.best_identical_bytes, g_precomp.ctx.best_identical_bytes_decomp, tmpfile.file_path);
+            tmpfile.reopen();
+            recursion_result r = recursion_compress(g_precomp.ctx.best_identical_bytes, g_precomp.ctx.best_identical_bytes_decomp, tmpfile);
 
             // write compressed data header (bZip2)
 
@@ -7374,7 +7394,8 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
             end_uncompressed_data();
 
             // check recursion
-            recursion_result r = recursion_compress(g_precomp.ctx.identical_bytes_decomp, g_precomp.ctx.identical_bytes, tmpfile.file_path);
+            tmpfile.reopen();
+            recursion_result r = recursion_compress(g_precomp.ctx.identical_bytes_decomp, g_precomp.ctx.identical_bytes, tmpfile);
 
             // write compressed data header (Base64)
             int header_byte = 1 + (line_case << 2);
@@ -7595,16 +7616,16 @@ void recursion_pop() {
   g_precomp.recursion_contexts_stack.pop_back();
 }
 
-void write_ftempout_if_not_present(long long byte_count, bool in_memory, std::string tmp_filename) {
+void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile) {
   if (in_memory) {
     FileWrapper ftempout;
-    ftempout.open(tmp_filename, "wb");
+    ftempout.open(tmpfile.file_path, "wb");
     fast_copy(g_precomp.ctx.decomp_io_buf, ftempout, byte_count);
     safe_fclose(ftempout);
   }
 }
 
-recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, std::string tmp_filename, bool deflate_type, bool in_memory) {
+recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type, bool in_memory) {
   FileWrapper recursion_fout;
   recursion_result tmp_r;
   tmp_r.success = false;
@@ -7620,8 +7641,9 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
     return tmp_r;
   }
 
+  tmpfile.close();
   if (deflate_type) {
-    write_ftempout_if_not_present(decompressed_bytes, in_memory, tmp_filename);
+    write_ftempout_if_not_present(decompressed_bytes, in_memory, tmpfile);
   }
 
   recursion_push();
@@ -7629,20 +7651,20 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
     FileWrapper ftempfile1;
-    ftempfile1.open(tmp_filename, "r+b");
+    ftempfile1.open(tmpfile.file_path, "r+b");
     ftruncate(fileno(ftempfile1.file_ptr.get()), decompressed_bytes);
     fclose(ftempfile1.file_ptr.get());
   }
 
-  g_precomp.ctx.fin_length = fileSize64(tmp_filename.c_str());
-  g_precomp.ctx.fin.open(tmp_filename, "rb");
+  g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
+  g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
   if (g_precomp.ctx.fin == NULL) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmp_filename);
+    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
   }
-  g_precomp.ctx.input_file_name = tmp_filename;
-  g_precomp.ctx.output_file_name = tmp_filename;
+  g_precomp.ctx.input_file_name = tmpfile.file_path;
+  g_precomp.ctx.output_file_name = tmpfile.file_path;
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx.output_file_name;
   recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
@@ -7711,34 +7733,34 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
 
   return tmp_r;
 }
-recursion_result recursion_write_file_and_compress(const recompress_deflate_result& rdres, std::string tmp_filename) {
-  recursion_result r = recursion_compress(rdres.compressed_stream_size, rdres.uncompressed_stream_size, tmp_filename, true, rdres.uncompressed_in_memory);
+recursion_result recursion_write_file_and_compress(const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile) {
+  recursion_result r = recursion_compress(rdres.compressed_stream_size, rdres.uncompressed_stream_size, tmpfile, true, rdres.uncompressed_in_memory);
   return r;
 }
 
-recursion_result recursion_decompress(long long recursion_data_length, std::string tmp_filename) {
+recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile) {
   FileWrapper recursion_fin;
   FileWrapper recursion_fout;
   recursion_result tmp_r;
 
   recursion_push();
 
-  remove(tmp_filename.c_str());
-  recursion_fin.open(tmp_filename,"wb");
+  remove(tmpfile.file_path.c_str());
+  recursion_fin.open(tmpfile.file_path,"wb");
 
   fast_copy(g_precomp.ctx.fin, recursion_fin, recursion_data_length);
 
   safe_fclose(recursion_fin);
 
-  g_precomp.ctx.fin_length = fileSize64(tmp_filename.c_str());
-  g_precomp.ctx.fin.open(tmp_filename, "rb");
+  g_precomp.ctx.fin_length = fileSize64(tmpfile.file_path.c_str());
+  g_precomp.ctx.fin.open(tmpfile.file_path, "rb");
   if (g_precomp.ctx.fin == NULL) {
-    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmp_filename);
+    printf("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
 
     exit(0);
   }
-  g_precomp.ctx.input_file_name = tmp_filename;
-  g_precomp.ctx.output_file_name = tmp_filename;
+  g_precomp.ctx.input_file_name = tmpfile.file_path;
+  g_precomp.ctx.output_file_name = tmpfile.file_path;
   g_precomp.ctx.output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx.output_file_name;
   recursion_fout.open(g_precomp.ctx.output_file_name.c_str(), "wb");
@@ -7884,15 +7906,15 @@ void fin_fget_recon_data(recompress_deflate_result& rdres) {
   rdres.compressed_stream_size = fin_fget_vlint();
   rdres.uncompressed_stream_size = fin_fget_vlint();
 }
-void fout_fput_uncompressed(const recompress_deflate_result& rdres, std::string tmp_filename) {
-    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, tmp_filename.c_str());
+void fout_fput_uncompressed(const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile) {
+    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, tmpfile.file_path.c_str());
 }
 void fin_fget_uncompressed(const recompress_deflate_result&) {
 }
 void fout_fput_deflate_rec(const unsigned char type,
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length, const bool inc_last,
-                           const recursion_result& recres, std::string tmp_filename) {
+                           const recursion_result& recres, PrecompTmpFile& tmpfile) {
   fout_fput_deflate_hdr(type, recres.success ? 128 : 0, rdres, hdr, hdr_length, inc_last);
   fout_fput_recon_data(rdres);
   
@@ -7902,12 +7924,12 @@ void fout_fput_deflate_rec(const unsigned char type,
     write_decompressed_data(recres.file_length, recres.file_name.c_str());
     remove(recres.file_name.c_str());
   } else {
-    fout_fput_uncompressed(rdres, tmp_filename);
+    fout_fput_uncompressed(rdres, tmpfile);
   }
 }
 bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char flags, 
                           unsigned char* hdr, unsigned& hdr_length, const bool inc_last,
-                          int64_t& recursion_length, std::string tmp_filename) {
+                          int64_t& recursion_length, PrecompTmpFile& tmpfile) {
   fin_fget_deflate_hdr(rdres, flags, hdr, hdr_length, inc_last);
   fin_fget_recon_data(rdres);
 
@@ -7916,7 +7938,8 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
   // write decompressed data
   if (flags & 128) {
     recursion_length = fin_fget_vlint();
-    recursion_result r = recursion_decompress(recursion_length, tmp_filename);
+    tmpfile.close();
+    recursion_result r = recursion_decompress(recursion_length, tmpfile);
     debug_pos();
     bool result = try_reconstructing_deflate(r.frecurse, g_precomp.ctx.fout, rdres);
     debug_pos();

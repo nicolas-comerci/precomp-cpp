@@ -21,7 +21,7 @@ bool brute_mode_is_active();
 int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
 int def_bzip2(FileWrapper& source, FileWrapper& dest, int level);
 long long file_recompress(FileWrapper& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
-long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, std::string tmp_filename);
+long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile);
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name);
 unsigned long long compare_files(FileWrapper& file1, FileWrapper& file2, unsigned int pos1, unsigned int pos2);
@@ -60,9 +60,9 @@ bool compress_file(float min_percent = 0, float max_percent = 100);
 void decompress_file();
 void convert_file();
 long long try_to_decompress(FileWrapper& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
-long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size, std::string tmp_filename);
+long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void try_recompress(FileWrapper& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
-void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size, std::string tmp_filename);
+void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void write_header();
 void read_header();
 void convert_header();
@@ -132,10 +132,10 @@ public:
 };
 struct recompress_deflate_result;
 
-void write_ftempout_if_not_present(long long byte_count, bool in_memory, std::string tmp_filename);
-recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, std::string tmp_filename, bool deflate_type = false, bool in_memory = true);
-recursion_result recursion_decompress(long long recursion_data_length, std::string tmp_filename);
-recursion_result recursion_write_file_and_compress(const recompress_deflate_result&, std::string tmp_filename);
+void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile);
+recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
+recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile);
+recursion_result recursion_write_file_and_compress(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 
 // compression-on-the-fly
 enum {OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2}; // uncompressed, bzip2, lzma2 multithreaded
@@ -146,7 +146,7 @@ int32_t fin_fget32();
 long long fin_fget_vlint();
 void fin_fget_deflate_hdr(recompress_deflate_result&, const unsigned char flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last);
 void fin_fget_recon_data(recompress_deflate_result&);
-bool fin_fget_deflate_rec(recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, std::string tmp_filename);
+bool fin_fget_deflate_rec(recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, PrecompTmpFile& tmpfile);
 void fin_fget_uncompressed(const recompress_deflate_result&);
 void fout_fputc(char c);
 void fout_fput32_little_endian(int v);
@@ -155,8 +155,8 @@ void fout_fput32(unsigned int v);
 void fout_fput_vlint(unsigned long long v);
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
 void fout_fput_recon_data(const recompress_deflate_result&);
-void fout_fput_deflate_rec(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, std::string tmp_filename);
-void fout_fput_uncompressed(const recompress_deflate_result&, std::string tmp_filename);
+void fout_fput_deflate_rec(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
+void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 void init_compress_otf();
 void denit_compress_otf();
 void init_decompress_otf();
