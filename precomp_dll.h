@@ -26,15 +26,6 @@ public:
     open(file_path, mode);
   }
 
-  size_t read(void* s, std::streamsize n) {
-    std::fstream::read(reinterpret_cast<char*>(s), n);
-    return gcount();
-  }
-
-  void write(const void* s, std::streamsize n) {
-    std::fstream::write(reinterpret_cast<const char*>(s), n);;
-  }
-
   void seekg(long long offset, int origin) {
     std::fstream::clear();
     std::fstream::seekg(offset, origin);

@@ -2750,8 +2750,10 @@ unsigned long long compare_files(FileWrapper& file1, FileWrapper& file2, unsigne
   do {
     print_work_sign(true);
 
-    size1 = file1.read(input_bytes1, COMP_CHUNK);
-    size1 = file2.read(input_bytes2, COMP_CHUNK);
+    file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
+    size1 = file1.gcount();
+    file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
+    size1 = file2.gcount();
 
     minsize = std::min(size1, size2);
     for (i = 0; i < minsize; i++) {
@@ -2776,7 +2778,8 @@ long long compare_file_mem_penalty(FileWrapper& file1, unsigned char* input_byte
   unsigned long long old_pos = file1.tellg();
   file1.seekg(pos1, SEEK_SET);
 
-  size1 = file1.read(input_bytes1, bytecount);
+  file1.read(reinterpret_cast<char*>(input_bytes1), bytecount);
+  size1 = file1.gcount();
 
   for (i = 0; i < size1; i++) {
     if (input_bytes1[i] == input_bytes2[i]) {
@@ -2998,7 +3001,7 @@ recompress_deflate_result try_recompression_deflate(FileWrapper& file, std::stri
             continue;
           }
           f.open(namebuf, std::ios_base::out | std::ios_base::binary);
-          f.write(orgdata.data(), orgdata.size());
+          f.write(reinterpret_cast<char*>(orgdata.data()), orgdata.size());
           break;
         }
       }
@@ -3488,7 +3491,7 @@ bool compress_file(float min_percent, float max_percent) {
   if (!g_precomp.switches.DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
 
   g_precomp.ctx->fin.seekg(0, SEEK_SET);
-  g_precomp.ctx->fin.read(g_precomp.ctx->in_buf, IN_BUF_SIZE);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(g_precomp.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
   g_precomp.ctx->cb = -1;
 
@@ -3506,7 +3509,7 @@ bool compress_file(float min_percent, float max_percent) {
 
   if ((in_buf_pos + IN_BUF_SIZE) <= (g_precomp.ctx->input_file_pos + CHECKBUF_SIZE)) {
     g_precomp.ctx->fin.seekg(g_precomp.ctx->input_file_pos, SEEK_SET);
-    g_precomp.ctx->fin.read(g_precomp.ctx->in_buf, IN_BUF_SIZE);
+    g_precomp.ctx->fin.read(reinterpret_cast<char*>(g_precomp.ctx->in_buf), IN_BUF_SIZE);
     in_buf_pos = g_precomp.ctx->input_file_pos;
     g_precomp.ctx->cb = 0;
 
@@ -3686,11 +3689,11 @@ bool compress_file(float min_percent, float max_percent) {
 
           if ((g_precomp.ctx->input_file_pos + act_search_pos) >= 4096) {
             g_precomp.ctx->fin.seekg((g_precomp.ctx->input_file_pos + act_search_pos) - 4096, SEEK_SET);
-            g_precomp.ctx->fin.read(type_buf, 4096);
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(type_buf), 4096);
             type_buf_length = 4096;
           } else {
             g_precomp.ctx->fin.seekg(0, SEEK_SET);
-            g_precomp.ctx->fin.read(type_buf, g_precomp.ctx->input_file_pos + act_search_pos);
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(type_buf), g_precomp.ctx->input_file_pos + act_search_pos);
             type_buf_length = g_precomp.ctx->input_file_pos + act_search_pos;
           }
 
@@ -3826,7 +3829,8 @@ bool compress_file(float min_percent, float max_percent) {
         if (g_precomp.ctx->input_file_pos >= 4) {
           g_precomp.ctx->fin.seekg(g_precomp.ctx->input_file_pos - 4, SEEK_SET);
 
-         if (g_precomp.ctx->fin.read(in, 10) == 10) {
+          g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 10);
+         if (g_precomp.ctx->fin.gcount() == 10) {
           g_precomp.ctx->fin.seekg((long long)g_precomp.ctx->fin.tellg() - 2, SEEK_SET);
 
           idat_lengths[0] = (in[0] << 24) + (in[1] << 16) + (in[2] << 8) + in[3];
@@ -3851,7 +3855,8 @@ bool compress_file(float min_percent, float max_percent) {
             // go through additional IDATs
             for (;;) {
               g_precomp.ctx->fin.seekg((long long)g_precomp.ctx->fin.tellg() + idat_lengths[idat_count - 1], SEEK_SET);
-              if (g_precomp.ctx->fin.read(in, 12) != 12) { // CRC, length, "IDAT"
+              g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 12);
+              if (g_precomp.ctx->fin.gcount() != 12) { // CRC, length, "IDAT"
                 idat_count = 0;
                 break;
               }
@@ -3969,7 +3974,8 @@ bool compress_file(float min_percent, float max_percent) {
 
         do{
           g_precomp.ctx->fin.seekg(g_precomp.ctx->input_file_pos, SEEK_SET);
-          if ((g_precomp.ctx->fin.read(in, 5) != 5) || (in[0] != 0xFF))
+          g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 5);
+          if ((g_precomp.ctx->fin.gcount() != 5) || (in[0] != 0xFF))
               break;
           int length = (int)in[2]*256+(int)in[3];
           switch (in[1]){
@@ -4007,7 +4013,11 @@ bool compress_file(float min_percent, float max_percent) {
 
           bool isMarker = ( in[4] == 0xFF );
           size_t bytesRead = 0;
-          while (!done && (bytesRead = g_precomp.ctx->fin.read(in, sizeof(in[0]) * CHUNK))){
+          for (;;) {
+            if (done) break;
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), sizeof(in[0])* CHUNK);
+            bytesRead = g_precomp.ctx->fin.gcount();
+            if (!bytesRead) break;
             for (size_t i = 0; !done && (i < bytesRead); i++){
               g_precomp.ctx->input_file_pos++;
               if (!isMarker){
@@ -4064,7 +4074,10 @@ bool compress_file(float min_percent, float max_percent) {
 
         // parse frames until first invalid frame is found or end-of-file
         g_precomp.ctx->fin.seekg(act_pos, SEEK_SET);
-        while (g_precomp.ctx->fin.read(in, 4) == 4) {
+        
+        for (;;) {
+          g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 4);
+          if (g_precomp.ctx->fin.gcount() != 4) break;
           // check syncword
           if ((in[0] != 0xFF) || ((in[1] & 0xE0) != 0xE0)) break;
           // compare data from header
@@ -4129,7 +4142,8 @@ bool compress_file(float min_percent, float max_percent) {
           if ((type == MPEG1_LAYER_III) && (frame_size > 4)) {
             unsigned char header2 = in[2];
             unsigned char header3 = in[3];
-            if (g_precomp.ctx->fin.read(in, frame_size - 4) != (unsigned int)(frame_size - 4)) {
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), frame_size - 4);
+            if (g_precomp.ctx->fin.gcount() != (unsigned int)(frame_size - 4)) {
               // discard incomplete frame
               n--;
               mp3_length -= frame_size;
@@ -4800,7 +4814,8 @@ while (fin_pos < g_precomp.ctx->fin_length) {
         } else {
           do {
             ffda_pos++;
-            if (frecomp.read(in, 1) != 1) break;
+            frecomp.read(reinterpret_cast<char*>(in), 1);
+            if (frecomp.gcount() != 1) break;
             if (found_ff) {
               found_ffda = (in[0] == 0xDA);
               if (found_ffda) break;
@@ -5279,13 +5294,13 @@ void write_header() {
 bool check_for_pcf_file() {
   g_precomp.ctx->fin.seekg(0, SEEK_SET);
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     return false;
   }
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
@@ -5294,7 +5309,7 @@ bool check_for_pcf_file() {
   }
 
   // skip compression method
-  g_precomp.ctx->fin.read(in, 1);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 1);
 
   std::string header_filename = "";
   char c;
@@ -5322,14 +5337,14 @@ bool check_for_pcf_file() {
 void read_header() {
   g_precomp.ctx->fin.seekg(0, SEEK_SET);
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
     exit(1);
   }
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
@@ -5337,7 +5352,7 @@ void read_header() {
     exit(1);
   }
 
-  g_precomp.ctx->fin.read(in, 1);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 1);
   g_precomp.ctx->compression_otf_method = in[0];
 
   std::string header_filename = "";
@@ -5355,31 +5370,31 @@ void read_header() {
 void convert_header() {
   g_precomp.ctx->fin.seekg(0, SEEK_SET);
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == 'P') && (in[1] == 'C') && (in[2] == 'F')) {
   } else {
     printf("Input file %s has no valid PCF header\n", g_precomp.ctx->input_file_name.c_str());
     exit(1);
   }
-  g_precomp.ctx->fout.write(in, 3);
+  g_precomp.ctx->fout.write(reinterpret_cast<char*>(in), 3);
 
-  g_precomp.ctx->fin.read(in, 3);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
     printf("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name);
     printf("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }
-  g_precomp.ctx->fout.write(in, 3);
+  g_precomp.ctx->fout.write(reinterpret_cast<char*>(in), 3);
 
-  g_precomp.ctx->fin.read(in, 1);
+  g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 1);
   conversion_from_method = in[0];
   if (conversion_from_method == conversion_to_method) {
     printf("Input file doesn't need to be converted\n");
     exit(1);
   }
   in[0] = conversion_to_method;
-  g_precomp.ctx->fout.write(in, 1);
+  g_precomp.ctx->fout.write(reinterpret_cast<char*>(in), 1);
 
   std::string header_filename = "";
   char c;
@@ -5481,7 +5496,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream,
   }
 
   if (!use_otf) {
-    stream.write(ptr, size * count);
+    stream.write(reinterpret_cast<const char*>(ptr), size * count);
     if (stream.bad()) {
       error(ERR_DISK_FULL);
     }
@@ -5502,7 +5517,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream,
           otf_bz2_stream_c.next_out = (char*)otf_out;
           ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
           have = CHUNK - otf_bz2_stream_c.avail_out;
-          stream.write(otf_out, have);
+          stream.write(reinterpret_cast<char*>(otf_out), have);
           if (stream.bad()) {
             error(ERR_DISK_FULL);
           }
@@ -5526,7 +5541,7 @@ void own_fwrite(const void *ptr, size_t size, size_t count, FileWrapper& stream,
           otf_xz_stream_c.next_out = (uint8_t *)otf_out;
           ret = lzma_code(&otf_xz_stream_c, action);
           have = CHUNK - otf_xz_stream_c.avail_out;
-          stream.write(otf_out, have);
+          stream.write(reinterpret_cast<char*>(otf_out), have);
           if (stream.bad()) {
             error(ERR_DISK_FULL);
           }
@@ -5575,7 +5590,8 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
   }
 
   if (!use_otf) {
-    return stream.read(ptr, size * count);
+    stream.read(reinterpret_cast<char*>(ptr), size * count);
+    return stream.gcount();
   } else {
     switch (g_precomp.ctx->compression_otf_method) {
       case 1: { // bZip2
@@ -5590,7 +5606,8 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
         do {
 
           if (otf_bz2_stream_d.avail_in == 0) {
-            otf_bz2_stream_d.avail_in = g_precomp.ctx->fin.read(otf_in, CHUNK);
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(otf_in), CHUNK);
+            otf_bz2_stream_d.avail_in = g_precomp.ctx->fin.gcount();
             otf_bz2_stream_d.next_in = (char*)otf_in;
             if (otf_bz2_stream_d.avail_in == 0) break;
           }
@@ -5621,7 +5638,8 @@ size_t own_fread(void *ptr, size_t size, size_t count, FileWrapper& stream) {
           print_work_sign(true);
           if ((otf_xz_stream_d.avail_in == 0) && !g_precomp.ctx->fin.eof()) {
             otf_xz_stream_d.next_in = (uint8_t *)otf_in;
-            otf_xz_stream_d.avail_in = g_precomp.ctx->fin.read(otf_in, CHUNK);
+            g_precomp.ctx->fin.read(reinterpret_cast<char*>(otf_in), CHUNK);
+            otf_xz_stream_d.avail_in = g_precomp.ctx->fin.gcount();
 
             if (g_precomp.ctx->fin.bad()) {
               printf("ERROR: Could not read input file\n");
@@ -6613,7 +6631,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             decompressed_jpg.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
             do {
               ffda_pos++;
-              if (decompressed_jpg.read(in, 1) != 1) break;
+              decompressed_jpg.read(reinterpret_cast<char*>(in), 1);
+              if (decompressed_jpg.gcount() != 1) break;
               if (found_ff) {
                 found_ffda = (in[0] == 0xDA);
                 if (found_ffda) break;
@@ -7217,7 +7236,8 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
     FileWrapper ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
     do {
-      avail_in = g_precomp.ctx->fin.read(in, CHUNK);
+      g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), CHUNK);
+      avail_in = g_precomp.ctx->fin.gcount();
       for (i = 0; i < (avail_in >> 2); i++) {
         // are these valid base64 chars?
         for (j = (i << 2); j < ((i << 2) + 4); j++) {
