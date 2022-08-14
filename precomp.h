@@ -93,7 +93,7 @@ struct recursion_result {
   bool success;
   std::string file_name;
   long long file_length;
-  FileWrapper frecurse;
+  std::shared_ptr<FileWrapper> frecurse = std::shared_ptr<FileWrapper>(new FileWrapper());
 };
 
 class zLibMTF{
@@ -284,6 +284,6 @@ public:
   ObsoleteData obsolete;
   Switches switches;
   ResultStatistics statistics;
-  RecursionContext ctx;
-  std::vector<RecursionContext> recursion_contexts_stack;
+  std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext());
+  std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 };

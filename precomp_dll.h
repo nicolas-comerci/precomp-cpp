@@ -10,126 +10,51 @@
 
 // Quick and dirty wrapper to move away from using naked FILE* and simplify later refactor to use iostreams,
 // the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
-class FileWrapper {
-private:
-  std::shared_ptr<std::fstream> file_stream = nullptr;
-protected:
-  bool is_tmp_file = false;
-
+class FileWrapper : public std::fstream {
 public:
   std::string file_path;
-  std::ios_base::openmode file_mode;
-
-  ~FileWrapper() {
-    if (is_tmp_file) {
-      file_stream = nullptr;
-      std::remove(file_path.c_str());
-    }
-  }
+  std::ios_base::openmode mode;
 
   void open(std::string file_path, std::ios_base::openmode mode) {
     this->file_path = file_path;
-    this->file_mode = mode;
-    file_stream = std::shared_ptr<std::fstream>(
-      new std::fstream(),
-      [file_path](std::fstream* fstream_ptr) {
-        fstream_ptr->close();
-      }
-    );
-    file_stream->open(file_path, mode);
+    this->mode = mode;
+    std::fstream::open(file_path, mode);
   }
 
-  void reopen(std::ios_base::openmode mode = std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary) {
+  void reopen() {
     if (is_open()) close();
-    open(file_path, file_mode);
-    if (mode == (std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary)) {
-      file_stream->seekg(0, SEEK_SET);
-      file_stream->seekp(0, SEEK_SET);
-    }
-  }
-
-  bool is_open() const {
-    return file_stream != nullptr && file_stream->is_open();
-  }
-
-  int close() {
-    if (!is_open()) return std::char_traits<char>::eof();
-    int result = is_open() ? 0 : std::char_traits<char>::eof();
-    file_stream->close();
-    file_stream->clear();
-    return result;
-  }
-
-  int flush() {
-    if (!is_open()) return std::char_traits<char>::eof();
-    file_stream->flush();
-    return is_open() ? file_stream->bad() : std::char_traits<char>::eof();
-  }
-
-  void clear() const {
-    file_stream->clear();
-  }
-
-  void seekg(long long offset, int origin) {
-    file_stream->clear();
-    file_stream->seekg(offset, origin);
-  }
-
-  void seekp(long long offset, int origin) {
-    file_stream->clear();
-    file_stream->seekp(offset, origin);
-  }
-
-  long long tellg() const {
-    return file_stream->tellg();
-  }
-
-  long long tellp() const {
-    return file_stream->tellp();
+    open(file_path, mode);
   }
 
   size_t read(void* s, std::streamsize n) {
-    file_stream->read(reinterpret_cast<char*>(s), n);
-    return file_stream->gcount();
+    std::fstream::read(reinterpret_cast<char*>(s), n);
+    return gcount();
   }
 
-  int get() const {
-    return file_stream->is_open() ? file_stream->get() : 0;
+  void write(const void* s, std::streamsize n) {
+    std::fstream::write(reinterpret_cast<const char*>(s), n);;
   }
 
-  void write(const void* s, std::streamsize n) const {
-    file_stream->write(reinterpret_cast<const char*>(s), n);;
+  void seekg(long long offset, int origin) {
+    std::fstream::clear();
+    std::fstream::seekg(offset, origin);
   }
 
-  void put(int chr) {
-    if (is_open()) file_stream->put(chr);
+  void seekp(long long offset, int origin) {
+    std::fstream::clear();
+    std::fstream::seekp(offset, origin);
   }
 
-  int printf(std::string str) {
-    for (char character : str) {
-      put(character);
-      if (bad()) return 0;
-    }
-    return str.length();
-  }
-
-  bool bad() const {
-    return file_stream->bad();
-  }
-
-  bool fail() const {
-    return file_stream->fail();
-  }
-
-  bool eof() const {
-    return file_stream->eof();
-  }
+  long long filesize();
+  void resize(long long size);
 };
 
-class PrecompTmpFile: public FileWrapper {
+class PrecompTmpFile : public FileWrapper {
 public:
-  PrecompTmpFile() {
-    is_tmp_file = true;
+
+  ~PrecompTmpFile() {
+    close();
+    std::remove(file_path.c_str());
   }
 };
 
