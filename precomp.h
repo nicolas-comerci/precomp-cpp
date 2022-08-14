@@ -1,10 +1,10 @@
 #include "precomp_dll.h"
 
-int def(FileWrapper& source, FileWrapper& dest, int level, int windowbits, int memlevel);
-long long def_compare(FileWrapper& compfile, int level, int windowbits, int memlevel, long long & decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
-long long def_compare_bzip2(FileWrapper& source, FileWrapper& compfile, int level, long long& decompressed_bytes_used);
-int def_part(FileWrapper& source, FileWrapper& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
-int def_part_skip(FileWrapper& source, FileWrapper& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
+int def(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel);
+long long def_compare(std::istream& compfile, int level, int windowbits, int memlevel, long long & decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
+long long def_compare_bzip2(std::istream& source, std::istream& compfile, int level, long long& decompressed_bytes_used);
+int def_part(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
+int def_part_skip(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
 void zerr(int ret);
 #ifndef PRECOMPDLL
 #ifndef COMFORT
@@ -18,22 +18,22 @@ void denit_decompress(std::string tmp_filename);
 void denit();
 bool intense_mode_is_active();
 bool brute_mode_is_active();
-int inf_bzip2(FileWrapper& source, FileWrapper& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
-int def_bzip2(FileWrapper& source, FileWrapper& dest, int level);
-long long file_recompress(FileWrapper& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
-long long file_recompress_bzip2(FileWrapper& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile);
+int inf_bzip2(std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
+int def_bzip2(std::istream& source, std::ostream& dest, int level);
+long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
+long long file_recompress_bzip2(std::istream& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile);
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name);
-unsigned long long compare_files(FileWrapper& file1, FileWrapper& file2, unsigned int pos1, unsigned int pos2);
-long long compare_file_mem_penalty(FileWrapper& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
-long long compare_files_penalty(FileWrapper& file1, FileWrapper& file2, long long pos1, long long pos2);
+unsigned long long compare_files(std::istream& file1, std::istream& file2, unsigned int pos1, unsigned int pos2);
+long long compare_file_mem_penalty(std::istream& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
+long long compare_files_penalty(std::istream& file1, std::istream& file2, long long pos1, long long pos2);
 void start_uncompressed_data();
 void end_uncompressed_data();
 void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
 void try_decompression_zip(int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(int gzip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_png(int windowbits, PrecompTmpFile& tmpfile);
-void try_decompression_png_multi(FileWrapper& fpng, int windowbits, PrecompTmpFile& tmpfile);
+void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile);
 void try_decompression_jpg(long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile);
 void try_decompression_mp3(long long mp3_length, PrecompTmpFile& tmpfile);
@@ -47,30 +47,30 @@ void try_decompression_base64(int gzip_header_length, PrecompTmpFile& tmpfile);
 
 void init_decompression_variables();
 unsigned char base64_char_decode(unsigned char c);
-void base64_reencode(FileWrapper& file_in, FileWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
+void base64_reencode(std::istream& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
 void packjpg_mp3_dll_msg();
 bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection);
 inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
-bool recompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
-bool decompress_gif(FileWrapper& srcfile, FileWrapper& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
+bool recompress_gif(std::istream& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
+bool decompress_gif(std::istream& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
 void sort_comp_mem_levels();
 void show_used_levels();
 bool compress_file(float min_percent = 0, float max_percent = 100);
 void decompress_file();
 void convert_file();
-long long try_to_decompress(FileWrapper& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
-long long try_to_decompress_bzip2(FileWrapper& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
-void try_recompress(FileWrapper& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
-void try_recompress_bzip2(FileWrapper& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
+long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
+long long try_to_decompress_bzip2(std::istream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
+void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
+void try_recompress_bzip2(std::istream& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void write_header();
 void read_header();
 void convert_header();
-void fast_copy(FileWrapper& in, FileWrapper& out, long long bytecount, bool update_progress = false);
-void fast_copy(FileWrapper& in, unsigned char* out, long long bytecount);
-void fast_copy(unsigned char* in, FileWrapper& out, long long bytecount);
-void own_fwrite(const void* ptr, size_t size, size_t count, FileWrapper& stream, bool final_byte = false, bool update_lzma_progress = false);
-size_t own_fread(void* ptr, size_t size, size_t count, FileWrapper& stream);
+void fast_copy(std::istream& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
+void fast_copy(std::istream& file, unsigned char* out, long long bytecount);
+void fast_copy(unsigned char* in, std::ostream& file, long long bytecount);
+void own_fwrite(const void* ptr, size_t size, size_t count, std::ostream& stream, bool final_byte = false, bool update_lzma_progress = false);
+size_t own_fread(void* ptr, size_t size, size_t count, std::istream& stream);
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
@@ -136,7 +136,7 @@ recursion_result recursion_write_file_and_compress(const recompress_deflate_resu
 
 // compression-on-the-fly
 enum {OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2}; // uncompressed, bzip2, lzma2 multithreaded
-void own_fputc(char c, FileWrapper& f);
+void own_fputc(char c, std::ostream& f);
 unsigned char fin_fgetc();
 int32_t fin_fget32_little_endian();
 int32_t fin_fget32();
