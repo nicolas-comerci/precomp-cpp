@@ -8,12 +8,15 @@
 #include <fstream>
 #include <memory>
 
-// Quick and dirty wrapper to move away from using naked FILE* and simplify later refactor to use iostreams,
-// the idea being that we will be able to arbitrarily make most/any? io operations be from/to a file, memory or stdin/stdout
-class FileWrapper : public std::fstream {
+class PrecompTmpFile : public std::fstream {
 public:
   std::string file_path;
   std::ios_base::openmode mode;
+
+  ~PrecompTmpFile() {
+    close();
+    std::remove(file_path.c_str());
+  }
 
   void open(std::string file_path, std::ios_base::openmode mode) {
     this->file_path = file_path;
@@ -26,27 +29,8 @@ public:
     open(file_path, mode);
   }
 
-  void seekg(long long offset, int origin) {
-    std::fstream::clear();
-    std::fstream::seekg(offset, origin);
-  }
-
-  void seekp(long long offset, int origin) {
-    std::fstream::clear();
-    std::fstream::seekp(offset, origin);
-  }
-
   long long filesize();
   void resize(long long size);
-};
-
-class PrecompTmpFile : public FileWrapper {
-public:
-
-  ~PrecompTmpFile() {
-    close();
-    std::remove(file_path.c_str());
-  }
 };
 
 // Switches class

@@ -77,7 +77,7 @@ bool file_exists(const char* filename);
   void wait_for_key();
 #endif
 void error(int error_nr, std::string tmp_filename = "");
-FileWrapper& tryOpen(const char* filename, std::ios_base::openmode mode);
+std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
 long long fileSize64(const char* filename);
 void print64(long long i64);
 std::string temp_files_tag();
@@ -93,7 +93,7 @@ struct recursion_result {
   bool success;
   std::string file_name;
   long long file_length;
-  std::shared_ptr<FileWrapper> frecurse = std::shared_ptr<FileWrapper>(new FileWrapper());
+  std::shared_ptr<std::fstream> frecurse = std::shared_ptr<std::fstream>(new std::fstream());
 };
 
 class zLibMTF{
@@ -179,8 +179,8 @@ class RecursionContext {
     bool decompress_otf_end = false;
     unsigned char* decomp_io_buf = NULL;
 
-    FileWrapper fin;
-    FileWrapper fout;
+    std::fstream fin;
+    std::fstream fout;
 
     float global_min_percent = 0;
     float global_max_percent = 100;
