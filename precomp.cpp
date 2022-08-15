@@ -220,13 +220,17 @@ void print_to_console(const char* format, Args... args) {
 
   std::string str(buf);
   delete[] buf;
+  print_to_console(str);
+}
+
+void print_to_console(std::string format) {
 #ifdef _WIN32
-  for (char chr : str) {
+  for (char chr : format) {
     putch(chr);
   }
 #else
   int ttyfd = open("/dev/tty", O_RDWR);  // We need to close this at some point, should we only open this once? TODO: try on linux/mac later
-  write(ttyfd, str.c_str(), str.length());
+  write(ttyfd, format.c_str(), str.length());
 #endif
 }
 
@@ -953,7 +957,7 @@ int init(int argc, char* argv[]) {
 
             // dot in output file name? If not, use .pcf extension
             const char* dot_at_pos = strrchr(g_precomp.ctx->output_file_name.c_str(), '.');
-            if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
+            if (g_precomp.ctx->output_file_name.compare("stdout") != 0 && (dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
               g_precomp.ctx->output_file_name += ".pcf";
               appended_pcf = true;
             }
@@ -1132,10 +1136,6 @@ int init(int argc, char* argv[]) {
   }
 
   if (output_file_given && g_precomp.ctx->output_file_name.compare("stdout") == 0) {
-    if (operation != P_DECOMPRESS) {
-      print_to_console("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n");
-      exit(1);
-    }
     // Write binary to stdout
     SET_BINARY_MODE(STDOUT);
     ((std::ostream&)g_precomp.ctx->fout).rdbuf(std::cout.rdbuf());
@@ -1161,26 +1161,26 @@ int init(int argc, char* argv[]) {
       print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
       exit(1);
     }
-
-    print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
-    print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
-    if (g_precomp.switches.DEBUG_MODE) {
-      if (min_ident_size_set) {
-        print_to_console("\n");
-        print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
-      }
-      if (!g_precomp.switches.ignore_list.empty()) {
-        print_to_console("\n");
-        print_to_console("Ignore position list:\n");
-        for (auto ignore_pos : g_precomp.switches.ignore_list) {
-          std::cout << ignore_pos << std::endl;
-        }
-        print_to_console("\n");
-      }
-    }
-
-    if (operation == P_CONVERT) convert_header();
   }
+
+  print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
+  print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
+  if (g_precomp.switches.DEBUG_MODE) {
+    if (min_ident_size_set) {
+      print_to_console("\n");
+      print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
+    }
+    if (!g_precomp.switches.ignore_list.empty()) {
+      print_to_console("\n");
+      print_to_console("Ignore position list:\n");
+      for (auto ignore_pos : g_precomp.switches.ignore_list) {
+        std::cout << ignore_pos << std::endl;
+      }
+      print_to_console("\n");
+    }
+  }
+
+  if (operation == P_CONVERT) convert_header();
 
   if (level_switch) {
 
@@ -2262,9 +2262,9 @@ void denit_compress(std::string tmp_filename) {
    if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) {
     print_to_console("%s", std::string(14,'\b').c_str());
-    std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
+    print_to_console("100.00% - New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n");
     } else {
-    std::cout << "New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
+    print_to_console("New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n");
     }
    }
   #else
@@ -2310,7 +2310,7 @@ void denit_compress(std::string tmp_filename) {
         unsigned int recompressed_count = std::get<2>(format_stats);
         std::string format_tag = std::get<3>(format_stats);
         if (condition && ((recompressed_count > 0) || (decompressed_count > 0)))
-          std::cout << format_tag << " streams: " << recompressed_count << "/" << decompressed_count << std::endl;
+          print_to_console(format_tag + " streams: " + std::to_string(recompressed_count) + "/" + std::to_string(decompressed_count) + "\n");
       }
     }
 
