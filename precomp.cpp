@@ -504,8 +504,9 @@ int init(int argc, char* argv[]) {
     print_to_console("Precomp v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
   }
   print_to_console(" - %s\n",V_MSG);
-  print_to_console("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n");
-  print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n\n");
+  print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
+  print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
+  print_to_console("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
 
   // init compression and memory level count
   bool use_zlib_level[81];
@@ -1217,7 +1218,7 @@ int init_comfort(int argc, char* argv[]) {
     print_to_console("Precomp Comfort v%i.%i.%i %s %s - %s version",V_MAJOR,V_MINOR,V_MINOR2,V_OS,V_BIT,V_STATE);
   }
   print_to_console(" - %s\n",V_MSG);
-  print_to_console("Free for non-commercial use - Copyright 2006-2021 by Christian Schneider\n\n");
+  print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n\n");
 
   // init compression and memory level count
   bool use_zlib_level[81];
