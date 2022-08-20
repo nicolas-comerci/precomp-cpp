@@ -117,10 +117,25 @@ Switches::Switches() {
   }
 }
 
+#ifdef _MSC_VER
+  #define EXPORT __declspec(dllexport)
+  #define IMPORT __declspec(dllimport)
+#else
+  #define EXPORT __attribute__((visibility("default")))
+  #define IMPORT
+#endif
+
+#ifdef PRECOMPDLL
+  #define LIBPRECOMP EXPORT
+#else
+  #define LIBPRECOMP IMPORT
+#endif
+
+
 #ifndef DLL
 #define DLL __declspec(dllexport)
 #endif
 
-DLL void get_copyright_msg(char* msg);
-DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
-DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+LIBPRECOMP void get_copyright_msg(char* msg);
+LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);

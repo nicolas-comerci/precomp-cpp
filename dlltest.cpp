@@ -1,13 +1,10 @@
 #include <stdio.h>
 #include "precomp_dll.h"
 
-__declspec (dllimport)
-void get_copyright_msg(char* msg);
+LIBPRECOMP void get_copyright_msg(char* msg);
 
-__declspec (dllimport)
-bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
-__declspec (dllimport)
-bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
 
 int main(int argc, char* argv[]) {
   char msg[256];

@@ -12,10 +12,6 @@
    See the License for the specific language governing permissions and
    limitations under the License. */
 
-#ifdef PRECOMPDLL
-#define DLL __declspec(dllexport)
-#endif
-
 // version information
 #define V_MAJOR 0
 #define V_MINOR 4
@@ -101,7 +97,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
-// Supposedly it allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary, I only tested it on Windows though
+// It allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary
 #define STDIN  0
 #define STDOUT 1
 #define STDERR 2
@@ -204,17 +200,21 @@ enum {
   D_BRUTE    = 254,
 };
 
+#ifndef _WIN32
+int ttyfd = -1;
+#endif
 
 #include <cassert>
 // This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
 void print_to_console(std::string format) {
 #ifdef _WIN32
-    for (char chr : format) {
-        putch(chr);
-    }
+  for (char chr : format) {
+    putch(chr);
+  }
 #else
-    int ttyfd = open("/dev/tty", O_RDWR);  // We need to close this at some point, should we only open this once? TODO: try on linux/mac later
-  write(ttyfd, format.c_str(), str.length());
+  if (ttyfd < 0)
+    ttyfd = open("/dev/tty", O_RDWR);
+  write(ttyfd, format.c_str(), format.length());
 #endif
 }
 
@@ -254,7 +254,7 @@ void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir 
 #ifdef PRECOMPDLL
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-DLL void get_copyright_msg(char* msg) {
+LIBPRECOMP void get_copyright_msg(char* msg) {
   if (V_MINOR2 == 0) {
     sprintf(msg, "Precomp DLL v%i.%i (c) 2006-2021 by Christian Schneider",V_MAJOR,V_MINOR);
   } else {
@@ -281,7 +281,7 @@ void setSwitches(Switches switches) {
 // in_file = input filename
 // out_file = output filename
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
+LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
 
   // init compression and memory level count
   for (int i = 0; i < 81; i++) {
@@ -320,7 +320,7 @@ DLL bool precompress_file(char* in_file, char* out_file, char* msg, Switches swi
 // in_file = input filename
 // out_file = output filename
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
+LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
 
   // init compression and memory level count
   for (int i = 0; i < 81; i++) {
@@ -358,7 +358,7 @@ DLL bool recompress_file(char* in_file, char* out_file, char* msg, Switches swit
 }
 
 // test if a file contains streams that can be precompressed
-DLL bool file_precompressable(char* in, char* msg) {
+LIBPRECOMP bool file_precompressable(char* in, char* msg) {
   return false;
 }
 
@@ -1269,28 +1269,21 @@ int init_comfort(int argc, char* argv[]) {
   }
 
   // precomf.ini in EXE directory?
-  char precomf_ini[1024];
-#ifdef _MSC_VER
-#ifdef UNICODE
-#define GetModuleFileName GetModuleFileNameA
-#endif // UNICODE
-#endif // _MSC_VER
-  GetModuleFileName(NULL, precomf_ini, 1024);
-  // truncate to get directory of executable only
-  char* lastslash = strrchr(precomf_ini, PATH_DELIM) + 1;
-  strcpy(lastslash, "precomf.ini");
-  print_to_console("INI file: %s\n", precomf_ini);
+  std::string precomf_ini_path = std::filesystem::current_path().string();
+  precomf_ini_path += PATH_DELIM;
+  precomf_ini_path += "precomf.ini";
+  print_to_console("INI file: %s\n", precomf_ini_path.c_str());
 
-  if (!file_exists(precomf_ini)) {
+  if (!file_exists(precomf_ini_path.c_str())) {
     print_to_console("INI file not found. Create it (y/n)?");
-    char ch = getche();
+    char ch = get_char_with_echo();
     print_to_console("\n");
     if ((ch != 'Y') && (ch != 'y')) {
       wait_for_key();
       exit(1);
     } else {
       std::fstream fnewini;
-      fnewini.open(precomf_ini, std::ios_base::out);
+      fnewini.open(precomf_ini_path.c_str(), std::ios_base::out);
       std::stringstream title;
       title << ";; Precomp Comfort v" << V_MAJOR << "." << V_MINOR << "." << V_MINOR2 << " " << V_OS << " " << V_BIT << " - " << V_STATE << " version - INI file\n";
       ostream_printf(fnewini, title.str());
@@ -1358,7 +1351,7 @@ int init_comfort(int argc, char* argv[]) {
   bool print_ignore_positions_message = true;
   bool compression_type_line_used = false;
 
-  std::ifstream ini_file(precomf_ini);
+  std::ifstream ini_file(precomf_ini_path.c_str());
   std::string line;
   std::string parName, valuestr;
   std::string::iterator it;
@@ -2186,7 +2179,7 @@ int init_comfort(int argc, char* argv[]) {
 
   if (file_exists(g_precomp.ctx->output_file_name.c_str())) {
     print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", g_precomp.ctx->output_file_name.c_str());
-    char ch = getche();
+    char ch = get_char_with_echo();
     if ((ch != 'Y') && (ch != 'y')) {
       print_to_console("\n");
       wait_for_key();
@@ -5387,15 +5380,13 @@ bool check_for_pcf_file() {
   } while (c != 0);
 
   // append output filename to the executable directory
-  char exec_dir[1024];
-  GetModuleFileName(NULL, exec_dir, 1024);
-  // truncate to get directory of executable only
-  char* lastslash = strrchr(exec_dir, PATH_DELIM) + 1;
-  strcpy(lastslash, "");
-  header_filename = exec_dir + header_filename;
+  std::string exec_dir = std::filesystem::current_path().string();
+  std::string header_path = exec_dir;
+  header_path += PATH_DELIM;
+  header_path += header_filename;
 
   if (g_precomp.ctx->output_file_name.empty()) {
-    g_precomp.ctx->output_file_name = header_filename;
+    g_precomp.ctx->output_file_name = header_path;
   }
 
   return true;
@@ -7517,10 +7508,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 #ifdef COMFORT
 void wait_for_key() {
   print_to_console("\nPress any key to continue\n");
-  // wait for key
-  do {
-    Sleep(55); // lower CPU cost
-  } while (!kbhit());
+  get_char_with_echo();
 }
 #endif
 
