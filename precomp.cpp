@@ -2251,12 +2251,14 @@ void denit_compress(std::string tmp_filename) {
   #ifndef PRECOMPDLL
    long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
    if (recursion_depth == 0) {
-    if (!g_precomp.switches.DEBUG_MODE) {
-    print_to_console("%s", std::string(14,'\b').c_str());
-    print_to_console("100.00% - New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n");
-    } else {
-    print_to_console("New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n");
-    }
+     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n";
+     if (!g_precomp.switches.DEBUG_MODE) {
+       print_to_console("%s", std::string(14, '\b').c_str());
+       print_to_console("100.00% - " + result_print);
+     }
+     else {
+       print_to_console(result_print);
+     }
    }
   #else
    if (recursion_depth == 0) {
@@ -2352,22 +2354,24 @@ void denit_convert() {
   }
 
   long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
-  #ifndef PRECOMPDLL
-   if (!g_precomp.switches.DEBUG_MODE) {
-   print_to_console("%s", std::string(14,'\b').c_str());
-   std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
-   } else {
-   std::cout << "New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
-   }
-   print_to_console("\nDone.\n");
-   printf_time(get_time_ms() - start_time);
-  #else
-   if (!g_precomp.switches.DEBUG_MODE) {
-   print_to_console(std::string(14,'\b').c_str());
-   std::cout << "100.00% - New size: " << fout_length << " instead of " << g_precomp.ctx->fin_length << "     " << std::endl;
-   printf_time(get_time_ms() - start_time);
-   }
-  #endif
+  std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n";
+#ifndef PRECOMPDLL
+  if (!g_precomp.switches.DEBUG_MODE) {
+    print_to_console("%s", std::string(14, '\b').c_str());
+    print_to_console("100.00% - " + result_print);
+  }
+  else {
+    print_to_console(result_print);
+  }
+  print_to_console("\nDone.\n");
+  printf_time(get_time_ms() - start_time);
+#else
+  if (!g_precomp.switches.DEBUG_MODE) {
+    print_to_console(std::string(14, '\b').c_str());
+    print_to_console("100.00% - " + result_print);
+    printf_time(get_time_ms() - start_time);
+  }
+#endif
 
   denit();
 }
@@ -4496,7 +4500,9 @@ void decompress_file() {
 
   fin_pos = g_precomp.ctx->fin.tellg();
 
-while (g_precomp.ctx->fin.good()) {
+  auto otf_none_end_check = []() { return g_precomp.ctx->compression_otf_method == OTF_NONE && !g_precomp.ctx->fin.good(); };
+
+while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NONE && g_precomp.ctx->decompress_otf_end) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
@@ -4506,7 +4512,7 @@ while (g_precomp.ctx->fin.good()) {
   }
 
   unsigned char header1 = fin_fgetc();
-  if (g_precomp.ctx->fin.eof()) break;
+  if (otf_none_end_check()) break;
   if (header1 == 0) { // uncompressed data
     long long uncompressed_data_length;
     uncompressed_data_length = fin_fget_vlint();
@@ -8046,7 +8052,9 @@ void init_compress_otf() {
       if (threads > 1) {
         plural = "s";
       }
-      std::cout << "Compressing with LZMA, " << threads << " thread" << plural.c_str() << ", memory usage: " << memory_usage / (1024 * 1024) << " MiB, block size: " << block_size / (1024 * 1024) << " MiB" << std::endl << std::endl;
+      print_to_console(
+        "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
+      );
       break;
     }
   }
