@@ -5444,7 +5444,7 @@ void convert_header() {
   g_precomp.ctx->fin.read(reinterpret_cast<char*>(in), 3);
   if ((in[0] == V_MAJOR) && (in[1] == V_MINOR) && (in[2] == V_MINOR2)) {
   } else {
-    print_to_console("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name);
+    print_to_console("Input file %s was made with a different Precomp version\n", g_precomp.ctx->input_file_name.c_str());
     print_to_console("PCF version info: %i.%i.%i\n", in[0], in[1], in[2]);
     exit(1);
   }

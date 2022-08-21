@@ -23,7 +23,6 @@ if (UNIX)
   find_package(Threads REQUIRED)
 endif()
 
-
 include_directories(AFTER ${SRCDIR})
 
 function(add_stem2file VAR pattern stem)
@@ -103,6 +102,11 @@ if (MSVC)
   include_directories(AFTER "msinttypes")
   add_definitions(-D_UNICODE -DUNICODE)
 endif (MSVC)
+
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    add_definitions(-D__unix)
+    add_definitions(-D__linux)
+endif()
 
 set(BRUNSLI_SRC "")
 add_stem2file(BRUNSLI_SRC "${SRCDIR}/contrib/brunsli/c/common/%STEM%.cc"

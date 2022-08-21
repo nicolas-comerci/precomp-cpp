@@ -145,6 +145,7 @@ rc_shift_low(lzma_range_encoder *rc,
 	return false;
 }
 
+#include <assert.h>
 
 static inline bool
 rc_encode(lzma_range_encoder *rc,
