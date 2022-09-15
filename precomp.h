@@ -179,8 +179,8 @@ class RecursionContext {
     bool decompress_otf_end = false;
     unsigned char* decomp_io_buf = NULL;
 
-    std::fstream fin;
-    std::fstream fout;
+    std::unique_ptr<std::istream> fin = std::unique_ptr<std::ifstream>(new std::ifstream());
+    std::unique_ptr<std::ostream> fout = std::unique_ptr<std::ofstream>(new std::ofstream());
 
     float global_min_percent = 0;
     float global_max_percent = 100;

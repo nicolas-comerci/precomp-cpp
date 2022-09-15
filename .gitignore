@@ -54,3 +54,5 @@ cmake_install.cmake
 cmake-build-debug/
 cmake-build-release/
 CMakeSettings.json
+cmake-build-minsizerel/
+cmake-build-relwithdebinfo/
