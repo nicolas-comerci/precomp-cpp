@@ -2,7 +2,6 @@
 
 int def(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel);
 long long def_compare(std::istream& compfile, int level, int windowbits, int memlevel, long long & decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
-long long def_compare_bzip2(std::istream& source, std::istream& compfile, int level, long long& decompressed_bytes_used);
 int def_part(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
 int def_part_skip(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
 void zerr(int ret);
@@ -21,7 +20,6 @@ bool brute_mode_is_active();
 int inf_bzip2(std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
 int def_bzip2(std::istream& source, std::ostream& dest, int level);
 long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
-long long file_recompress_bzip2(std::istream& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile);
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name);
 unsigned long long compare_files(std::istream& file1, std::istream& file2, unsigned int pos1, unsigned int pos2);
@@ -33,7 +31,6 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 void try_decompression_zip(int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(int gzip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_png(int windowbits, PrecompTmpFile& tmpfile);
-void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile);
 void try_decompression_jpg(long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile);
 void try_decompression_mp3(long long mp3_length, PrecompTmpFile& tmpfile);
@@ -46,14 +43,10 @@ void try_decompression_base64(int gzip_header_length, PrecompTmpFile& tmpfile);
 // helpers for try_decompression functions
 
 void init_decompression_variables();
-unsigned char base64_char_decode(unsigned char c);
-void base64_reencode(std::istream& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
 void packjpg_mp3_dll_msg();
 bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection);
 inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
-bool recompress_gif(std::istream& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
-bool decompress_gif(std::istream& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
 void sort_comp_mem_levels();
 void show_used_levels();
 bool compress_file(float min_percent = 0, float max_percent = 100);
@@ -62,15 +55,10 @@ void convert_file();
 long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
 long long try_to_decompress_bzip2(std::istream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
-void try_recompress_bzip2(std::istream& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void write_header();
 void read_header();
 void convert_header();
-void fast_copy(std::istream& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
-void fast_copy(std::istream& file, unsigned char* out, long long bytecount);
-void fast_copy(unsigned char* in, std::ostream& file, long long bytecount);
 void own_fwrite(const void* ptr, size_t size, size_t count, std::ostream& stream, bool final_byte = false, bool update_lzma_progress = false);
-size_t own_fread(void* ptr, size_t size, size_t count, std::istream& stream);
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
@@ -88,13 +76,6 @@ void print_work_sign(bool with_backspace);
 void print_debug_percent();
 void show_progress(float percent, bool use_backspaces, bool check_time);
 void ctrl_c_handler(int sig);
-
-struct recursion_result {
-  bool success;
-  std::string file_name;
-  long long file_length;
-  std::shared_ptr<std::fstream> frecurse = std::shared_ptr<std::fstream>(new std::fstream());
-};
 
 class zLibMTF{
   struct MTFItem{
@@ -130,9 +111,6 @@ public:
 struct recompress_deflate_result;
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile);
-recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
-recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile);
-recursion_result recursion_write_file_and_compress(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 
 // compression-on-the-fly
 enum {OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2}; // uncompressed, bzip2, lzma2 multithreaded
@@ -152,7 +130,6 @@ void fout_fput32(unsigned int v);
 void fout_fput_vlint(unsigned long long v);
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
 void fout_fput_recon_data(const recompress_deflate_result&);
-void fout_fput_deflate_rec(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
 void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 void init_compress_otf();
 void denit_compress_otf();
@@ -165,6 +142,103 @@ int lzma_max_memory_default();
 #define P_COMPRESS 1
 #define P_DECOMPRESS 2
 #define P_CONVERT 3
+
+template <typename T>
+class IStreamWrapper_Base
+{
+  static_assert(std::is_base_of_v<std::istream, T>, "IStreamWrapper must get an std::istream derivative as template parameter");
+public:
+  std::unique_ptr<T> stream = std::unique_ptr<T>(new T());
+
+  T& read(char* buf, std::streamsize size)
+  {
+    stream->read(buf, size);
+    return *stream;
+  }
+
+  std::ifstream::traits_type::int_type get()
+  {
+    return stream->get();
+  }
+
+  std::streamsize gcount()
+  {
+    return stream->gcount();
+  }
+
+  std::istream::traits_type::pos_type tellg()
+  {
+    return stream->tellg();
+  }
+
+  bool good() const
+  {
+    return stream->good();
+  }
+
+  bool eof() const
+  {
+    return stream->eof();
+  }
+
+  bool bad() const
+  {
+    return stream->bad();
+  }
+};
+
+template <typename T>
+class IStreamWrapper: public IStreamWrapper_Base<T> {};
+
+class IfStreamWrapper: public IStreamWrapper_Base<std::ifstream>
+{
+public:
+  void open(std::string filename, std::ios_base::openmode mode)
+  {
+    stream->open(filename, mode);
+  }
+
+  bool is_open()
+  {
+    return stream->is_open();
+  }
+
+  void close()
+  {
+    stream->close();
+  }
+
+  void rdbuf(std::streambuf* new_sb)
+  {
+    std::istream& istream = *stream;
+    istream.rdbuf(new_sb);
+  }
+
+  size_t own_fread(void* ptr, size_t size, size_t count);
+};
+
+void fast_copy(IfStreamWrapper& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
+void fast_copy(IfStreamWrapper& file, unsigned char* out, long long bytecount);
+void fast_copy(unsigned char* in, std::ostream& file, long long bytecount);
+
+unsigned char base64_char_decode(unsigned char c);
+void base64_reencode(IfStreamWrapper& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
+
+bool recompress_gif(IfStreamWrapper& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
+bool decompress_gif(IfStreamWrapper& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
+
+struct recursion_result {
+  bool success;
+  std::string file_name;
+  long long file_length;
+  std::shared_ptr<IfStreamWrapper> frecurse = std::shared_ptr<IfStreamWrapper>(new IfStreamWrapper());
+};
+recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
+recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile);
+recursion_result recursion_write_file_and_compress(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
+void fout_fput_deflate_rec(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
+
+void try_decompression_png_multi(IfStreamWrapper& fpng, int windowbits, PrecompTmpFile& tmpfile);
 
 class RecursionContext {
   public:
@@ -179,7 +253,7 @@ class RecursionContext {
     bool decompress_otf_end = false;
     unsigned char* decomp_io_buf = NULL;
 
-    std::unique_ptr<std::istream> fin = std::unique_ptr<std::ifstream>(new std::ifstream());
+    std::unique_ptr<IfStreamWrapper> fin = std::unique_ptr<IfStreamWrapper>(new IfStreamWrapper());
     std::unique_ptr<std::ostream> fout = std::unique_ptr<std::ofstream>(new std::ofstream());
 
     float global_min_percent = 0;
