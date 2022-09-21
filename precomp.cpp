@@ -151,7 +151,6 @@ void recursion_push();
 void recursion_pop();
 
 // compression-on-the-fly
-unsigned char otf_in[CHUNK];
 unsigned char otf_out[CHUNK];
 
 #include "contrib/liblzma/precomp_xz.h"
@@ -4510,6 +4509,7 @@ void decompress_file() {
   long long fin_pos;
 
   g_precomp.ctx->comp_decomp_state = P_DECOMPRESS;
+  g_precomp.ctx->fin->compression_otf_method = g_precomp.ctx->compression_otf_method;
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile_base = tmp_tag + "_recomp_";
@@ -5259,6 +5259,7 @@ void convert_file() {
   int conv_bytes = -1;
 
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
+  g_precomp.ctx->fin->compression_otf_method = conversion_from_method;
 
   init_compress_otf();
   init_decompress_otf();
@@ -5674,116 +5675,104 @@ void own_fwrite(const void *ptr, size_t size, size_t count, std::ostream& stream
   }
 }
 
-size_t IfStreamWrapper::own_fread(void *ptr, size_t size, size_t count) {
-  bool use_otf = false;
-
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) {
-    use_otf = (conversion_from_method > OTF_NONE);
-    if (use_otf) g_precomp.ctx->compression_otf_method = conversion_from_method;
-  } else {
-    if ((this->stream.get() != g_precomp.ctx->fin->stream.get()) || (g_precomp.ctx->compression_otf_method == OTF_NONE) || (g_precomp.ctx->comp_decomp_state != P_DECOMPRESS)) {
-      use_otf = false;
-    } else {
-      use_otf = true;
+size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
+  switch (this->compression_otf_method) {
+    case OTF_NONE: {
+      this->read(static_cast<char*>(ptr), size * count);
+      return this->gcount();
     }
-  }
+    case OTF_BZIP2: {
+      init_otf_in_if_needed();
+      int ret;
+      int bytes_read = 0;
 
-  if (!use_otf) {
-    this->read(reinterpret_cast<char*>(ptr), size * count);
-    return this->gcount();
-  } else {
-    switch (g_precomp.ctx->compression_otf_method) {
-      case 1: { // bZip2
-        int ret;
-        int bytes_read = 0;
+      print_work_sign(true);
 
+      otf_bz2_stream_d.avail_out = size * count;
+      otf_bz2_stream_d.next_out = (char*)ptr;
+
+      do {
+
+        if (otf_bz2_stream_d.avail_in == 0) {
+          this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
+          otf_bz2_stream_d.avail_in = this->gcount();
+          otf_bz2_stream_d.next_in = (char*)otf_in.get();
+          if (otf_bz2_stream_d.avail_in == 0) break;
+        }
+
+        ret = BZ2_bzDecompress(&otf_bz2_stream_d);
+        if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
+          (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
+          print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
+          exit(1);
+        }
+
+        if (ret == BZ_STREAM_END) g_precomp.ctx->decompress_otf_end = true;
+
+      } while (otf_bz2_stream_d.avail_out > 0);
+
+      bytes_read = (size * count - otf_bz2_stream_d.avail_out);
+
+      return bytes_read;
+    }
+    case OTF_XZ_MT: {
+      init_otf_in_if_needed();
+      lzma_action action = LZMA_RUN;
+      lzma_ret ret;
+
+      otf_xz_stream_d.avail_out = size * count;
+      otf_xz_stream_d.next_out = (uint8_t *)ptr;
+
+      do {
         print_work_sign(true);
+        if ((otf_xz_stream_d.avail_in == 0) && !this->stream->eof()) {
+          otf_xz_stream_d.next_in = (uint8_t *)otf_in.get();
+          this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
+          otf_xz_stream_d.avail_in = this->gcount();
 
-        otf_bz2_stream_d.avail_out = size * count;
-        otf_bz2_stream_d.next_out = (char*)ptr;
-
-        do {
-
-          if (otf_bz2_stream_d.avail_in == 0) {
-            g_precomp.ctx->fin->read(reinterpret_cast<char*>(otf_in), CHUNK);
-            otf_bz2_stream_d.avail_in = g_precomp.ctx->fin->gcount();
-            otf_bz2_stream_d.next_in = (char*)otf_in;
-            if (otf_bz2_stream_d.avail_in == 0) break;
-          }
-
-          ret = BZ2_bzDecompress(&otf_bz2_stream_d);
-          if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
-            (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
-            print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
+          if (this->bad()) {
+            print_to_console("ERROR: Could not read input file\n");
             exit(1);
           }
+        }
 
-          if (ret == BZ_STREAM_END) g_precomp.ctx->decompress_otf_end = true;
+        ret = lzma_code(&otf_xz_stream_d, action);
 
-        } while (otf_bz2_stream_d.avail_out > 0);
+        if (ret == LZMA_STREAM_END) {
+          g_precomp.ctx->decompress_otf_end = true;
+          break;
+        }
 
-        bytes_read = (size * count - otf_bz2_stream_d.avail_out);
-
-        return bytes_read;
-      }
-      case OTF_XZ_MT: {
-        lzma_action action = LZMA_RUN;
-        lzma_ret ret;
-
-        otf_xz_stream_d.avail_out = size * count;
-        otf_xz_stream_d.next_out = (uint8_t *)ptr;
-
-        do {
-          print_work_sign(true);
-          if ((otf_xz_stream_d.avail_in == 0) && !g_precomp.ctx->fin->stream->eof()) {
-            otf_xz_stream_d.next_in = (uint8_t *)otf_in;
-            g_precomp.ctx->fin->read(reinterpret_cast<char*>(otf_in), CHUNK);
-            otf_xz_stream_d.avail_in = g_precomp.ctx->fin->gcount();
-
-            if (g_precomp.ctx->fin->bad()) {
-              print_to_console("ERROR: Could not read input file\n");
-              exit(1);
-            }
-          }
-
-          ret = lzma_code(&otf_xz_stream_d, action);
-
-          if (ret == LZMA_STREAM_END) {
-            g_precomp.ctx->decompress_otf_end = true;
+        if (ret != LZMA_OK) {
+          const char *msg;
+          switch (ret) {
+          case LZMA_MEM_ERROR:
+            msg = "Memory allocation failed";
+            break;
+          case LZMA_FORMAT_ERROR:
+            msg = "Wrong file format";
+            break;
+          case LZMA_OPTIONS_ERROR:
+            msg = "Unsupported compression options";
+            break;
+          case LZMA_DATA_ERROR:
+          case LZMA_BUF_ERROR:
+            msg = "Compressed file is corrupt";
+            break;
+          default:
+            msg = "Unknown error, possibly a bug";
             break;
           }
 
-          if (ret != LZMA_OK) {
-            const char *msg;
-            switch (ret) {
-            case LZMA_MEM_ERROR:
-              msg = "Memory allocation failed";
-              break;
-            case LZMA_FORMAT_ERROR:
-              msg = "Wrong file format";
-              break;
-            case LZMA_OPTIONS_ERROR:
-              msg = "Unsupported compression options";
-              break;
-            case LZMA_DATA_ERROR:
-            case LZMA_BUF_ERROR:
-              msg = "Compressed file is corrupt";
-              break;
-            default:
-              msg = "Unknown error, possibly a bug";
-              break;
-            }
-
-            print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+          print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
 #ifdef COMFORT
-            wait_for_key();
+          wait_for_key();
 #endif // COMFORT
-            exit(1);
-          }
-        } while (otf_xz_stream_d.avail_out > 0);
+          exit(1);
+        }
+      } while (otf_xz_stream_d.avail_out > 0);
 
-        return size * count - otf_xz_stream_d.avail_out;
-      }
+      return size * count - otf_xz_stream_d.avail_out;
     }
   }
 
@@ -8024,9 +8013,7 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
 }
 
 unsigned char fin_fgetc() {
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) g_precomp.ctx->compression_otf_method = conversion_from_method;
-
-  if (g_precomp.ctx->compression_otf_method == OTF_NONE) {
+  if (g_precomp.ctx->fin->compression_otf_method == OTF_NONE) {
     return g_precomp.ctx->fin->get();
   } else {
     unsigned char temp_buf[1];
@@ -8153,9 +8140,7 @@ void denit_compress_otf() {
 }
 
 void init_decompress_otf() {
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) g_precomp.ctx->compression_otf_method = conversion_from_method;
-
-  switch (g_precomp.ctx->compression_otf_method) {
+  switch (g_precomp.ctx->fin->compression_otf_method) {
     case OTF_BZIP2: {
       otf_bz2_stream_d.bzalloc = NULL;
       otf_bz2_stream_d.bzfree = NULL;
@@ -8179,9 +8164,7 @@ void init_decompress_otf() {
 }
 
 void denit_decompress_otf() {
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) g_precomp.ctx->compression_otf_method = conversion_from_method;
-
-  switch (g_precomp.ctx->compression_otf_method) {
+  switch (g_precomp.ctx->fin->compression_otf_method) {
     case OTF_BZIP2: { // bZip2
 
       (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);

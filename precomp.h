@@ -144,31 +144,15 @@ int lzma_max_memory_default();
 #define P_CONVERT 3
 
 template <typename T>
-class IStreamWrapper_Base
+class StreamWrapper_Base
 {
-  static_assert(std::is_base_of_v<std::istream, T>, "IStreamWrapper must get an std::istream derivative as template parameter");
 public:
   std::unique_ptr<T> stream = std::unique_ptr<T>(new T());
 
-  T& read(char* buf, std::streamsize size)
+  void rdbuf(std::streambuf* new_sb)
   {
-    stream->read(buf, size);
-    return *stream;
-  }
-
-  std::ifstream::traits_type::int_type get()
-  {
-    return stream->get();
-  }
-
-  std::streamsize gcount()
-  {
-    return stream->gcount();
-  }
-
-  std::istream::traits_type::pos_type tellg()
-  {
-    return stream->tellg();
+    std::istream& istream = *stream;
+    istream.rdbuf(new_sb);
   }
 
   bool good() const
@@ -184,6 +168,42 @@ public:
   bool bad() const
   {
     return stream->bad();
+  }
+};
+
+template <typename T>
+class IStreamWrapper_Base: public StreamWrapper_Base<T>
+{
+  static_assert(std::is_base_of_v<std::istream, T>, "IStreamWrapper must get an std::istream derivative as template parameter");
+public:
+  int compression_otf_method = OTF_NONE;
+  std::unique_ptr<unsigned char[]> otf_in;
+
+  void init_otf_in_if_needed()
+  {
+    if (otf_in != nullptr) return;
+    otf_in = std::make_unique<unsigned char[]>(CHUNK);
+  }
+
+  T& read(char* buf, std::streamsize size)
+  {
+    StreamWrapper_Base<T>::stream->read(buf, size);
+    return *StreamWrapper_Base<T>::stream;
+  }
+
+  std::ifstream::traits_type::int_type get()
+  {
+    return StreamWrapper_Base<T>::stream->get();
+  }
+
+  std::streamsize gcount()
+  {
+    return StreamWrapper_Base<T>::stream->gcount();
+  }
+
+  std::istream::traits_type::pos_type tellg()
+  {
+    return StreamWrapper_Base<T>::stream->tellg();
   }
 };
 
@@ -206,12 +226,6 @@ public:
   void close()
   {
     stream->close();
-  }
-
-  void rdbuf(std::streambuf* new_sb)
-  {
-    std::istream& istream = *stream;
-    istream.rdbuf(new_sb);
   }
 
   size_t own_fread(void* ptr, size_t size, size_t count);
