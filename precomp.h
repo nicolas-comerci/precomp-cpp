@@ -113,7 +113,6 @@ void write_ftempout_if_not_present(long long byte_count, bool in_memory, Precomp
 
 // compression-on-the-fly
 enum {OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2}; // uncompressed, bzip2, lzma2 multithreaded
-void own_fputc(char c, std::ostream& f);
 unsigned char fin_fgetc();
 int32_t fin_fget32_little_endian();
 int32_t fin_fget32();
@@ -304,12 +303,13 @@ public:
   void own_fwrite(const void* ptr, size_t size, size_t count, bool final_byte = false, bool update_lzma_progress = false);
 };
 
+void own_fputc(char c, OfStreamWrapper& f);
 void fast_copy(IfStreamWrapper& file1, OfStreamWrapper& file2, long long bytecount, bool update_progress = false);
 void fast_copy(IfStreamWrapper& file, unsigned char* out, long long bytecount);
 void fast_copy(unsigned char* in, OfStreamWrapper& file, long long bytecount);
 
 unsigned char base64_char_decode(unsigned char c);
-void base64_reencode(IfStreamWrapper& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
+void base64_reencode(IfStreamWrapper& file_in, OfStreamWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
 bool recompress_gif(IfStreamWrapper& srcfile, OfStreamWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
 bool decompress_gif(IfStreamWrapper& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);

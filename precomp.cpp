@@ -5043,11 +5043,11 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
         tmp_base64.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
         tmp_base64.close();
         recursion_result r = recursion_decompress(recursion_data_length, tmp_base64);
-        base64_reencode(*r.frecurse, *g_precomp.ctx->fout->stream, line_count, base64_line_len, r.file_length, decompressed_data_length);
+        base64_reencode(*r.frecurse, *g_precomp.ctx->fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
         r.frecurse->close();
         remove(r.file_name.c_str());
       } else {
-        base64_reencode(*g_precomp.ctx->fin, *g_precomp.ctx->fout->stream, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
+        base64_reencode(*g_precomp.ctx->fin, *g_precomp.ctx->fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
       }
 
       delete[] base64_line_len;
@@ -7209,7 +7209,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(IfStreamWrapper& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
+void base64_reencode(IfStreamWrapper& file_in, OfStreamWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
           int line_nr = 0;
           unsigned int act_line_len = 0;
           int avail_in;
@@ -7446,14 +7446,21 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
       std::string frecomp_filename = tmpfile.file_path + "_rec";
       remove(frecomp_filename.c_str());
-      PrecompTmpFile frecomp;
-      frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+      PrecompTmpFile frecomp_tmp;
+      frecomp_tmp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+      frecomp_tmp.close();
+      OfStreamWrapper frecomp_out;
+      frecomp_out.open(frecomp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
-      base64_reencode(ftempout, frecomp, line_count, base64_line_len);
+      base64_reencode(ftempout, frecomp_out, line_count, base64_line_len);
+      frecomp_out.close();
 
       ftempout.close();
 
-      g_precomp.ctx->identical_bytes_decomp = compare_files(*g_precomp.ctx->fin->stream, frecomp, g_precomp.ctx->input_file_pos, 0);
+      IfStreamWrapper frecomp_in;
+      frecomp_in.open(frecomp_filename, std::ios_base::in | std::ios_base::binary);
+      g_precomp.ctx->identical_bytes_decomp = compare_files(*g_precomp.ctx->fin->stream, *frecomp_in.stream, g_precomp.ctx->input_file_pos, 0);
+      frecomp_in.close();
     }
 
     if (g_precomp.ctx->identical_bytes_decomp > g_precomp.switches.min_ident_size) {
@@ -7843,21 +7850,8 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   return tmp_r;
 }
 
-void own_fputc(char c, std::ostream& f) {
-  bool use_otf = false;
-
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) {
-    use_otf = (conversion_to_method > OTF_NONE);
-    if (use_otf) g_precomp.ctx->compression_otf_method = conversion_to_method;
-  } else {
-    if ((&f != g_precomp.ctx->fout->stream.get()) || (g_precomp.ctx->compression_otf_method == OTF_NONE)) {
-      use_otf = false;
-    } else {
-      use_otf = true;
-    }
-  }
-
-  if (!use_otf) {
+void own_fputc(char c, OfStreamWrapper& f) {
+  if (f.compression_otf_method == OTF_NONE) {
     f.put(c);
   } else {
     fout_fputc(c);
