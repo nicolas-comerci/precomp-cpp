@@ -58,7 +58,6 @@ void try_recompress(std::istream& origfile, int comp_level, int mem_level, int w
 void write_header();
 void read_header();
 void convert_header();
-void own_fwrite(const void* ptr, size_t size, size_t count, std::ostream& stream, bool final_byte = false, bool update_lzma_progress = false);
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
@@ -149,12 +148,6 @@ class StreamWrapper_Base
 public:
   std::unique_ptr<T> stream = std::unique_ptr<T>(new T());
 
-  void rdbuf(std::streambuf* new_sb)
-  {
-    std::istream& istream = *stream;
-    istream.rdbuf(new_sb);
-  }
-
   bool good() const
   {
     return stream->good();
@@ -176,6 +169,12 @@ class IStreamWrapper_Base: public StreamWrapper_Base<T>
 {
   static_assert(std::is_base_of_v<std::istream, T>, "IStreamWrapper must get an std::istream derivative as template parameter");
 public:
+  void rdbuf(std::streambuf* new_sb)
+  {
+    std::istream& istream = *StreamWrapper_Base<T>::stream;
+    istream.rdbuf(new_sb);
+  }
+
   int compression_otf_method = OTF_NONE;
   std::unique_ptr<unsigned char[]> otf_in;
 
@@ -231,14 +230,79 @@ public:
   size_t own_fread(void* ptr, size_t size, size_t count);
 };
 
-void fast_copy(IfStreamWrapper& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
+template <typename T>
+class OStreamWrapper_Base : public StreamWrapper_Base<T>
+{
+  static_assert(std::is_base_of_v<std::ostream, T>, "OStreamWrapper must get an std::ostream derivative as template parameter");
+public:
+  void rdbuf(std::streambuf* new_sb)
+  {
+    std::ostream& stream_ref = *StreamWrapper_Base<T>::stream;
+    stream_ref.rdbuf(new_sb);
+  }
+
+  T& write(char* buf, std::streamsize size)
+  {
+    StreamWrapper_Base<T>::stream->write(buf, size);
+    return *StreamWrapper_Base<T>::stream;
+  }
+
+  T& put(char chr)
+  {
+    StreamWrapper_Base<T>::stream->put(chr);
+    return *StreamWrapper_Base<T>::stream;
+  }
+
+  T& flush()
+  {
+    StreamWrapper_Base<T>::stream->flush();
+    return *StreamWrapper_Base<T>::stream;
+  }
+
+  T& seekp(std::ostream::off_type offset, std::ostream::seekdir way)
+  {
+    StreamWrapper_Base<T>::stream->seekp(offset, way);
+    return *StreamWrapper_Base<T>::stream;
+  }
+
+  std::ostream::traits_type::pos_type tellp()
+  {
+    return StreamWrapper_Base<T>::stream->tellp();
+  }
+};
+
+template <typename T>
+class OStreamWrapper : public OStreamWrapper_Base<T> {};
+
+class OfStreamWrapper : public OStreamWrapper_Base<std::ofstream>
+{
+public:
+  void open(std::string filename, std::ios_base::openmode mode)
+  {
+    stream->open(filename, mode);
+  }
+
+  bool is_open()
+  {
+    return stream->is_open();
+  }
+
+  void close()
+  {
+    stream->close();
+  }
+
+  void own_fwrite(const void* ptr, size_t size, size_t count, bool final_byte = false, bool update_lzma_progress = false);
+};
+
+void fast_copy(IfStreamWrapper& file1, OfStreamWrapper& file2, long long bytecount, bool update_progress = false);
 void fast_copy(IfStreamWrapper& file, unsigned char* out, long long bytecount);
-void fast_copy(unsigned char* in, std::ostream& file, long long bytecount);
+void fast_copy(unsigned char* in, OfStreamWrapper& file, long long bytecount);
 
 unsigned char base64_char_decode(unsigned char c);
 void base64_reencode(IfStreamWrapper& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
-bool recompress_gif(IfStreamWrapper& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
+bool recompress_gif(IfStreamWrapper& srcfile, OfStreamWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
 bool decompress_gif(IfStreamWrapper& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
 
 struct recursion_result {
@@ -268,7 +332,7 @@ class RecursionContext {
     unsigned char* decomp_io_buf = NULL;
 
     std::unique_ptr<IfStreamWrapper> fin = std::unique_ptr<IfStreamWrapper>(new IfStreamWrapper());
-    std::unique_ptr<std::ostream> fout = std::unique_ptr<std::ofstream>(new std::ofstream());
+    std::unique_ptr<OfStreamWrapper> fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
 
     float global_min_percent = 0;
     float global_max_percent = 100;
