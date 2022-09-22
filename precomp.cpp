@@ -150,9 +150,6 @@ Precomp g_precomp;
 void recursion_push();
 void recursion_pop();
 
-// compression-on-the-fly
-unsigned char otf_out[CHUNK];
-
 #include "contrib/liblzma/precomp_xz.h"
 lzma_stream otf_xz_stream_c = LZMA_STREAM_INIT, otf_xz_stream_d = LZMA_STREAM_INIT;
 lzma_init_mt_extra_parameters otf_xz_extra_params;
@@ -3566,6 +3563,7 @@ void show_used_levels() {
 bool compress_file(float min_percent, float max_percent) {
 
   g_precomp.ctx->comp_decomp_state = P_COMPRESS;
+  g_precomp.ctx->fout->compression_otf_method = g_precomp.ctx->compression_otf_method;
 
   g_precomp.ctx->decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
 
@@ -5263,6 +5261,7 @@ void convert_file() {
 
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
   g_precomp.ctx->fin->compression_otf_method = conversion_from_method;
+  g_precomp.ctx->fout->compression_otf_method = conversion_to_method;
 
   init_compress_otf();
   init_decompress_otf();
@@ -5585,95 +5584,84 @@ void fast_copy(unsigned char* mem, OfStreamWrapper& file, long long bytecount) {
 }
 
 void OfStreamWrapper::own_fwrite(const void *ptr, size_t size, size_t count, bool final_byte, bool update_lzma_progress) {
-  bool use_otf = false;
-
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) {
-    use_otf = (conversion_to_method > OTF_NONE);
-    if (use_otf) g_precomp.ctx->compression_otf_method = conversion_to_method;
-  } else {
-    if ((this->stream.get() != g_precomp.ctx->fout->stream.get()) || (g_precomp.ctx->compression_otf_method == OTF_NONE) || (g_precomp.ctx->comp_decomp_state != P_COMPRESS)) {
-      use_otf = false;
-    } else {
-      use_otf = true;
+  switch (this->compression_otf_method) {
+    case OTF_NONE: {
+      this->stream->write(static_cast<const char*>(ptr), size * count);
+      if (this->bad()) {
+        error(ERR_DISK_FULL);
+      }
+      break;
     }
-  }
+    case OTF_BZIP2: { // bZip2
+      init_otf_in_if_needed();
+      int flush, ret;
+      unsigned have;
 
-  if (!use_otf) {
-    this->stream->write(static_cast<const char*>(ptr), size * count);
-    if (this->bad()) {
-      error(ERR_DISK_FULL);
-    }
-  } else {
-    switch (g_precomp.ctx->compression_otf_method) {
-      case OTF_BZIP2: { // bZip2
-        int flush, ret;
-        unsigned have;
+      print_work_sign(true);
 
-        print_work_sign(true);
+      flush = final_byte ? BZ_FINISH : BZ_RUN;
 
-        flush = final_byte ? BZ_FINISH : BZ_RUN;
-
-        otf_bz2_stream_c.avail_in = size * count;
-        otf_bz2_stream_c.next_in = (char*)ptr;
-        do {
-          otf_bz2_stream_c.avail_out = CHUNK;
-          otf_bz2_stream_c.next_out = (char*)otf_out;
-          ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
-          have = CHUNK - otf_bz2_stream_c.avail_out;
-          this->write(reinterpret_cast<char*>(otf_out), have);
-          if (this->bad()) {
-            error(ERR_DISK_FULL);
-          }
-        } while (otf_bz2_stream_c.avail_out == 0);
-        if (ret < 0) {
-          print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
-          exit(1);
+      otf_bz2_stream_c.avail_in = size * count;
+      otf_bz2_stream_c.next_in = (char*)ptr;
+      do {
+        otf_bz2_stream_c.avail_out = CHUNK;
+        otf_bz2_stream_c.next_out = (char*)otf_out.get();
+        ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
+        have = CHUNK - otf_bz2_stream_c.avail_out;
+        this->write(reinterpret_cast<char*>(otf_out.get()), have);
+        if (this->bad()) {
+          error(ERR_DISK_FULL);
         }
-        break;
+      } while (otf_bz2_stream_c.avail_out == 0);
+      if (ret < 0) {
+        print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
+        exit(1);
       }
-      case OTF_XZ_MT: {
-        lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
-        lzma_ret ret;
-        unsigned have;
+      break;
+    }
+    case OTF_XZ_MT: {
+      init_otf_in_if_needed();
+      lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
+      lzma_ret ret;
+      unsigned have;
 
-        otf_xz_stream_c.avail_in = size * count;
-        otf_xz_stream_c.next_in = (uint8_t*)ptr;
-        do {
-          print_work_sign(true);
-          otf_xz_stream_c.avail_out = CHUNK;
-          otf_xz_stream_c.next_out = (uint8_t*)otf_out;
-          ret = lzma_code(&otf_xz_stream_c, action);
-          have = CHUNK - otf_xz_stream_c.avail_out;
-          this->write(reinterpret_cast<char*>(otf_out), have);
-          if (this->bad()) {
-            error(ERR_DISK_FULL);
+      otf_xz_stream_c.avail_in = size * count;
+      otf_xz_stream_c.next_in = (uint8_t*)ptr;
+      do {
+        print_work_sign(true);
+        otf_xz_stream_c.avail_out = CHUNK;
+        otf_xz_stream_c.next_out = (uint8_t*)otf_out.get();
+        ret = lzma_code(&otf_xz_stream_c, action);
+        have = CHUNK - otf_xz_stream_c.avail_out;
+        this->write(reinterpret_cast<char*>(otf_out.get()), have);
+        if (this->bad()) {
+          error(ERR_DISK_FULL);
+        }
+        if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
+          const char* msg;
+          switch (ret) {
+          case LZMA_MEM_ERROR:
+            msg = "Memory allocation failed";
+            break;
+
+          case LZMA_DATA_ERROR:
+            msg = "File size limits exceeded";
+            break;
+
+          default:
+            msg = "Unknown error, possibly a bug";
+            break;
           }
-          if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-            const char* msg;
-            switch (ret) {
-            case LZMA_MEM_ERROR:
-              msg = "Memory allocation failed";
-              break;
 
-            case LZMA_DATA_ERROR:
-              msg = "File size limits exceeded";
-              break;
-
-            default:
-              msg = "Unknown error, possibly a bug";
-              break;
-            }
-
-            print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
-#ifdef COMFORT
-            wait_for_key();
-#endif // COMFORT
-            exit(1);
-          } // .avail_out == 0
-          if ((!g_precomp.switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
-        } while ((otf_xz_stream_c.avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
-        break;
-      }
+          print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+  #ifdef COMFORT
+          wait_for_key();
+  #endif // COMFORT
+          exit(1);
+        } // .avail_out == 0
+        if ((!g_precomp.switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
+      } while ((otf_xz_stream_c.avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
+      break;
     }
   }
 }

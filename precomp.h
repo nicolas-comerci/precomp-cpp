@@ -241,6 +241,15 @@ public:
     stream_ref.rdbuf(new_sb);
   }
 
+  int compression_otf_method = OTF_NONE;
+  std::unique_ptr<unsigned char[]> otf_out;
+
+  void init_otf_in_if_needed()
+  {
+    if (otf_out != nullptr) return;
+    otf_out = std::make_unique<unsigned char[]>(CHUNK);
+  }
+
   T& write(char* buf, std::streamsize size)
   {
     StreamWrapper_Base<T>::stream->write(buf, size);
