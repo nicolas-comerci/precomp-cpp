@@ -14,7 +14,6 @@ int init_comfort(int argc, char* argv[]);
 #endif
 void denit_compress(std::string tmp_filename);
 void denit_decompress(std::string tmp_filename);
-void denit();
 bool intense_mode_is_active();
 bool brute_mode_is_active();
 int inf_bzip2(std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
@@ -129,10 +128,6 @@ void fout_fput_vlint(unsigned long long v);
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
 void fout_fput_recon_data(const recompress_deflate_result&);
 void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
-void init_compress_otf();
-void denit_compress_otf();
-void init_decompress_otf();
-void denit_decompress_otf();
 int auto_detected_thread_count();
 int lzma_max_memory_default();
 
@@ -175,12 +170,45 @@ public:
   }
 
   int compression_otf_method = OTF_NONE;
+  bool decompress_otf_end = false;
+  std::unique_ptr<bz_stream> otf_bz2_stream_d;
+  std::unique_ptr<lzma_stream> otf_xz_stream_d;
   std::unique_ptr<unsigned char[]> otf_in;
 
   void init_otf_in_if_needed()
   {
     if (otf_in != nullptr) return;
     otf_in = std::make_unique<unsigned char[]>(CHUNK);
+    if (this->compression_otf_method == OTF_BZIP2) {
+      otf_bz2_stream_d = std::unique_ptr<bz_stream>(new bz_stream());
+      otf_bz2_stream_d->bzalloc = NULL;
+      otf_bz2_stream_d->bzfree = NULL;
+      otf_bz2_stream_d->opaque = NULL;
+      otf_bz2_stream_d->avail_in = 0;
+      otf_bz2_stream_d->next_in = NULL;
+      if (BZ2_bzDecompressInit(otf_bz2_stream_d.get(), 0, 0) != BZ_OK) {
+        print_to_console("ERROR: bZip2 init failed\n");
+        exit(1);
+      }
+    } else if (this->compression_otf_method == OTF_XZ_MT) {
+      otf_xz_stream_d = std::unique_ptr<lzma_stream>(new lzma_stream());
+      if (!init_decoder(otf_xz_stream_d.get())) {
+        print_to_console("ERROR: liblzma init failed\n");
+        exit(1);
+      }
+    }
+  }
+
+  ~IStreamWrapper_Base()
+  {
+    if (otf_bz2_stream_d != nullptr)
+    {
+      (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
+    }
+    if (otf_xz_stream_d != nullptr)
+    {
+      (void)lzma_end(otf_xz_stream_d.get());
+    }
   }
 
   T& read(char* buf, std::streamsize size)
@@ -241,12 +269,51 @@ public:
   }
 
   int compression_otf_method = OTF_NONE;
+  std::unique_ptr<bz_stream> otf_bz2_stream_c;
+  std::unique_ptr<lzma_stream> otf_xz_stream_c;
+  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
   std::unique_ptr<unsigned char[]> otf_out;
 
   void init_otf_in_if_needed()
   {
     if (otf_out != nullptr) return;
     otf_out = std::make_unique<unsigned char[]>(CHUNK);
+    if (this->compression_otf_method == OTF_BZIP2) {
+      otf_bz2_stream_c = std::unique_ptr<bz_stream>(new bz_stream());
+      otf_bz2_stream_c->bzalloc = NULL;
+      otf_bz2_stream_c->bzfree = NULL;
+      otf_bz2_stream_c->opaque = NULL;
+      if (BZ2_bzCompressInit(otf_bz2_stream_c.get(), 9, 0, 0) != BZ_OK) {
+        print_to_console("ERROR: bZip2 init failed\n");
+        exit(1);
+      }
+    } else if (this->compression_otf_method == OTF_XZ_MT) {
+      otf_xz_stream_c = std::unique_ptr<lzma_stream>(new lzma_stream());
+      uint64_t memory_usage = 0;
+      uint64_t block_size = 0;
+      uint64_t max_memory = g_precomp.switches.compression_otf_max_memory * 1024 * 1024LL;
+      int threads = g_precomp.switches.compression_otf_thread_count;
+
+      if (max_memory == 0) {
+        max_memory = lzma_max_memory_default() * 1024 * 1024LL;
+      }
+      if (threads == 0) {
+        threads = auto_detected_thread_count();
+      }
+
+      if (!init_encoder_mt(otf_xz_stream_c.get(), threads, max_memory, memory_usage, block_size, *otf_xz_extra_params)) {
+        print_to_console("ERROR: xz Multi-Threaded init failed\n");
+        exit(1);
+      }
+
+      std::string plural = "";
+      if (threads > 1) {
+        plural = "s";
+      }
+      print_to_console(
+        "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
+      );
+    }
   }
 
   T& write(char* buf, std::streamsize size)
@@ -285,6 +352,27 @@ class OStreamWrapper : public OStreamWrapper_Base<T> {};
 class OfStreamWrapper : public OStreamWrapper_Base<std::ofstream>
 {
 public:
+  ~OfStreamWrapper()
+  {
+    if (this->compression_otf_method > OTF_NONE) {
+
+      // uncompressed data of length 0 ends compress-on-the-fly data
+      char final_buf[9];
+      for (int i = 0; i < 9; i++) {
+        final_buf[i] = 0;
+      }
+      this->own_fwrite(final_buf, 1, 9, true, true);
+    }
+    if (otf_bz2_stream_c != nullptr)
+    {
+      (void)BZ2_bzCompressEnd(otf_bz2_stream_c.get());
+    }
+    if (otf_xz_stream_c != nullptr)
+    {
+      (void)lzma_end(otf_xz_stream_c.get());
+    }
+  }
+
   void open(std::string filename, std::ios_base::openmode mode)
   {
     stream->open(filename, mode);
@@ -301,6 +389,7 @@ public:
   }
 
   void own_fwrite(const void* ptr, size_t size, size_t count, bool final_byte = false, bool update_lzma_progress = false);
+  void lzma_progress_update();
 };
 
 void own_fputc(char c, OfStreamWrapper& f);
@@ -337,7 +426,6 @@ class RecursionContext {
     std::set<long long>* brute_ignore_offsets = new std::set<long long>();
     int compression_otf_method = OTF_XZ_MT;
     bool is_show_lzma_progress() { return compression_otf_method == OTF_XZ_MT; }
-    bool decompress_otf_end = false;
     unsigned char* decomp_io_buf = NULL;
 
     std::unique_ptr<IfStreamWrapper> fin = std::unique_ptr<IfStreamWrapper>(new IfStreamWrapper());

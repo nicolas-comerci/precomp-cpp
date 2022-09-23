@@ -108,6 +108,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #endif
 
 #include "contrib/bzip2/bzlib.h"
+#include "contrib/liblzma/precomp_xz.h"
 #include "contrib/giflib/precomp_gif.h"
 #include "contrib/packjpg/precomp_jpg.h"
 #include "contrib/packmp3/precomp_mp3.h"
@@ -150,14 +151,10 @@ Precomp g_precomp;
 void recursion_push();
 void recursion_pop();
 
-#include "contrib/liblzma/precomp_xz.h"
-lzma_stream otf_xz_stream_c = LZMA_STREAM_INIT, otf_xz_stream_d = LZMA_STREAM_INIT;
-lzma_init_mt_extra_parameters otf_xz_extra_params;
 int otf_xz_filter_used_count = 0;
 
 int conversion_from_method;
 int conversion_to_method;
-bz_stream otf_bz2_stream_c, otf_bz2_stream_d;
 
 long long start_time;
 char lzma_progress_text[70];
@@ -530,9 +527,6 @@ int init(int argc, char* argv[]) {
   g_precomp.ctx->suppress_mp3_inconsistent_original_bit = -1;
   g_precomp.ctx->mp3_parsing_cache_second_frame = -1;
   
-  // init LZMA filters
-  memset(&otf_xz_extra_params, 0, sizeof(otf_xz_extra_params));
-
   bool valid_syntax = false;
   bool input_file_given = false;
   bool output_file_given = false;
@@ -546,6 +540,7 @@ int init(int argc, char* argv[]) {
   bool lzma_filters_set = false;
   bool long_help = false;
   bool preserve_extension = false;
+  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
 
   for (i = 1; (i < argc) && (parse_on); i++) {
     if (argv[i][0] == '-') { // switch
@@ -625,18 +620,18 @@ int init(int argc, char* argv[]) {
               lzma_thread_count_set = true;
             } else if (toupper(argv[i][2]) == 'L') {
               if (toupper(argv[i][3]) == 'C') {
-                otf_xz_extra_params.lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
-                int lclp = (otf_xz_extra_params.lc != 0 ? otf_xz_extra_params.lc - 1 : LZMA_LC_DEFAULT)
-                  + (otf_xz_extra_params.lp != 0 ? otf_xz_extra_params.lp - 1 : LZMA_LP_DEFAULT);
+                otf_xz_extra_params->lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
+                int lclp = (otf_xz_extra_params->lc != 0 ? otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+                  + (otf_xz_extra_params->lp != 0 ? otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
                 if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
                   print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                          LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
                   exit(1);
                 }
               } else if (toupper(argv[i][3]) == 'P') {
-                  otf_xz_extra_params.lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
-                  int lclp = (otf_xz_extra_params.lc != 0 ? otf_xz_extra_params.lc - 1 : LZMA_LC_DEFAULT)
-                    + (otf_xz_extra_params.lp != 0 ? otf_xz_extra_params.lp - 1 : LZMA_LP_DEFAULT);
+                  otf_xz_extra_params->lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
+                  int lclp = (otf_xz_extra_params->lc != 0 ? otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+                    + (otf_xz_extra_params->lp != 0 ? otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
                   if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
                     print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                            LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
@@ -648,8 +643,8 @@ int init(int argc, char* argv[]) {
               }
             } else if (toupper(argv[i][2]) == 'P') {
               if (toupper(argv[i][3]) == 'B') {
-                otf_xz_extra_params.pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
-                int pb = otf_xz_extra_params.pb != 0 ? otf_xz_extra_params.pb - 1 : LZMA_PB_DEFAULT;
+                otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
+                int pb = otf_xz_extra_params->pb != 0 ? otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
                 if (pb < LZMA_PB_MIN || pb > LZMA_PB_MAX) {
                   print_to_console("LZMA pb (default %d) must be inside %d..%d\n",
                          LZMA_PB_DEFAULT, LZMA_PB_MIN, LZMA_PB_MAX);
@@ -683,22 +678,22 @@ int init(int argc, char* argv[]) {
               while (argv[i][argindex] != 0) {
                 switch (toupper(argv[i][argindex])) {
                   case 'X':
-                    otf_xz_extra_params.enable_filter_x86 = true;
+                    otf_xz_extra_params->enable_filter_x86 = true;
                     break;
                   case 'P':
-                    otf_xz_extra_params.enable_filter_powerpc = true;
+                    otf_xz_extra_params->enable_filter_powerpc = true;
                     break;
                   case 'I':
-                    otf_xz_extra_params.enable_filter_ia64 = true;
+                    otf_xz_extra_params->enable_filter_ia64 = true;
                     break;
                   case 'A':
-                    otf_xz_extra_params.enable_filter_arm = true;
+                    otf_xz_extra_params->enable_filter_arm = true;
                     break;
                   case 'T':
-                    otf_xz_extra_params.enable_filter_armthumb = true;
+                    otf_xz_extra_params->enable_filter_armthumb = true;
                     break;
                   case 'S':
-                    otf_xz_extra_params.enable_filter_sparc = true;
+                    otf_xz_extra_params->enable_filter_sparc = true;
                     break;
                   case 'D':
                     {
@@ -709,14 +704,14 @@ int init(int argc, char* argv[]) {
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
                       }
-                      otf_xz_extra_params.enable_filter_delta = true;
+                      otf_xz_extra_params->enable_filter_delta = true;
                       while ((argv[i][argindex] > '0') && (argv[i][argindex] < '9')) {
-                        otf_xz_extra_params.filter_delta_distance *= 10;
-                        otf_xz_extra_params.filter_delta_distance += (argv[i][argindex] - '0');
+                        otf_xz_extra_params->filter_delta_distance *= 10;
+                        otf_xz_extra_params->filter_delta_distance += (argv[i][argindex] - '0');
                         argindex++;
                       }
-                      if (otf_xz_extra_params.filter_delta_distance < LZMA_DELTA_DIST_MIN 
-                           || otf_xz_extra_params.filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+                      if (otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN 
+                           || otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                         print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
@@ -1169,6 +1164,7 @@ int init(int argc, char* argv[]) {
     }
     g_precomp.ctx->fout = std::move(fout);
   }
+  g_precomp.ctx->fout->otf_xz_extra_params = std::move(otf_xz_extra_params);
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
@@ -1247,8 +1243,7 @@ int init_comfort(int argc, char* argv[]) {
   g_precomp.ctx->suppress_mp3_inconsistent_original_bit = -1;
   g_precomp.ctx->mp3_parsing_cache_second_frame = -1;
 
-  // init LZMA filters
-  memset(&otf_xz_extra_params, 0, sizeof(otf_xz_extra_params));
+  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
 
   // parse parameters (should be input file only)
   if (argc == 1) {
@@ -1548,22 +1543,22 @@ int init_comfort(int argc, char* argv[]) {
           for (j = 0; j < (int)strlen(value); j++) {
             switch (toupper(value[j])) {
               case 'X':
-                otf_xz_extra_params.enable_filter_x86 = true;
+                otf_xz_extra_params->enable_filter_x86 = true;
                 break;
               case 'P':
-                otf_xz_extra_params.enable_filter_powerpc = true;
+                otf_xz_extra_params->enable_filter_powerpc = true;
                 break;
               case 'I':
-                otf_xz_extra_params.enable_filter_ia64 = true;
+                otf_xz_extra_params->enable_filter_ia64 = true;
                 break;
               case 'A':
-                otf_xz_extra_params.enable_filter_arm = true;
+                otf_xz_extra_params->enable_filter_arm = true;
                 break;
               case 'T':
-                otf_xz_extra_params.enable_filter_armthumb = true;
+                otf_xz_extra_params->enable_filter_armthumb = true;
                 break;
               case 'S':
-                otf_xz_extra_params.enable_filter_sparc = true;
+                otf_xz_extra_params->enable_filter_sparc = true;
                 break;
               case 'D':
                 {
@@ -1575,14 +1570,14 @@ int init_comfort(int argc, char* argv[]) {
                     wait_for_key();
                     exit(1);
                   }
-                  otf_xz_extra_params.enable_filter_delta = true;
+                  otf_xz_extra_params->enable_filter_delta = true;
                   while ((value[j] > '0') && (value[j] < '9')) {
-                    otf_xz_extra_params.filter_delta_distance *= 10;
-                    otf_xz_extra_params.filter_delta_distance += (value[j] - '0');
+                    otf_xz_extra_params->filter_delta_distance *= 10;
+                    otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
                     j++;
                   }
-                  if (otf_xz_extra_params.filter_delta_distance < LZMA_DELTA_DIST_MIN 
-                       || otf_xz_extra_params.filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+                  if (otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
+                       || otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                     print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                         LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                     wait_for_key();
@@ -2210,6 +2205,7 @@ int init_comfort(int argc, char* argv[]) {
     exit(1);
   }
   g_precomp.ctx->fout = std::move(fout);
+  g_precomp.ctx->fout->otf_xz_extra_params = std::move(otf_xz_extra_params);
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
@@ -2250,14 +2246,7 @@ int init_comfort(int argc, char* argv[]) {
 #endif
 
 void denit_compress(std::string tmp_filename) {
-
-  if (g_precomp.ctx->compression_otf_method != OTF_NONE) {
-    denit_compress_otf();
-  }
-
-  //g_precomp.ctx->fin->close();
-  //g_precomp.ctx->fout->close();
-
+  g_precomp.ctx->fout = nullptr;
   if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
@@ -2328,8 +2317,6 @@ void denit_compress(std::string tmp_filename) {
 
   if (g_precomp.ctx->decomp_io_buf != NULL) delete[] g_precomp.ctx->decomp_io_buf;
   g_precomp.ctx->decomp_io_buf = NULL;
-
-  denit();
 }
 
 void denit_decompress(std::string tmp_filename) {
@@ -2351,18 +2338,9 @@ void denit_decompress(std::string tmp_filename) {
     }
    }
   #endif
-
-  if (g_precomp.ctx->compression_otf_method != OTF_NONE) {
-    denit_decompress_otf();
-  }
-
-  denit();
 }
 
 void denit_convert() {
-  //g_precomp.ctx->fin->close();
-  //g_precomp.ctx->fout->close();
-
   if ((!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
@@ -2386,13 +2364,6 @@ void denit_convert() {
     printf_time(get_time_ms() - start_time);
   }
 #endif
-
-  denit();
-}
-
-void denit() {
-  //g_precomp.ctx->fin->close();
-  //g_precomp.ctx->fout->close();
 }
 
 // Brute mode detects a bit less than intense mode to avoid false positives
@@ -3564,6 +3535,7 @@ bool compress_file(float min_percent, float max_percent) {
 
   g_precomp.ctx->comp_decomp_state = P_COMPRESS;
   g_precomp.ctx->fout->compression_otf_method = g_precomp.ctx->compression_otf_method;
+  g_precomp.ctx->fout->init_otf_in_if_needed();
 
   g_precomp.ctx->decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
 
@@ -4518,10 +4490,6 @@ void decompress_file() {
   std::string tempfile;
   std::string tempfile2;
   
-  if (g_precomp.ctx->compression_otf_method != OTF_NONE) {
-    init_decompress_otf();
-  }
-
   if (recursion_depth == 0) {
     if (!g_precomp.switches.DEBUG_MODE) show_progress(0, false, false);
   }
@@ -4530,7 +4498,7 @@ void decompress_file() {
 
   auto otf_none_end_check = []() { return g_precomp.ctx->compression_otf_method == OTF_NONE && !g_precomp.ctx->fin->good(); };
 
-while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NONE && g_precomp.ctx->decompress_otf_end) {
+while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NONE && g_precomp.ctx->fin->decompress_otf_end) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
@@ -5246,7 +5214,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
 
   fin_pos = g_precomp.ctx->fin->tellg();
   if (g_precomp.ctx->compression_otf_method != OTF_NONE) {
-    if (g_precomp.ctx->decompress_otf_end) break;
+    if (g_precomp.ctx->fin->decompress_otf_end) break;
     if (fin_pos >= g_precomp.ctx->fin_length) fin_pos = g_precomp.ctx->fin_length - 1;
   }
 }
@@ -5262,9 +5230,7 @@ void convert_file() {
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
   g_precomp.ctx->fin->compression_otf_method = conversion_from_method;
   g_precomp.ctx->fout->compression_otf_method = conversion_to_method;
-
-  init_compress_otf();
-  init_decompress_otf();
+  g_precomp.ctx->fout->init_otf_in_if_needed();
 
   if (!g_precomp.switches.DEBUG_MODE) show_progress(0, false, false);
 
@@ -5295,9 +5261,6 @@ void convert_file() {
     }
   }
   g_precomp.ctx->fout->own_fwrite(convbuf, 1, conv_bytes);
-
-  denit_compress_otf();
-  denit_decompress_otf();
 
   denit_convert();
 }
@@ -5389,11 +5352,6 @@ void write_header() {
   g_precomp.ctx->fout->put(0);
 
   delete[] input_file_name_without_path;
-
-  // initialize compression-on-the-fly now
-  if (g_precomp.ctx->compression_otf_method != OTF_NONE) {
-    init_compress_otf();
-  }
 }
 
 #ifdef COMFORT
@@ -5513,14 +5471,14 @@ void progress_update(long long bytes_written) {
   show_progress(percent, true, true);
 }
 
-void lzma_progress_update() {
+void OfStreamWrapper::lzma_progress_update() {
   float percent = ((g_precomp.ctx->input_file_pos + g_precomp.ctx->uncompressed_bytes_written) / ((float)g_precomp.ctx->fin_length + g_precomp.ctx->uncompressed_bytes_total)) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent;
 
   uint64_t progress_in = 0, progress_out = 0;
 
-  lzma_get_progress(&otf_xz_stream_c, &progress_in, &progress_out);
+  lzma_get_progress(this->otf_xz_stream_c.get(), &progress_in, &progress_out);
 
-  lzma_mib_total = otf_xz_stream_c.total_in / (1024 * 1024);
+  lzma_mib_total = this->otf_xz_stream_c->total_in / (1024 * 1024);
   lzma_mib_written = progress_in / (1024 * 1024);
   show_progress(percent, true, true);
 }
@@ -5601,18 +5559,18 @@ void OfStreamWrapper::own_fwrite(const void *ptr, size_t size, size_t count, boo
 
       flush = final_byte ? BZ_FINISH : BZ_RUN;
 
-      otf_bz2_stream_c.avail_in = size * count;
-      otf_bz2_stream_c.next_in = (char*)ptr;
+      otf_bz2_stream_c->avail_in = size * count;
+      otf_bz2_stream_c->next_in = (char*)ptr;
       do {
-        otf_bz2_stream_c.avail_out = CHUNK;
-        otf_bz2_stream_c.next_out = (char*)otf_out.get();
-        ret = BZ2_bzCompress(&otf_bz2_stream_c, flush);
-        have = CHUNK - otf_bz2_stream_c.avail_out;
+        otf_bz2_stream_c->avail_out = CHUNK;
+        otf_bz2_stream_c->next_out = (char*)otf_out.get();
+        ret = BZ2_bzCompress(otf_bz2_stream_c.get(), flush);
+        have = CHUNK - otf_bz2_stream_c->avail_out;
         this->write(reinterpret_cast<char*>(otf_out.get()), have);
         if (this->bad()) {
           error(ERR_DISK_FULL);
         }
-      } while (otf_bz2_stream_c.avail_out == 0);
+      } while (otf_bz2_stream_c->avail_out == 0);
       if (ret < 0) {
         print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
         exit(1);
@@ -5625,14 +5583,14 @@ void OfStreamWrapper::own_fwrite(const void *ptr, size_t size, size_t count, boo
       lzma_ret ret;
       unsigned have;
 
-      otf_xz_stream_c.avail_in = size * count;
-      otf_xz_stream_c.next_in = (uint8_t*)ptr;
+      otf_xz_stream_c->avail_in = size * count;
+      otf_xz_stream_c->next_in = (uint8_t*)ptr;
       do {
         print_work_sign(true);
-        otf_xz_stream_c.avail_out = CHUNK;
-        otf_xz_stream_c.next_out = (uint8_t*)otf_out.get();
-        ret = lzma_code(&otf_xz_stream_c, action);
-        have = CHUNK - otf_xz_stream_c.avail_out;
+        otf_xz_stream_c->avail_out = CHUNK;
+        otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
+        ret = lzma_code(otf_xz_stream_c.get(), action);
+        have = CHUNK - otf_xz_stream_c->avail_out;
         this->write(reinterpret_cast<char*>(otf_out.get()), have);
         if (this->bad()) {
           error(ERR_DISK_FULL);
@@ -5660,7 +5618,7 @@ void OfStreamWrapper::own_fwrite(const void *ptr, size_t size, size_t count, boo
           exit(1);
         } // .avail_out == 0
         if ((!g_precomp.switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
-      } while ((otf_xz_stream_c.avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
+      } while ((otf_xz_stream_c->avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
       break;
     }
   }
@@ -5679,30 +5637,30 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
 
       print_work_sign(true);
 
-      otf_bz2_stream_d.avail_out = size * count;
-      otf_bz2_stream_d.next_out = (char*)ptr;
+      this->otf_bz2_stream_d->avail_out = size * count;
+      this->otf_bz2_stream_d->next_out = (char*)ptr;
 
       do {
 
-        if (otf_bz2_stream_d.avail_in == 0) {
+        if (this->otf_bz2_stream_d->avail_in == 0) {
           this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-          otf_bz2_stream_d.avail_in = this->gcount();
-          otf_bz2_stream_d.next_in = (char*)otf_in.get();
-          if (otf_bz2_stream_d.avail_in == 0) break;
+          this->otf_bz2_stream_d->avail_in = this->gcount();
+          this->otf_bz2_stream_d->next_in = (char*)otf_in.get();
+          if (this->otf_bz2_stream_d->avail_in == 0) break;
         }
 
-        ret = BZ2_bzDecompress(&otf_bz2_stream_d);
+        ret = BZ2_bzDecompress(otf_bz2_stream_d.get());
         if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
-          (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
+          (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
           print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
           exit(1);
         }
 
-        if (ret == BZ_STREAM_END) g_precomp.ctx->decompress_otf_end = true;
+        if (ret == BZ_STREAM_END) this->decompress_otf_end = true;
 
-      } while (otf_bz2_stream_d.avail_out > 0);
+      } while (this->otf_bz2_stream_d->avail_out > 0);
 
-      bytes_read = (size * count - otf_bz2_stream_d.avail_out);
+      bytes_read = (size * count - this->otf_bz2_stream_d->avail_out);
 
       return bytes_read;
     }
@@ -5711,15 +5669,15 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
       lzma_action action = LZMA_RUN;
       lzma_ret ret;
 
-      otf_xz_stream_d.avail_out = size * count;
-      otf_xz_stream_d.next_out = (uint8_t *)ptr;
+      otf_xz_stream_d->avail_out = size * count;
+      otf_xz_stream_d->next_out = (uint8_t *)ptr;
 
       do {
         print_work_sign(true);
-        if ((otf_xz_stream_d.avail_in == 0) && !this->stream->eof()) {
-          otf_xz_stream_d.next_in = (uint8_t *)otf_in.get();
+        if ((otf_xz_stream_d->avail_in == 0) && !this->stream->eof()) {
+          otf_xz_stream_d->next_in = (uint8_t *)otf_in.get();
           this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-          otf_xz_stream_d.avail_in = this->gcount();
+          otf_xz_stream_d->avail_in = this->gcount();
 
           if (this->bad()) {
             print_to_console("ERROR: Could not read input file\n");
@@ -5727,10 +5685,10 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
           }
         }
 
-        ret = lzma_code(&otf_xz_stream_d, action);
+        ret = lzma_code(otf_xz_stream_d.get(), action);
 
         if (ret == LZMA_STREAM_END) {
-          g_precomp.ctx->decompress_otf_end = true;
+          this->decompress_otf_end = true;
           break;
         }
 
@@ -5761,9 +5719,9 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
 #endif // COMFORT
           exit(1);
         }
-      } while (otf_xz_stream_d.avail_out > 0);
+      } while (otf_xz_stream_d->avail_out > 0);
 
-      return size * count - otf_xz_stream_d.avail_out;
+      return size * count - otf_xz_stream_d->avail_out;
     }
   }
 
@@ -8036,51 +7994,6 @@ long long fin_fget_vlint() {
   return v + o + (((long long)c) << s);
 }
 
-
-void init_compress_otf() {
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) g_precomp.ctx->compression_otf_method = conversion_to_method;
-
-  switch (g_precomp.ctx->compression_otf_method) {
-    case OTF_BZIP2: { // bZip2
-      otf_bz2_stream_c.bzalloc = NULL;
-      otf_bz2_stream_c.bzfree = NULL;
-      otf_bz2_stream_c.opaque = NULL;
-      if (BZ2_bzCompressInit(&otf_bz2_stream_c, 9, 0, 0) != BZ_OK) {
-        print_to_console("ERROR: bZip2 init failed\n");
-        exit(1);
-      }
-      break;
-    }
-    case OTF_XZ_MT: {
-      uint64_t memory_usage = 0;
-      uint64_t block_size = 0;
-      uint64_t max_memory = g_precomp.switches.compression_otf_max_memory * 1024 * 1024LL;
-      int threads = g_precomp.switches.compression_otf_thread_count;
-
-      if (max_memory == 0) {
-        max_memory = lzma_max_memory_default() * 1024 * 1024LL;
-      }
-      if (threads == 0) {
-        threads = auto_detected_thread_count();
-      }
-
-      if (!init_encoder_mt(&otf_xz_stream_c, threads, max_memory, memory_usage, block_size, otf_xz_extra_params)) {
-        print_to_console("ERROR: xz Multi-Threaded init failed\n");
-        exit(1);
-      }
-
-      std::string plural = "";
-      if (threads > 1) {
-        plural = "s";
-      }
-      print_to_console(
-        "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
-      );
-      break;
-    }
-  }
-}
-
 int auto_detected_thread_count() {
   int threads = std::thread::hardware_concurrency();
   if (threads == 0) threads = 2;
@@ -8099,70 +8012,6 @@ int lzma_max_memory_default() {
   #endif
   #endif
   return max_memory;
-}
-
-void denit_compress_otf() {
-  if (g_precomp.ctx->comp_decomp_state == P_CONVERT) g_precomp.ctx->compression_otf_method = conversion_to_method;
-
-  if (g_precomp.ctx->compression_otf_method > OTF_NONE) {
-
-      // uncompressed data of length 0 ends compress-on-the-fly data
-      char final_buf[9];
-      for (int i = 0; i < 9; i++) {
-        final_buf[i] = 0;
-      }
-      g_precomp.ctx->fout->own_fwrite(final_buf, 1, 9, true, true);
-  }
-
-  switch (g_precomp.ctx->compression_otf_method) {
-    case OTF_BZIP2: { // bZip2
-
-      (void)BZ2_bzCompressEnd(&otf_bz2_stream_c);
-      break;
-    }
-    case OTF_XZ_MT: {
-      (void)lzma_end(&otf_xz_stream_c);
-      break;
-    }
-  }
-}
-
-void init_decompress_otf() {
-  switch (g_precomp.ctx->fin->compression_otf_method) {
-    case OTF_BZIP2: {
-      otf_bz2_stream_d.bzalloc = NULL;
-      otf_bz2_stream_d.bzfree = NULL;
-      otf_bz2_stream_d.opaque = NULL;
-      otf_bz2_stream_d.avail_in = 0;
-      otf_bz2_stream_d.next_in = NULL;
-      if (BZ2_bzDecompressInit(&otf_bz2_stream_d, 0, 0) != BZ_OK) {
-        print_to_console("ERROR: bZip2 init failed\n");
-        exit(1);
-      }
-      break;
-    }
-    case OTF_XZ_MT: {
-      if (!init_decoder(&otf_xz_stream_d)) {
-        print_to_console("ERROR: liblzma init failed\n");
-        exit(1);
-      }
-    }
-  }
-  g_precomp.ctx->decompress_otf_end = false;
-}
-
-void denit_decompress_otf() {
-  switch (g_precomp.ctx->fin->compression_otf_method) {
-    case OTF_BZIP2: { // bZip2
-
-      (void)BZ2_bzDecompressEnd(&otf_bz2_stream_d);
-      break;
-    }
-    case OTF_XZ_MT: { // lzma2 multithreaded
-      (void)lzma_end(&otf_xz_stream_d);
-      break;
-    }
-  }
 }
 
 // get current time in ms
