@@ -193,37 +193,6 @@ enum {
   D_BRUTE    = 254,
 };
 
-#ifndef _WIN32
-int ttyfd = -1;
-#endif
-
-#include <cassert>
-// This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
-void print_to_console(std::string format) {
-#ifdef _WIN32
-  for (char chr : format) {
-    putch(chr);
-  }
-#else
-  if (ttyfd < 0)
-    ttyfd = open("/dev/tty", O_RDWR);
-  write(ttyfd, format.c_str(), format.length());
-#endif
-}
-
-template< typename... Args >
-void print_to_console(const char* format, Args... args) {
-  int length = std::snprintf(nullptr, 0, format, args...);
-  assert(length >= 0);
-
-  char* buf = new char[length + 1];
-  std::snprintf(buf, length + 1, format, args...);
-
-  std::string str(buf);
-  delete[] buf;
-  print_to_console(str);
-}
-
 int ostream_printf(std::ostream& out, std::string str) {
   for (char character : str) {
     out.put(character);

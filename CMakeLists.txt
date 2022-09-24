@@ -153,9 +153,10 @@ add_stem2file(PREFLATE_SRC "${SRCDIR}/contrib/preflate/support/%STEM%.cpp"
                outputcachestream;task_pool")
 include_directories(AFTER "${SRCDIR}/contrib/preflate")
 
+set(PRECOMP_HDR "${SRCDIR}/precomp.h")
 set(PRECOMP_SRC "${SRCDIR}/precomp.cpp")
 
-set(PRECOMP_HDR "${SRCDIR}/precomp.h")
+set(PRECOMP_UTILS_SRC "${SRCDIR}/precomp_utils.cpp")
 
 set(PRECOMP_DLL_HDR "${SRCDIR}/precomp_dll.h")
 
@@ -163,16 +164,16 @@ set(DLLTEST_SRC "${SRCDIR}/dlltest.cpp")
 
 add_executable(precomp ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                        ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
-                       ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_SRC} ${PRECOMP_HDR})
+                       ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_SRC} ${PRECOMP_HDR})
 
 add_executable(precompf ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                        ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
-                       ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_SRC} ${PRECOMP_HDR})
+                       ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_SRC} ${PRECOMP_HDR})
 target_compile_definitions(precompf PRIVATE -DCOMFORT)
 
 add_library(precomp_dll SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
-                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_SRC} ${PRECOMP_DLL_HDR})
+                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_SRC} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll PRIVATE -DPRECOMPDLL)
 
 add_executable(dlltest ${PRECOMP_DLL_HDR} ${DLLTEST_SRC})
