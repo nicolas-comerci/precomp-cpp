@@ -2,8 +2,18 @@
 #define PRECOMP_IO_H
 #include "precomp_utils.h"
 
+#include "contrib/bzip2/bzlib.h"
+#include "contrib/liblzma/precomp_xz.h"
+
+#include <memory>
+#include <fstream>
+
+constexpr auto CHUNK = 262144; // 256 KB buffersize
+
 // compression-on-the-fly
 enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzma2 multithreaded
+
+int lzma_max_memory_default();
 
 template <typename T>
 class StreamWrapper_Base
@@ -139,6 +149,8 @@ public:
   }
 
   int compression_otf_method = OTF_NONE;
+  uint64_t compression_otf_max_memory;
+  unsigned int compression_otf_thread_count;
   std::unique_ptr<bz_stream> otf_bz2_stream_c;
   std::unique_ptr<lzma_stream> otf_xz_stream_c;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
@@ -162,8 +174,8 @@ public:
       otf_xz_stream_c = std::unique_ptr<lzma_stream>(new lzma_stream());
       uint64_t memory_usage = 0;
       uint64_t block_size = 0;
-      uint64_t max_memory = g_precomp.switches.compression_otf_max_memory * 1024 * 1024LL;
-      int threads = g_precomp.switches.compression_otf_thread_count;
+      uint64_t max_memory = this->compression_otf_max_memory * 1024 * 1024LL;
+      int threads = this->compression_otf_thread_count;
 
       if (max_memory == 0) {
         max_memory = lzma_max_memory_default() * 1024 * 1024LL;

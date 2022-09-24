@@ -61,19 +61,13 @@ void convert_header();
 bool file_exists(const char* filename);
 #ifdef COMFORT
   bool check_for_pcf_file();
-  void wait_for_key();
 #endif
-void error(int error_nr, std::string tmp_filename = "");
 std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
 long long fileSize64(const char* filename);
 void print64(long long i64);
 std::string temp_files_tag();
-long long get_time_ms();
 void printf_time(long long t);
-char get_char_with_echo();
-void print_work_sign(bool with_backspace);
 void print_debug_percent();
-void show_progress(float percent, bool use_backspaces, bool check_time);
 void ctrl_c_handler(int sig);
 
 class zLibMTF{
@@ -127,8 +121,6 @@ void fout_fput_vlint(unsigned long long v);
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
 void fout_fput_recon_data(const recompress_deflate_result&);
 void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
-int auto_detected_thread_count();
-int lzma_max_memory_default();
 
 #define P_NONE 0
 #define P_COMPRESS 1
@@ -210,7 +202,6 @@ class RecursionContext {
 
     bool anything_was_used;
     bool non_zlib_was_used;
-    long long sec_time;
 
     // Mp3 stuff
     long long suppress_mp3_type_until[16];

@@ -31,25 +31,6 @@
   #define V_BIT "32-bit"
 #endif
 
-// batch error levels
-constexpr auto RETURN_NOTHING_DECOMPRESSED = 2;
-constexpr auto ERR_DISK_FULL = 3;
-constexpr auto ERR_TEMP_FILE_DISAPPEARED = 4;
-constexpr auto ERR_IGNORE_POS_TOO_BIG = 5;
-constexpr auto ERR_IDENTICAL_BYTE_SIZE_TOO_BIG = 6;
-constexpr auto ERR_RECURSION_DEPTH_TOO_BIG = 7;
-constexpr auto ERR_ONLY_SET_RECURSION_DEPTH_ONCE = 8;
-constexpr auto ERR_ONLY_SET_MIN_SIZE_ONCE = 9;
-constexpr auto ERR_DONT_USE_SPACE = 10;
-constexpr auto ERR_MORE_THAN_ONE_OUTPUT_FILE = 11;
-constexpr auto ERR_MORE_THAN_ONE_INPUT_FILE = 12;
-constexpr auto ERR_CTRL_C = 13;
-constexpr auto ERR_INTENSE_MODE_LIMIT_TOO_BIG = 14;
-constexpr auto ERR_BRUTE_MODE_LIMIT_TOO_BIG = 15;
-constexpr auto ERR_ONLY_SET_LZMA_MEMORY_ONCE = 16;
-constexpr auto ERR_ONLY_SET_LZMA_THREAD_ONCE = 17;
-constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
-
 #define NOMINMAX
 
 #include <stdio.h>
@@ -65,16 +46,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include <random>
 #include <fcntl.h>
 #include <filesystem>
-#ifndef STDTHREAD_IMPORTED
-#define STDTHREAD_IMPORTED
-#include <thread>
-#endif
 #include <set>
-#ifdef MINGW
-#ifndef _GLIBCXX_HAS_GTHREADS
-#include "contrib\mingw_std_threads\mingw.thread.h"
-#endif // _GLIBCXX_HAS_GTHREADS
-#endif
 #ifdef _MSC_VER
 #include <io.h>
 #define ftruncate _chsize_s
@@ -107,8 +79,6 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 # define SET_BINARY_MODE(handle) ((void)0)
 #endif
 
-#include "contrib/bzip2/bzlib.h"
-#include "contrib/liblzma/precomp_xz.h"
 #include "contrib/giflib/precomp_gif.h"
 #include "contrib/packjpg/precomp_jpg.h"
 #include "contrib/packmp3/precomp_mp3.h"
@@ -119,7 +89,6 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 #include "contrib/brunsli/c/include/brunsli/jpeg_data_reader.h"
 #include "contrib/brunsli/c/include/brunsli/jpeg_data_writer.h"
 
-constexpr auto CHUNK = 262144; // 256 KB buffersize
 constexpr auto DIV3CHUNK = 262143; // DIV3CHUNK is a bit smaller/larger than CHUNK, so that DIV3CHUNK mod 3 = 0
 constexpr auto CHECKBUF_SIZE = 4096;
 constexpr auto COPY_BUF_SIZE = 512;
@@ -133,14 +102,10 @@ constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
 unsigned char copybuf[COPY_BUF_SIZE];
 
-unsigned char in[CHUNK];
-unsigned char out[CHUNK];
-
 #include "precomp.h"
 
-static char work_signs[5] = "|/-\\";
-int work_sign_var = 0;
-long long work_sign_start_time = get_time_ms();
+unsigned char in[CHUNK];
+unsigned char out[CHUNK];
 
 // recursion
 int recursion_depth = 0;
@@ -157,9 +122,6 @@ int conversion_from_method;
 int conversion_to_method;
 
 long long start_time;
-char lzma_progress_text[70];
-int old_lzma_progress_text_length = -1;
-int lzma_mib_total = 0, lzma_mib_written = 0;
 
 zLibMTF MTF;
 
@@ -225,6 +187,7 @@ LIBPRECOMP void get_copyright_msg(char* msg) {
 }
 
 void setSwitches(Switches switches) {
+  DEBUG_MODE = switches.DEBUG_MODE;
   g_precomp.switches = switches;
   g_precomp.ctx->compression_otf_method = switches.compression_method;
   if (switches.level_switch_used) {
@@ -853,7 +816,7 @@ int init(int argc, char* argv[]) {
           }
         case 'V':
           {
-            g_precomp.switches.DEBUG_MODE = true;
+            DEBUG_MODE = true;
             if (argv[i][2] != 0) { // Extra Parameters?
                 print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
                 exit(1);
@@ -1137,7 +1100,7 @@ int init(int argc, char* argv[]) {
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     if (min_ident_size_set) {
       print_to_console("\n");
       print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
@@ -1425,7 +1388,7 @@ int init_comfort(int argc, char* argv[]) {
 
           if (strcmp(value, "on") == 0) {
             print_to_console("INI: Enabled verbose mode\n");
-            g_precomp.switches.DEBUG_MODE = true;
+            DEBUG_MODE = true;
             valid_param = true;
           }
 
@@ -2178,7 +2141,7 @@ int init_comfort(int argc, char* argv[]) {
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     if (min_ident_size_set) {
       print_to_console("\n");
       print_to_console("Minimal ident size set to %i bytes\n", g_precomp.switches.min_ident_size);
@@ -2216,7 +2179,7 @@ int init_comfort(int argc, char* argv[]) {
 
 void denit_compress(std::string tmp_filename) {
   g_precomp.ctx->fout = nullptr;
-  if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
+  if ((recursion_depth == 0) && (!DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
@@ -2224,7 +2187,7 @@ void denit_compress(std::string tmp_filename) {
    long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
    if (recursion_depth == 0) {
      std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n";
-     if (!g_precomp.switches.DEBUG_MODE) {
+     if (!DEBUG_MODE) {
        print_to_console("%s", std::string(14, '\b').c_str());
        print_to_console("100.00% - " + result_print);
      }
@@ -2234,7 +2197,7 @@ void denit_compress(std::string tmp_filename) {
    }
   #else
    if (recursion_depth == 0) {
-    if (!g_precomp.switches.DEBUG_MODE) {
+    if (!DEBUG_MODE) {
     print_to_console(std::string(14,'\b').c_str());
     print_to_console("100.00%% - ");
     printf_time(get_time_ms() - start_time);
@@ -2291,7 +2254,7 @@ void denit_compress(std::string tmp_filename) {
 void denit_decompress(std::string tmp_filename) {
   #ifndef PRECOMPDLL
    if (recursion_depth == 0) {
-    if (!g_precomp.switches.DEBUG_MODE) {
+    if (!DEBUG_MODE) {
     print_to_console("%s", std::string(14,'\b').c_str());
     print_to_console("100.00%%\n");
     }
@@ -2300,7 +2263,7 @@ void denit_decompress(std::string tmp_filename) {
    }
   #else
    if (recursion_depth == 0) {
-    if (!g_precomp.switches.DEBUG_MODE) {
+    if (!DEBUG_MODE) {
     print_to_console(std::string(14,'\b').c_str());
     print_to_console("100.00%% - ");
     printf_time(get_time_ms() - start_time);
@@ -2310,14 +2273,14 @@ void denit_decompress(std::string tmp_filename) {
 }
 
 void denit_convert() {
-  if ((!g_precomp.switches.DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
+  if ((!DEBUG_MODE) && g_precomp.ctx->is_show_lzma_progress() && (conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
   long long fout_length = fileSize64(g_precomp.ctx->output_file_name.c_str());
   std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(g_precomp.ctx->fin_length) + "     \n";
 #ifndef PRECOMPDLL
-  if (!g_precomp.switches.DEBUG_MODE) {
+  if (!DEBUG_MODE) {
     print_to_console("%s", std::string(14, '\b').c_str());
     print_to_console("100.00% - " + result_print);
   }
@@ -2327,7 +2290,7 @@ void denit_convert() {
   print_to_console("\nDone.\n");
   printf_time(get_time_ms() - start_time);
 #else
-  if (!g_precomp.switches.DEBUG_MODE) {
+  if (!DEBUG_MODE) {
     print_to_console(std::string(14, '\b').c_str());
     print_to_console("100.00% - " + result_print);
     printf_time(get_time_ms() - start_time);
@@ -2888,7 +2851,7 @@ struct recompress_deflate_result {
 };
 
 void debug_deflate_detected(const recompress_deflate_result& rdres, const char* type) {
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     print_debug_percent();
     std::cout << "Possible zLib-Stream " << type << " found at position " << g_precomp.ctx->saved_input_file_pos << std::endl;
     std::cout << "Compressed size: " << rdres.compressed_stream_size << std::endl;
@@ -2905,7 +2868,7 @@ void debug_deflate_detected(const recompress_deflate_result& rdres, const char* 
 }
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type,
                                const unsigned hdr_length, const uint64_t rec_length) {
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     std::cout << "Decompressed data - " << type << std::endl;
     std::cout << "Header length: " << hdr_length << std::endl;
     if (rdres.zlib_perfect) {
@@ -3123,7 +3086,7 @@ bool try_reconstructing_deflate_multipng(IfStreamWrapper& fin, OfStreamWrapper& 
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
 void debug_sums(const recompress_deflate_result& rdres) {
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     sum_compressed += rdres.compressed_stream_size;
     sum_uncompressed += rdres.uncompressed_stream_size;
     sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
@@ -3133,7 +3096,7 @@ void debug_sums(const recompress_deflate_result& rdres) {
   }
 }
 void debug_pos() {
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     //print_to_console("deflate pos: i %I64d, o %I64d\n", (uint64_t)g_precomp.ctx->fin->tellg(), (uint64_t)g_precomp.ctx->fout->tellp());
   }
 }
@@ -3167,14 +3130,14 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
       if (img_bpc == 8) {
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
           bmp_header_type = 1;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             print_to_console("Image size did match (8 bit)\n");
           }
           g_precomp.statistics.recompressed_pdf_count_8_bit++;
           g_precomp.statistics.recompressed_pdf_count--;
         } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
           bmp_header_type = 2;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             print_to_console("Image size did match (24 bit)\n");
           }
           g_precomp.statistics.decompressed_pdf_count_8_bit--;
@@ -3182,7 +3145,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
           g_precomp.statistics.recompressed_pdf_count_24_bit++;
           g_precomp.statistics.recompressed_pdf_count--;
         } else {
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             print_to_console("Image size didn't match with stream size\n");
           }
           g_precomp.statistics.decompressed_pdf_count_8_bit--;
@@ -3328,7 +3291,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
     } else {
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("No matches\n");
       }
     }
@@ -3395,7 +3358,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
     } else {
       if (type == D_SWF && intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (type != D_BRUTE && brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("No matches\n");
       }
     }
@@ -3504,6 +3467,8 @@ bool compress_file(float min_percent, float max_percent) {
 
   g_precomp.ctx->comp_decomp_state = P_COMPRESS;
   g_precomp.ctx->fout->compression_otf_method = g_precomp.ctx->compression_otf_method;
+  g_precomp.ctx->fout->compression_otf_max_memory = g_precomp.switches.compression_otf_max_memory;
+  g_precomp.ctx->fout->compression_otf_thread_count = g_precomp.switches.compression_otf_thread_count;
   g_precomp.ctx->fout->init_otf_in_if_needed();
 
   g_precomp.ctx->decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
@@ -3516,7 +3481,7 @@ bool compress_file(float min_percent, float max_percent) {
   g_precomp.ctx->uncompressed_bytes_total = 0;
   g_precomp.ctx->uncompressed_bytes_written = 0;
 
-  if (!g_precomp.switches.DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
+  if (!DEBUG_MODE) show_progress(min_percent, (recursion_depth > 0), false);
 
   force_seekg(*g_precomp.ctx->fin->stream, 0, std::ios_base::beg);
   g_precomp.ctx->fin->read(reinterpret_cast<char*>(g_precomp.ctx->in_buf), IN_BUF_SIZE);
@@ -3541,7 +3506,7 @@ bool compress_file(float min_percent, float max_percent) {
     in_buf_pos = g_precomp.ctx->input_file_pos;
     g_precomp.ctx->cb = 0;
 
-    if (!g_precomp.switches.DEBUG_MODE) {
+    if (!DEBUG_MODE) {
       float percent = ((g_precomp.ctx->input_file_pos + g_precomp.ctx->uncompressed_bytes_written) / ((float)g_precomp.ctx->fin_length + g_precomp.ctx->uncompressed_bytes_total)) * (max_percent - min_percent) + min_percent;
       show_progress(percent, true, true);
     }
@@ -3562,7 +3527,7 @@ bool compress_file(float min_percent, float max_percent) {
     if (((g_precomp.ctx->in_buf[g_precomp.ctx->cb] == 'P') && (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 1] == 'K')) && (g_precomp.switches.use_zip)) {
       // local file header?
       if ((g_precomp.ctx->in_buf[g_precomp.ctx->cb + 2] == 3) && (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 3] == 4)) {
-        if (g_precomp.switches.DEBUG_MODE) {
+        if (DEBUG_MODE) {
         print_to_console("ZIP header detected\n");
         print_debug_percent();
         std::cout << "ZIP header detected at position " << g_precomp.ctx->input_file_pos << std::endl;
@@ -3571,7 +3536,7 @@ bool compress_file(float min_percent, float max_percent) {
         unsigned int uncompressed_size = (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 25] << 24) + (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 24] << 16) + (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 23] << 8) + g_precomp.ctx->in_buf[g_precomp.ctx->cb + 22];
         unsigned int filename_length = (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 27] << 8) + g_precomp.ctx->in_buf[g_precomp.ctx->cb + 26];
         unsigned int extra_field_length = (g_precomp.ctx->in_buf[g_precomp.ctx->cb + 29] << 8) + g_precomp.ctx->in_buf[g_precomp.ctx->cb + 28];
-        if (g_precomp.switches.DEBUG_MODE) {
+        if (DEBUG_MODE) {
         print_to_console("compressed size: %i\n", compressed_size);
         print_to_console("uncompressed size: %i\n", uncompressed_size);
         print_to_console("file name length: %i\n", filename_length);
@@ -3785,7 +3750,7 @@ bool compress_file(float min_percent, float max_percent) {
               }
 
             if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
-              if (g_precomp.switches.DEBUG_MODE) {
+              if (DEBUG_MODE) {
                 print_to_console("Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
               }
             }
@@ -4215,7 +4180,7 @@ bool compress_file(float min_percent, float max_percent) {
             }
           } else if (type > 0) {
             g_precomp.ctx->suppress_mp3_type_until[type] = position_length_sum;
-            if (g_precomp.switches.DEBUG_MODE) {
+            if (DEBUG_MODE) {
               print_debug_percent();
               std::cout << "Unsupported MP3 type found at position " << g_precomp.ctx->saved_input_file_pos << ", length " << mp3_length << std::endl;
               print_to_console("Type: %s\n", filetype_description[type]);
@@ -4460,7 +4425,7 @@ void decompress_file() {
   std::string tempfile2;
   
   if (recursion_depth == 0) {
-    if (!g_precomp.switches.DEBUG_MODE) show_progress(0, false, false);
+    if (!DEBUG_MODE) show_progress(0, false, false);
   }
 
   fin_pos = g_precomp.ctx->fin->tellg();
@@ -4471,7 +4436,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
-  if ((recursion_depth == 0) && (!g_precomp.switches.DEBUG_MODE)) {
+  if ((recursion_depth == 0) && (!DEBUG_MODE)) {
     float percent = (fin_pos / (float)g_precomp.ctx->fin_length) * 100;
     show_progress(percent, true, true);
   }
@@ -4484,7 +4449,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
 
     if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
 
-    if (g_precomp.switches.DEBUG_MODE) {
+    if (DEBUG_MODE) {
     std::cout << "Uncompressed data, length=" << uncompressed_data_length << std::endl;
     }
 
@@ -4505,7 +4470,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       int bmp_c = (header1 >> 6);
 
       debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         if (bmp_c == 1) print_to_console("Skipping BMP header (8-Bit)\n");
         if (bmp_c == 2) print_to_console("Skipping BMP header (24-Bit)\n");
       }
@@ -4644,7 +4609,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
     }
     case D_GIF: { // GIF recompression
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Decompressed data - GIF\n");
       }
 
@@ -4660,7 +4625,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       gDiff.GIFDiffIndex = fin_fget_vlint();
       gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
       g_precomp.ctx->fin->own_fread(gDiff.GIFDiff, 1, gDiff.GIFDiffIndex);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
       }
       gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
@@ -4676,7 +4641,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -4754,7 +4719,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       tempfile += "jpg";
       tempfile2 += "jpg";
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Decompressed data - JPG\n");
       }
 
@@ -4765,7 +4730,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -4818,7 +4783,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       }
 
       if (!recompress_success) {
-        if (g_precomp.switches.DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
+        if (DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
         print_to_console("Error recompressing data!");
         exit(1);
       }
@@ -4923,7 +4888,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
     case D_BASE64: { // Base64 recompression
       tempfile += "base64";
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Decompressed data - Base64\n");
       }
 
@@ -4933,7 +4898,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       // restore Base64 "header"
       int base64_header_length = fin_fget_vlint();
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("Base64 header length: %i\n", base64_header_length);
       }
       g_precomp.ctx->fin->own_fread(in, 1, base64_header_length);
@@ -4965,7 +4930,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
         recursion_data_length = fin_fget_vlint();
       }
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         if (recursion_used) {
           std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
@@ -4993,7 +4958,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
     case D_BZIP2: { // bZip2 recompression
       tempfile += "bzip2";
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Decompressed data - bZip2\n");
       }
 
@@ -5003,7 +4968,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       bool recursion_used = ((header1 & 128) == 128);
       int level = header2;
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Compression level: %i\n", level);
       }
 
@@ -5021,7 +4986,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
         recursion_data_length = fin_fget_vlint();
       }
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         if (recursion_used) {
           std::cout << "Recursion data length: " << recursion_data_length << std::endl;
         } else {
@@ -5072,14 +5037,14 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       tempfile += "mp3";
       tempfile2 += "mp3";
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Decompressed data - MP3\n");
       }
 
       long long recompressed_data_length = fin_fget_vlint();
       long long decompressed_data_length = fin_fget_vlint();
 
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       std::cout << "Recompressed length: " << recompressed_data_length << " - decompressed length: " << decompressed_data_length << std::endl;
       }
 
@@ -5114,7 +5079,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       }
 
       if (!recompress_success) {
-        if (g_precomp.switches.DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
+        if (DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
         print_to_console("Error recompressing data!");
         exit(1);
       }
@@ -5199,9 +5164,11 @@ void convert_file() {
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
   g_precomp.ctx->fin->compression_otf_method = conversion_from_method;
   g_precomp.ctx->fout->compression_otf_method = conversion_to_method;
+  g_precomp.ctx->fout->compression_otf_max_memory = g_precomp.switches.compression_otf_max_memory;
+  g_precomp.ctx->fout->compression_otf_thread_count = g_precomp.switches.compression_otf_thread_count;
   g_precomp.ctx->fout->init_otf_in_if_needed();
 
-  if (!g_precomp.switches.DEBUG_MODE) show_progress(0, false, false);
+  if (!DEBUG_MODE) show_progress(0, false, false);
 
   for (;;) {
     bytes_read = g_precomp.ctx->fin->own_fread(copybuf, 1, COPY_BUF_SIZE);
@@ -5224,7 +5191,7 @@ void convert_file() {
 
     g_precomp.ctx->input_file_pos = g_precomp.ctx->fin->tellg();
     print_work_sign(true);
-    if (!g_precomp.switches.DEBUG_MODE) {
+    if (!DEBUG_MODE) {
       float percent = (g_precomp.ctx->input_file_pos / (float)g_precomp.ctx->fin_length) * 100;
       show_progress(percent, true, true);
     }
@@ -5260,7 +5227,7 @@ void try_recompress_bzip2(IfStreamWrapper& origfile, int level, long long& compr
             if (g_precomp.ctx->identical_bytes > -1) { // successfully recompressed?
               if ((g_precomp.ctx->identical_bytes > g_precomp.ctx->best_identical_bytes)  || ((g_precomp.ctx->identical_bytes == g_precomp.ctx->best_identical_bytes) && (g_precomp.ctx->penalty_bytes_len < g_precomp.ctx->best_penalty_bytes_len))) {
                 if (g_precomp.ctx->identical_bytes > g_precomp.switches.min_ident_size) {
-                  if (g_precomp.switches.DEBUG_MODE) {
+                  if (DEBUG_MODE) {
                   std::cout << "Identical recompressed bytes: " << g_precomp.ctx->identical_bytes << " of " << compressed_stream_size << std::endl;
                   std::cout << "Identical decompressed bytes: " << g_precomp.ctx->identical_bytes_decomp << " of " << decomp_bytes_total << std::endl;
                   }
@@ -5287,7 +5254,7 @@ void try_recompress_bzip2(IfStreamWrapper& origfile, int level, long long& compr
             g_precomp.ctx->best_penalty_bytes_len = 0;
 					}
 				} else {
-					if (g_precomp.switches.DEBUG_MODE) {
+					if (DEBUG_MODE) {
 					print_to_console("Not enough identical recompressed bytes\n");
 					}
 				}
@@ -5440,18 +5407,6 @@ void progress_update(long long bytes_written) {
   show_progress(percent, true, true);
 }
 
-void OfStreamWrapper::lzma_progress_update() {
-  float percent = ((g_precomp.ctx->input_file_pos + g_precomp.ctx->uncompressed_bytes_written) / ((float)g_precomp.ctx->fin_length + g_precomp.ctx->uncompressed_bytes_total)) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent;
-
-  uint64_t progress_in = 0, progress_out = 0;
-
-  lzma_get_progress(this->otf_xz_stream_c.get(), &progress_in, &progress_out);
-
-  lzma_mib_total = this->otf_xz_stream_c->total_in / (1024 * 1024);
-  lzma_mib_written = progress_in / (1024 * 1024);
-  show_progress(percent, true, true);
-}
-
 void fast_copy(IfStreamWrapper& file1, OfStreamWrapper& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
@@ -5465,7 +5420,7 @@ void fast_copy(IfStreamWrapper& file1, OfStreamWrapper& file2, long long bytecou
 
     if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) {
       print_work_sign(true);
-      if ((update_progress) && (!g_precomp.switches.DEBUG_MODE)) progress_update(i * COPY_BUF_SIZE);
+      if ((update_progress) && (!DEBUG_MODE)) progress_update(i * COPY_BUF_SIZE);
     }
   }
   if (remaining_bytes != 0) {
@@ -5473,7 +5428,7 @@ void fast_copy(IfStreamWrapper& file1, OfStreamWrapper& file2, long long bytecou
     file2.own_fwrite(copybuf, 1, remaining_bytes, false, update_progress);
   }
 
-  if ((update_progress) && (!g_precomp.switches.DEBUG_MODE)) g_precomp.ctx->uncompressed_bytes_written += bytecount;
+  if ((update_progress) && (!DEBUG_MODE)) g_precomp.ctx->uncompressed_bytes_written += bytecount;
 }
 
 void fast_copy(IfStreamWrapper& file, unsigned char* mem, long long bytecount) {
@@ -5508,193 +5463,6 @@ void fast_copy(unsigned char* mem, OfStreamWrapper& file, long long bytecount) {
   if (remaining_bytes != 0) {
     file.own_fwrite(mem + maxi * COPY_BUF_SIZE, 1, remaining_bytes);
   }
-}
-
-void OfStreamWrapper::own_fwrite(const void *ptr, size_t size, size_t count, bool final_byte, bool update_lzma_progress) {
-  switch (this->compression_otf_method) {
-    case OTF_NONE: {
-      this->stream->write(static_cast<const char*>(ptr), size * count);
-      if (this->bad()) {
-        error(ERR_DISK_FULL);
-      }
-      break;
-    }
-    case OTF_BZIP2: { // bZip2
-      init_otf_in_if_needed();
-      int flush, ret;
-      unsigned have;
-
-      print_work_sign(true);
-
-      flush = final_byte ? BZ_FINISH : BZ_RUN;
-
-      otf_bz2_stream_c->avail_in = size * count;
-      otf_bz2_stream_c->next_in = (char*)ptr;
-      do {
-        otf_bz2_stream_c->avail_out = CHUNK;
-        otf_bz2_stream_c->next_out = (char*)otf_out.get();
-        ret = BZ2_bzCompress(otf_bz2_stream_c.get(), flush);
-        have = CHUNK - otf_bz2_stream_c->avail_out;
-        this->write(reinterpret_cast<char*>(otf_out.get()), have);
-        if (this->bad()) {
-          error(ERR_DISK_FULL);
-        }
-      } while (otf_bz2_stream_c->avail_out == 0);
-      if (ret < 0) {
-        print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
-        exit(1);
-      }
-      break;
-    }
-    case OTF_XZ_MT: {
-      init_otf_in_if_needed();
-      lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
-      lzma_ret ret;
-      unsigned have;
-
-      otf_xz_stream_c->avail_in = size * count;
-      otf_xz_stream_c->next_in = (uint8_t*)ptr;
-      do {
-        print_work_sign(true);
-        otf_xz_stream_c->avail_out = CHUNK;
-        otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
-        ret = lzma_code(otf_xz_stream_c.get(), action);
-        have = CHUNK - otf_xz_stream_c->avail_out;
-        this->write(reinterpret_cast<char*>(otf_out.get()), have);
-        if (this->bad()) {
-          error(ERR_DISK_FULL);
-        }
-        if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-          const char* msg;
-          switch (ret) {
-          case LZMA_MEM_ERROR:
-            msg = "Memory allocation failed";
-            break;
-
-          case LZMA_DATA_ERROR:
-            msg = "File size limits exceeded";
-            break;
-
-          default:
-            msg = "Unknown error, possibly a bug";
-            break;
-          }
-
-          print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
-  #ifdef COMFORT
-          wait_for_key();
-  #endif // COMFORT
-          exit(1);
-        } // .avail_out == 0
-        if ((!g_precomp.switches.DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
-      } while ((otf_xz_stream_c->avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
-      break;
-    }
-  }
-}
-
-size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
-  switch (this->compression_otf_method) {
-    case OTF_NONE: {
-      this->read(static_cast<char*>(ptr), size * count);
-      return this->gcount();
-    }
-    case OTF_BZIP2: {
-      init_otf_in_if_needed();
-      int ret;
-      int bytes_read = 0;
-
-      print_work_sign(true);
-
-      this->otf_bz2_stream_d->avail_out = size * count;
-      this->otf_bz2_stream_d->next_out = (char*)ptr;
-
-      do {
-
-        if (this->otf_bz2_stream_d->avail_in == 0) {
-          this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-          this->otf_bz2_stream_d->avail_in = this->gcount();
-          this->otf_bz2_stream_d->next_in = (char*)otf_in.get();
-          if (this->otf_bz2_stream_d->avail_in == 0) break;
-        }
-
-        ret = BZ2_bzDecompress(otf_bz2_stream_d.get());
-        if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
-          (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
-          print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
-          exit(1);
-        }
-
-        if (ret == BZ_STREAM_END) this->decompress_otf_end = true;
-
-      } while (this->otf_bz2_stream_d->avail_out > 0);
-
-      bytes_read = (size * count - this->otf_bz2_stream_d->avail_out);
-
-      return bytes_read;
-    }
-    case OTF_XZ_MT: {
-      init_otf_in_if_needed();
-      lzma_action action = LZMA_RUN;
-      lzma_ret ret;
-
-      otf_xz_stream_d->avail_out = size * count;
-      otf_xz_stream_d->next_out = (uint8_t *)ptr;
-
-      do {
-        print_work_sign(true);
-        if ((otf_xz_stream_d->avail_in == 0) && !this->stream->eof()) {
-          otf_xz_stream_d->next_in = (uint8_t *)otf_in.get();
-          this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-          otf_xz_stream_d->avail_in = this->gcount();
-
-          if (this->bad()) {
-            print_to_console("ERROR: Could not read input file\n");
-            exit(1);
-          }
-        }
-
-        ret = lzma_code(otf_xz_stream_d.get(), action);
-
-        if (ret == LZMA_STREAM_END) {
-          this->decompress_otf_end = true;
-          break;
-        }
-
-        if (ret != LZMA_OK) {
-          const char *msg;
-          switch (ret) {
-          case LZMA_MEM_ERROR:
-            msg = "Memory allocation failed";
-            break;
-          case LZMA_FORMAT_ERROR:
-            msg = "Wrong file format";
-            break;
-          case LZMA_OPTIONS_ERROR:
-            msg = "Unsupported compression options";
-            break;
-          case LZMA_DATA_ERROR:
-          case LZMA_BUF_ERROR:
-            msg = "Compressed file is corrupt";
-            break;
-          default:
-            msg = "Unknown error, possibly a bug";
-            break;
-          }
-
-          print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
-#ifdef COMFORT
-          wait_for_key();
-#endif // COMFORT
-          exit(1);
-        }
-      } while (otf_xz_stream_d->avail_out > 0);
-
-      return size * count - otf_xz_stream_d->avail_out;
-    }
-  }
-
-  return 0;
 }
 
 bool file_exists(const char* filename) {
@@ -5846,7 +5614,7 @@ void try_decompression_png (int windowbits, PrecompTmpFile& tmpfile) {
     } else {
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("No matches\n");
       }
     }
@@ -5939,7 +5707,7 @@ void try_decompression_png_multi(IfStreamWrapper& fpng, int windowbits, PrecompT
     } else {
       if (intense_mode_is_active()) g_precomp.ctx->intense_ignore_offsets->insert(g_precomp.ctx->input_file_pos - 2);
       if (brute_mode_is_active()) g_precomp.ctx->brute_ignore_offsets->insert(g_precomp.ctx->input_file_pos);
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("No matches\n");
       }
     }
@@ -6307,7 +6075,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
   bool recompress_success_needed = true;
 
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
   print_debug_percent();
   std::cout << "Possible GIF found at position " << g_precomp.ctx->input_file_pos << std::endl;;
   }
@@ -6328,7 +6096,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
       return;
     }
 
-    if (g_precomp.switches.DEBUG_MODE) {
+    if (DEBUG_MODE) {
       std::cout << "Can be decompressed to " << decomp_length << " bytes" << std::endl;
     }
   }
@@ -6355,11 +6123,11 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
     frecomp2.close();
 
     if (g_precomp.ctx->best_identical_bytes < gif_length) {
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Recompression failed\n");
       }
     } else {
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
       print_to_console("Recompression successful\n");
       }
       recompress_success_needed = true;
@@ -6392,7 +6160,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
         // store diff bytes
         fout_fput_vlint(gDiff.GIFDiffIndex);
-        if(g_precomp.switches.DEBUG_MODE) {
+        if(DEBUG_MODE) {
           if (gDiff.GIFDiffIndex > 0)
             print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
         }
@@ -6402,7 +6170,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
         // store penalty bytes, if any
         if (g_precomp.ctx->best_penalty_bytes_len != 0) {
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
           }
 
@@ -6430,7 +6198,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
 
   } else {
 
-    if (g_precomp.switches.DEBUG_MODE) {
+    if (DEBUG_MODE) {
     print_to_console("No matches\n");
     }
 
@@ -6462,7 +6230,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
   std::string decompressed_jpg_filename = tmpfile.file_path + "_";
   tmpfile.close();
 
-        if (g_precomp.switches.DEBUG_MODE) {
+        if (DEBUG_MODE) {
           print_debug_percent();
           if (progressive_jpg) {
             print_to_console("Possible JPG (progressive) found at position ");
@@ -6498,7 +6266,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  bool brunsli_success = false;
 
 		  if (g_precomp.switches.use_brunsli) {
-			  if (g_precomp.switches.DEBUG_MODE) {
+			  if (DEBUG_MODE) {
 				  print_to_console("Trying to compress using brunsli...\n");
 			  }
 			  brunsli::JPEGData jpegData;
@@ -6517,7 +6285,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 			  }
 			  else {
 				  if (jpegData.error == brunsli::JPEGReadError::HUFFMAN_TABLE_NOT_FOUND) {
-					  if (g_precomp.switches.DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
+					  if (DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
 					  // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
 					  bool found_ffda = false;
 					  bool found_ff = false;
@@ -6566,7 +6334,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 					  }
 				  }
 			  }
-			  if (g_precomp.switches.DEBUG_MODE && !brunsli_success) {
+			  if (DEBUG_MODE && !brunsli_success) {
 				  if (g_precomp.switches.use_packjpg_fallback) {
 					  print_to_console("Brunsli compression failed, using packJPG fallback...\n");
 				  } else {
@@ -6582,7 +6350,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 			  brotli_used = false;
 		  }
         } else if (g_precomp.switches.use_packjpg_fallback) { // large stream => use temporary files
-		  if (g_precomp.switches.DEBUG_MODE) {
+		  if (DEBUG_MODE) {
 			print_to_console("JPG too large for brunsli, using packJPG fallback...\n");
 		  }
 		  // try to decompress at current position
@@ -6610,7 +6378,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         }
 
         if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (g_precomp.switches.use_mjpeg) && (g_precomp.switches.use_packjpg_fallback)) {
-          if (g_precomp.switches.DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
+          if (DEBUG_MODE) print_to_console("huffman table missing, trying to use Motion JPEG DHT\n");
           // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
           bool found_ffda = false;
           bool found_ff = false;
@@ -6676,7 +6444,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         }
 
         if ((!recompress_success) && (g_precomp.switches.use_packjpg_fallback)) {
-          if (g_precomp.switches.DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
+          if (DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6713,7 +6481,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 
         if (jpg_success) {
 
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
           std::cout << "Best match: " << g_precomp.ctx->best_identical_bytes << " bytes, recompressed to " << g_precomp.ctx->best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
@@ -6748,7 +6516,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
           g_precomp.ctx->cb += g_precomp.ctx->best_identical_bytes - 1;
 
         } else {
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
           print_to_console("No matches\n");
           }
         }
@@ -6761,7 +6529,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
   std::string decompressed_mp3_filename = tmpfile.file_path + "_";
   tmpfile.close();
 
-        if (g_precomp.switches.DEBUG_MODE) {
+        if (DEBUG_MODE) {
           print_debug_percent();
           std::cout << "Possible MP3 found at position " << g_precomp.ctx->saved_input_file_pos << ", length " << mp3_length << std::endl;
         }
@@ -6809,7 +6577,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
             if ((pos > 0) && (pos < mp3_length)) {
               mp3_length = pos;
 
-              if (g_precomp.switches.DEBUG_MODE) print_to_console("Too much garbage data at the end, retry with new length %i\n", pos);
+              if (DEBUG_MODE) print_to_console("Too much garbage data at the end, retry with new length %i\n", pos);
 
               if (in_memory) {
                 pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
@@ -6830,22 +6598,22 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "big value pairs out of bounds", 29) == 0)) {
           g_precomp.ctx->suppress_mp3_big_value_pairs_sum = g_precomp.ctx->saved_input_file_pos + mp3_length;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << g_precomp.ctx->suppress_mp3_big_value_pairs_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "non-zero padbits found", 22) == 0)) {
           g_precomp.ctx->suppress_mp3_non_zero_padbits_sum = g_precomp.ctx->saved_input_file_pos + mp3_length;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << g_precomp.ctx->suppress_mp3_non_zero_padbits_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent use of emphasis", 28) == 0)) {
           g_precomp.ctx->suppress_mp3_inconsistent_emphasis_sum = g_precomp.ctx->saved_input_file_pos + mp3_length;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << g_precomp.ctx->suppress_mp3_inconsistent_emphasis_sum << " to avoid slowdown" << std::endl;
           }
         } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent original bit", 25) == 0)) {
           g_precomp.ctx->suppress_mp3_inconsistent_original_bit = g_precomp.ctx->saved_input_file_pos + mp3_length;
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
             std::cout << "Ignoring following streams with position/length sum " << g_precomp.ctx->suppress_mp3_inconsistent_original_bit << " to avoid slowdown" << std::endl;
           }
         }
@@ -6854,7 +6622,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
         g_precomp.statistics.decompressed_mp3_count++;
 
         if (!recompress_success) {
-          if (g_precomp.switches.DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
+          if (DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
         }
 
         if (!in_memory) {
@@ -6887,7 +6655,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
 
         if (mp3_success) {
 
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
           std::cout << "Best match: " << g_precomp.ctx->best_identical_bytes << " bytes, recompressed to " << g_precomp.ctx->best_identical_bytes_decomp << " bytes" << std::endl;
           }
 
@@ -6918,7 +6686,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
           g_precomp.ctx->cb += g_precomp.ctx->best_identical_bytes - 1;
 
         } else {
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
           print_to_console("No matches\n");
           }
         }
@@ -7027,7 +6795,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
           g_precomp.statistics.decompressed_streams_count++;
           g_precomp.statistics.decompressed_bzip2_count++;
 
-          if (g_precomp.switches.DEBUG_MODE) {
+          if (DEBUG_MODE) {
           print_debug_percent();
           std::cout << "Possible bZip2-Stream found at position " << g_precomp.ctx->saved_input_file_pos << ", compression level = " << compression_level << std::endl;
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
@@ -7046,7 +6814,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
             g_precomp.statistics.recompressed_streams_count++;
             g_precomp.statistics.recompressed_bzip2_count++;
 
-            if (g_precomp.switches.DEBUG_MODE) {
+            if (DEBUG_MODE) {
             std::cout << "Best match: " << g_precomp.ctx->best_identical_bytes << " bytes, decompressed to " << g_precomp.ctx->best_identical_bytes_decomp << " bytes" << std::endl;
             }
 
@@ -7076,7 +6844,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
 
             // store penalty bytes, if any
             if (g_precomp.ctx->best_penalty_bytes_len != 0) {
-              if (g_precomp.switches.DEBUG_MODE) {
+              if (DEBUG_MODE) {
                 print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
               }
               fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
@@ -7107,7 +6875,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
             g_precomp.ctx->cb += g_precomp.ctx->best_identical_bytes - 1;
 
           } else {
-            if (g_precomp.switches.DEBUG_MODE) {
+            if (DEBUG_MODE) {
             print_to_console("No matches\n");
             }
           }
@@ -7357,7 +7125,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       g_precomp.ctx->identical_bytes = ftempout.tellg();
     }
 
-    if (g_precomp.switches.DEBUG_MODE) {
+    if (DEBUG_MODE) {
       print_debug_percent();
       std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << g_precomp.ctx->saved_input_file_pos << std::endl;
       std::cout << "Can be decoded to " << g_precomp.ctx->identical_bytes << " bytes" << std::endl;
@@ -7393,7 +7161,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
     if (g_precomp.ctx->identical_bytes_decomp > g_precomp.switches.min_ident_size) {
       g_precomp.statistics.recompressed_streams_count++;
       g_precomp.statistics.recompressed_base64_count++;
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         std::cout << "Match: encoded to " << g_precomp.ctx->identical_bytes_decomp << " bytes" << std::endl;
       }
 
@@ -7455,83 +7223,13 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       g_precomp.ctx->cb += g_precomp.ctx->identical_bytes_decomp - 1;
     }
     else {
-      if (g_precomp.switches.DEBUG_MODE) {
+      if (DEBUG_MODE) {
         print_to_console("No match\n");
       }
     }
 
   }
 
-}
-
-#ifdef COMFORT
-void wait_for_key() {
-  print_to_console("\nPress any key to continue\n");
-  get_char_with_echo();
-}
-#endif
-
-void error(int error_nr, std::string tmp_filename) {
-  print_to_console("\nERROR %i: ", error_nr);
-  switch (error_nr) {
-    case ERR_IGNORE_POS_TOO_BIG:
-      print_to_console("Ignore position too big");
-      break;
-    case ERR_IDENTICAL_BYTE_SIZE_TOO_BIG:
-      print_to_console("Identical bytes size bigger than 4 GB");
-      break;
-    case ERR_ONLY_SET_MIN_SIZE_ONCE:
-      print_to_console("Minimal identical size can only be set once");
-      break;
-    case ERR_MORE_THAN_ONE_OUTPUT_FILE:
-      print_to_console("More than one output file given");
-      break;
-    case ERR_MORE_THAN_ONE_INPUT_FILE:
-      print_to_console("More than one input file given");
-      break;
-    case ERR_DONT_USE_SPACE:
-      print_to_console("Please don't use a space between the -o switch and the output filename");
-      break;
-    case ERR_TEMP_FILE_DISAPPEARED:
-      print_to_console("Temporary file %s disappeared", tmp_filename.c_str());
-      break;
-    case ERR_DISK_FULL:
-      print_to_console("There is not enough space on disk");
-      // delete output file
-      //g_precomp.ctx->fout->close();
-      remove(g_precomp.ctx->output_file_name.c_str());
-      break;
-    case ERR_RECURSION_DEPTH_TOO_BIG:
-      print_to_console("Recursion depth too big");
-      break;
-    case ERR_ONLY_SET_RECURSION_DEPTH_ONCE:
-      print_to_console("Recursion depth can only be set once");
-      break;
-    case ERR_CTRL_C:
-      print_to_console("CTRL-C detected");
-      break;
-    case ERR_INTENSE_MODE_LIMIT_TOO_BIG:
-      print_to_console("Intense mode level limit too big");
-      break;
-    case ERR_BRUTE_MODE_LIMIT_TOO_BIG:
-      print_to_console("Brute mode level limit too big");
-      break;
-    case ERR_ONLY_SET_LZMA_MEMORY_ONCE:
-      print_to_console("LZMA maximal memory can only be set once");
-      break;
-    case ERR_ONLY_SET_LZMA_THREAD_ONCE:
-      print_to_console("LZMA thread count can only be set once");
-      break;
-    default:
-      print_to_console("Unknown error");
-  }
-  print_to_console("\n");
-
-  #ifdef COMFORT
-    wait_for_key();
-  #endif
-
-  exit(error_nr);
 }
 
 std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
@@ -7549,7 +7247,7 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
 
     exit(1);
   }
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     print_to_console("Access problem for %s\n", filename);
     print_to_console("Time for getting access: %li ms\n", (long)(get_time_ms() - timeoutstart));
   }
@@ -7670,7 +7368,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx->compression_otf_method = OTF_NONE;
 
   recursion_depth++;
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     print_to_console("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   tmp_r.success = compress_file(recursion_min_percent, recursion_max_percent);
@@ -7694,7 +7392,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   if (rescue_non_zlib_was_used)
     g_precomp.ctx->non_zlib_was_used = true;
 
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     if (tmp_r.success) {
       print_to_console("Recursion streams found\n");
     } else {
@@ -7755,7 +7453,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   g_precomp.ctx->compression_otf_method = OTF_NONE;
 
   recursion_depth++;
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     print_to_console("Recursion start - new recursion depth %i\n", recursion_depth);
   }
   decompress_file();
@@ -7765,7 +7463,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   recursion_depth--;
   recursion_pop();
 
-  if (g_precomp.switches.DEBUG_MODE) {
+  if (DEBUG_MODE) {
     print_to_console("Recursion end - back to recursion depth %i\n", recursion_depth);
   }
 
@@ -7963,37 +7661,6 @@ long long fin_fget_vlint() {
   return v + o + (((long long)c) << s);
 }
 
-int auto_detected_thread_count() {
-  int threads = std::thread::hardware_concurrency();
-  if (threads == 0) threads = 2;
-
-  return threads;
-}
-
-// Return maximal memory to use per default for LZMA in MiB
-// Use only 1 GiB in the 32-bit windows variant
-// because of the 2 or 3 GiB limit on these systems
-int lzma_max_memory_default() {
-  int max_memory = 2048;
-  #ifndef __unix
-  #ifndef BIT64
-  max_memory = 1024;
-  #endif
-  #endif
-  return max_memory;
-}
-
-// get current time in ms
-long long get_time_ms() {
-  #ifndef __unix
-    return GetTickCount();
-  #else
-    timeval t;
-    gettimeofday(&t, NULL);
-    return (t.tv_sec * 1000) + (t.tv_usec / 1000);
-  #endif
-}
-
 // nice time output, input t in ms
 // 2^32 ms maximum, so will display incorrect negative values after about 49 days
 void printf_time(long long t) {
@@ -8011,60 +7678,8 @@ void printf_time(long long t) {
   }
 }
 
-char get_char_with_echo() {
-  #ifndef __unix
-    return getche();
-  #else
-    return fgetc(stdin);
-  #endif
-}
-
-void print_work_sign(bool with_backspace) {
-  if (g_precomp.switches.DEBUG_MODE) return;
-  if ((get_time_ms() - work_sign_start_time) >= 250) {
-    work_sign_var = (work_sign_var + 1) % 4;
-    work_sign_start_time = get_time_ms();
-    if (with_backspace) print_to_console("\b\b\b\b\b\b");
-    print_to_console("%c     ", work_signs[work_sign_var]);
-  } else if (!with_backspace) {
-    print_to_console("%c     ", work_signs[work_sign_var]);
-  }
-}
-
 void print_debug_percent() {
   print_to_console("(%.2f%%) ", (g_precomp.ctx->input_file_pos / (float)g_precomp.ctx->fin_length) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent);
-}
-
-void show_progress(float percent, bool use_backspaces, bool check_time) {
-  if (!check_time || ((get_time_ms() - g_precomp.ctx->sec_time) >= 250)) {
-    if (use_backspaces) {
-      print_to_console("%s", std::string(6,'\b').c_str()); // backspace to remove work sign and 5 extra spaces
-    }
-
-    bool new_lzma_text = false;
-    if ((g_precomp.ctx->is_show_lzma_progress()) && ((g_precomp.ctx->comp_decomp_state == P_COMPRESS) || ((g_precomp.ctx->comp_decomp_state == P_CONVERT) && (conversion_to_method == OTF_XZ_MT)))) {
-      int snprintf_ret = snprintf(lzma_progress_text, 70, "lzma total/written/left: %i/%i/%i MiB ", lzma_mib_total, lzma_mib_written, lzma_mib_total - lzma_mib_written);
-      if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
-        new_lzma_text = true;
-        if ((old_lzma_progress_text_length > -1) && (use_backspaces)) {
-          print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
-        }
-        old_lzma_progress_text_length = snprintf_ret;
-      }
-    }
-
-    if (use_backspaces) {
-      print_to_console("%s", std::string(8,'\b').c_str()); // backspaces to remove output from %6.2f%
-    }
-    print_to_console("%6.2f%% ", percent);
-
-    if (new_lzma_text) {
-      print_to_console("%s", lzma_progress_text);
-    }
-
-    print_work_sign(false);
-    g_precomp.ctx->sec_time = get_time_ms();
-  }
 }
 
 void ctrl_c_handler(int sig) {
