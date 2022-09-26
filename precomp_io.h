@@ -16,28 +16,6 @@ enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzm
 int lzma_max_memory_default();
 
 template <typename T>
-class StreamWrapper_Base
-{
-public:
-  std::unique_ptr<T> stream = std::unique_ptr<T>(new T());
-
-  bool good() const
-  {
-    return stream->good();
-  }
-
-  bool eof() const
-  {
-    return stream->eof();
-  }
-
-  bool bad() const
-  {
-    return stream->bad();
-  }
-};
-
-template <typename T>
 class Precomp_IStream_Base : public T
 {
   static_assert(std::is_base_of_v<std::istream, T>, "Precomp_IStream must get an std::istream derivative as template parameter");
@@ -124,13 +102,13 @@ public:
 };
 
 template <typename T>
-class OStreamWrapper_Base : public StreamWrapper_Base<T>
+class Precomp_OStream : public T
 {
   static_assert(std::is_base_of_v<std::ostream, T>, "OStreamWrapper must get an std::ostream derivative as template parameter");
 public:
   void rdbuf(std::streambuf* streambuffer)
   {
-    std::ostream& stream_ref = *StreamWrapper_Base<T>::stream;
+    std::ostream& stream_ref = *this;
     stream_ref.rdbuf(streambuffer);
   }
 
@@ -184,44 +162,16 @@ public:
       );
     }
   }
-
-  T& write(char* buf, std::streamsize size)
-  {
-    StreamWrapper_Base<T>::stream->write(buf, size);
-    return *StreamWrapper_Base<T>::stream;
-  }
-
-  T& put(char chr)
-  {
-    StreamWrapper_Base<T>::stream->put(chr);
-    return *StreamWrapper_Base<T>::stream;
-  }
-
-  T& flush()
-  {
-    StreamWrapper_Base<T>::stream->flush();
-    return *StreamWrapper_Base<T>::stream;
-  }
-
-  T& seekp(std::ostream::off_type offset, std::ostream::seekdir way)
-  {
-    StreamWrapper_Base<T>::stream->seekp(offset, way);
-    return *StreamWrapper_Base<T>::stream;
-  }
-
-  std::ostream::traits_type::pos_type tellp()
-  {
-    return StreamWrapper_Base<T>::stream->tellp();
-  }
 };
 
 template <typename T>
-class OStreamWrapper : public OStreamWrapper_Base<T> {};
+class OStreamWrapper : public Precomp_OStream<T> {};
 
-class OfStreamWrapper : public OStreamWrapper_Base<std::ofstream>
+class Precomp_OfStream : public Precomp_OStream<std::ofstream>
 {
+  Precomp_OfStream& own_fwrite(const void* ptr, std::streamsize size, std::streamsize count, bool final_byte = false);
 public:
-  ~OfStreamWrapper()
+  ~Precomp_OfStream()
   {
     if (this->compression_otf_method > OTF_NONE) {
 
@@ -230,7 +180,7 @@ public:
       for (int i = 0; i < 9; i++) {
         final_buf[i] = 0;
       }
-      this->own_fwrite(final_buf, 1, 9, true, true);
+      this->own_fwrite(final_buf, 1, 9, true);
     }
     if (otf_bz2_stream_c != nullptr)
     {
@@ -242,22 +192,22 @@ public:
     }
   }
 
-  void open(std::string filename, std::ios_base::openmode mode)
-  {
-    stream->open(filename, mode);
+  Precomp_OfStream& write(char* buf, std::streamsize count) {
+    return this->own_fwrite(buf, 1, count);
   }
 
-  bool is_open()
-  {
-    return stream->is_open();
+  Precomp_OfStream& put(char c) {
+    if (this->compression_otf_method == OTF_NONE) { // uncompressed
+      this->std::ofstream::put(c);
+    }
+    else {
+      unsigned char temp_buf[1];
+      temp_buf[0] = c;
+      this->own_fwrite(temp_buf, 1, 1);
+    }
+    return *this;
   }
 
-  void close()
-  {
-    stream->close();
-  }
-
-  void own_fwrite(const void* ptr, size_t size, size_t count, bool final_byte = false, bool update_lzma_progress = false);
   void lzma_progress_update();
 };
 #endif // PRECOMP_IO_H

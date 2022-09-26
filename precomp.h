@@ -1,10 +1,10 @@
 #include "precomp_dll.h"
 #include "precomp_io.h"
 
-int def(Precomp_IfStream& source, std::ostream& dest, int level, int windowbits, int memlevel);
+int def(Precomp_IfStream& source, Precomp_OfStream& dest, int level, int windowbits, int memlevel);
 long long def_compare(Precomp_IfStream& compfile, int level, int windowbits, int memlevel, long long & decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
-int def_part(Precomp_IfStream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
-int def_part_skip(Precomp_IfStream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
+int def_part(Precomp_IfStream& source, Precomp_OfStream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
+int def_part_skip(Precomp_IfStream& source, Precomp_OfStream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
 void zerr(int ret);
 #ifndef PRECOMPDLL
 #ifndef COMFORT
@@ -17,8 +17,8 @@ void denit_compress(std::string tmp_filename);
 void denit_decompress(std::string tmp_filename);
 bool intense_mode_is_active();
 bool brute_mode_is_active();
-int inf_bzip2(Precomp_IfStream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
-int def_bzip2(Precomp_IfStream& source, std::ostream& dest, int level);
+int inf_bzip2(Precomp_IfStream& source, Precomp_OfStream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
+int def_bzip2(Precomp_IfStream& source, Precomp_OfStream& dest, int level);
 long long file_recompress(Precomp_IfStream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
 void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name);
@@ -112,7 +112,6 @@ void fin_fget_deflate_hdr(recompress_deflate_result&, const unsigned char flags,
 void fin_fget_recon_data(recompress_deflate_result&);
 bool fin_fget_deflate_rec(recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, PrecompTmpFile& tmpfile);
 void fin_fget_uncompressed(const recompress_deflate_result&);
-void fout_fputc(char c);
 void fout_fput32_little_endian(int v);
 void fout_fput32(int v);
 void fout_fput32(unsigned int v);
@@ -126,16 +125,15 @@ void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tm
 #define P_DECOMPRESS 2
 #define P_CONVERT 3
 
-void own_fputc(char c, OfStreamWrapper& f);
-void fast_copy(Precomp_IfStream& file1, OfStreamWrapper& file2, long long bytecount, bool update_progress = false);
+void fast_copy(Precomp_IfStream& file1, Precomp_OfStream& file2, long long bytecount, bool update_progress = false);
 void fast_copy(Precomp_IfStream& file, unsigned char* out, long long bytecount);
-void fast_copy(unsigned char* in, OfStreamWrapper& file, long long bytecount);
+void fast_copy(unsigned char* in, Precomp_OfStream& file, long long bytecount);
 
 unsigned char base64_char_decode(unsigned char c);
-void base64_reencode(Precomp_IfStream& file_in, OfStreamWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
+void base64_reencode(Precomp_IfStream& file_in, Precomp_OfStream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
-bool recompress_gif(Precomp_IfStream& srcfile, OfStreamWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
-bool decompress_gif(Precomp_IfStream& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
+bool recompress_gif(Precomp_IfStream& srcfile, Precomp_OfStream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
+bool decompress_gif(Precomp_IfStream& srcfile, Precomp_OfStream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
 
 struct recursion_result {
   bool success;
@@ -163,7 +161,7 @@ class RecursionContext {
     unsigned char* decomp_io_buf = NULL;
 
     std::unique_ptr<Precomp_IfStream> fin = std::unique_ptr<Precomp_IfStream>(new Precomp_IfStream());
-    std::unique_ptr<OfStreamWrapper> fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+    std::unique_ptr<Precomp_OfStream> fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
 
     float global_min_percent = 0;
     float global_max_percent = 100;

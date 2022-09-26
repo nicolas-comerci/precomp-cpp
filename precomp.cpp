@@ -225,7 +225,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
   }
   g_precomp.ctx->fin = std::move(fin);
 
-  auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
@@ -268,7 +268,7 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
   }
   g_precomp.ctx->fin = std::move(fin);
 
-  auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
@@ -1088,7 +1088,7 @@ int init(int argc, char* argv[]) {
       }
     }
 
-    auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+    auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
     fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!fout->is_open()) {
       print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
@@ -2129,7 +2129,7 @@ int init_comfort(int argc, char* argv[]) {
     print_to_console("\n");
   }
 
-  auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
@@ -2400,7 +2400,7 @@ long long def_compare_bzip2(Precomp_IfStream& source, Precomp_IfStream& compfile
   return rek_same_byte_count;
 }
 
-int def_part_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, int level, long long stream_size_in, long long stream_size_out) {
+int def_part_bzip2(Precomp_IfStream& source, Precomp_OfStream& dest, int level, long long stream_size_in, long long stream_size_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2449,7 +2449,7 @@ int def_part_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, int level, l
       }
       pos_out += have;
 
-      dest.own_fwrite(out, 1, have);
+      dest.write(reinterpret_cast<char*>(out), have);
       if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -2578,7 +2578,7 @@ bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = fa
   return false;
 }
 
-int inf_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
+int inf_bzip2(Precomp_IfStream& source, Precomp_OfStream& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
   int ret;
   unsigned have;
   bz_stream strm;
@@ -2625,7 +2625,7 @@ int inf_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, long long& compre
       avail_in_before = strm.avail_in;
       
       have = CHUNK - strm.avail_out;
-      dest.own_fwrite(out, 1, have);
+      dest.write(reinterpret_cast<char*>(out), have);
       if (dest.bad()) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -2645,7 +2645,7 @@ int inf_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, long long& compre
 }
 
 
-int def_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, int level) {
+int def_bzip2(Precomp_IfStream& source, Precomp_OfStream& dest, int level) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2679,7 +2679,7 @@ int def_bzip2(Precomp_IfStream& source, OfStreamWrapper& dest, int level) {
 
       have = CHUNK - strm.avail_out;
 
-      dest.own_fwrite(out, 1, have);
+      dest.write(reinterpret_cast<char*>(out), have);
       if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -2816,7 +2816,7 @@ void start_uncompressed_data() {
   g_precomp.ctx->uncompressed_pos = g_precomp.ctx->input_file_pos;
 
   // uncompressed data
-  fout_fputc(0);
+  g_precomp.ctx->fout->put(0);
 
   g_precomp.ctx->uncompressed_data_in_work = true;
 }
@@ -2914,7 +2914,7 @@ private:
 class UncompressedOutStream : public OutputStream {
 public:
   std::string tmp_filename;
-  OfStreamWrapper ftempout;
+  Precomp_OfStream ftempout;
   UncompressedOutStream(bool& in_memory, std::string tmp_filename) : _written(0), _in_memory(in_memory), tmp_filename(tmp_filename) {
     ftempout.open(tmp_filename, std::ios_base::out | std::ios_base::binary);
   }
@@ -2938,7 +2938,7 @@ public:
       }
     }
     _written += size;
-    ftempout.own_fwrite(buffer, 1, size);
+    ftempout.write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
     return ftempout.bad() ? 0 : size;
   }
 
@@ -3009,23 +3009,23 @@ recompress_deflate_result try_recompression_deflate(Precomp_IfStream& file, std:
 
 class OwnOStream : public OutputStream {
 public:
-  OwnOStream(OfStreamWrapper* f) : _f(f) {}
+  OwnOStream(Precomp_OfStream* f) : _f(f) {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
-    _f->own_fwrite(buffer, 1, size);
+    _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
     return _f->bad() ? 0 : size;
   }
 private:
-  OfStreamWrapper* _f;
+  Precomp_OfStream* _f;
 };
 
-bool try_reconstructing_deflate(Precomp_IfStream& fin, OfStreamWrapper& fout, const recompress_deflate_result& rdres) {
+bool try_reconstructing_deflate(Precomp_IfStream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres) {
   OwnOStream os(&fout);
   OwnIStream is(&fin);
   bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, []() { print_work_sign(true); });
   return result;
 }
-bool try_reconstructing_deflate_skip(Precomp_IfStream& fin, OfStreamWrapper& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(Precomp_IfStream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   frs_offset = 0;
@@ -3039,7 +3039,7 @@ bool try_reconstructing_deflate_skip(Precomp_IfStream& fin, OfStreamWrapper& fou
 }
 class OwnOStreamMultiPNG : public OutputStream {
 public:
-  OwnOStreamMultiPNG(OfStreamWrapper* f,
+  OwnOStreamMultiPNG(Precomp_OfStream* f,
                       const size_t idat_count, 
                       const uint32_t* idat_crcs, 
                       const uint32_t* idat_lengths) 
@@ -3055,7 +3055,7 @@ public:
     size_t size = size_;
     const unsigned char* buffer = buffer_;
     while (size > _to_read) {
-      _f->own_fwrite(buffer, 1, _to_read);
+      _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), _to_read);
       written += _to_read;
       size -= _to_read;
       buffer += _to_read;
@@ -3064,25 +3064,25 @@ public:
         return written;
       }
       unsigned char crc_out[4] = {(unsigned char)(_idat_crcs[_idat_idx] >> 24), (unsigned char)(_idat_crcs[_idat_idx] >> 16), (unsigned char)(_idat_crcs[_idat_idx] >> 8), (unsigned char)(_idat_crcs[_idat_idx] >> 0)};
-      _f->own_fwrite(crc_out, 1, 4);
+      _f->write(reinterpret_cast<char*>(crc_out), 4);
       _to_read = _idat_lengths[_idat_idx];
       unsigned char len_out[4] = {(unsigned char)(_to_read >> 24), (unsigned char)(_to_read >> 16), (unsigned char)(_to_read >> 8), (unsigned char)(_to_read >> 0)};
-      _f->own_fwrite(len_out, 1, 4);
-      _f->own_fwrite("IDAT", 1, 4);
+      _f->write(reinterpret_cast<char*>(len_out), 4);
+      _f->write("IDAT", 4);
     }
-    _f->own_fwrite(buffer, 1, size);
+    _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
     written += size;
     _to_read -= size;
     return written;
   }
 private:
-  OfStreamWrapper* _f;
+  Precomp_OfStream* _f;
   const size_t _idat_count;
   const uint32_t* _idat_crcs;
   const uint32_t* _idat_lengths;
   size_t _idat_idx, _to_read;
 };
-bool try_reconstructing_deflate_multipng(Precomp_IfStream& fin, OfStreamWrapper& fout, const recompress_deflate_result& rdres,
+bool try_reconstructing_deflate_multipng(Precomp_IfStream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres,
                                 const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
@@ -3192,8 +3192,8 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
         int i;
 
-        fout_fputc('B');
-        fout_fputc('M');
+        g_precomp.ctx->fout->put('B');
+        g_precomp.ctx->fout->put('M');
         // BMP size in bytes
         int bmp_size = ((img_width+3) & -4) * img_height;
         if (bmp_header_type == 2) bmp_size *= 3;
@@ -3205,36 +3205,36 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         fout_fput32_little_endian(bmp_size);
 
         for (i = 0; i < 4; i++) {
-          fout_fputc(0);
+          g_precomp.ctx->fout->put(0);
         }
-        fout_fputc(54);
+        g_precomp.ctx->fout->put(54);
         if (bmp_header_type == 1) {
-          fout_fputc(4);
+          g_precomp.ctx->fout->put(4);
         } else {
-          fout_fputc(0);
+          g_precomp.ctx->fout->put(0);
         }
-        fout_fputc(0);
-        fout_fputc(0);
-        fout_fputc(40);
-        fout_fputc(0);
-        fout_fputc(0);
-        fout_fputc(0);
+        g_precomp.ctx->fout->put(0);
+        g_precomp.ctx->fout->put(0);
+        g_precomp.ctx->fout->put(40);
+        g_precomp.ctx->fout->put(0);
+        g_precomp.ctx->fout->put(0);
+        g_precomp.ctx->fout->put(0);
 
         fout_fput32_little_endian(img_width);
         fout_fput32_little_endian(img_height);
 
-        fout_fputc(1);
-        fout_fputc(0);
+        g_precomp.ctx->fout->put(1);
+        g_precomp.ctx->fout->put(0);
 
         if (bmp_header_type == 1) {
-          fout_fputc(8);
+          g_precomp.ctx->fout->put(8);
         } else {
-          fout_fputc(24);
+          g_precomp.ctx->fout->put(24);
         }
-        fout_fputc(0);
+        g_precomp.ctx->fout->put(0);
 
         for (i = 0; i < 4; i++) {
-          fout_fputc(0);
+          g_precomp.ctx->fout->put(0);
         }
 
         if (bmp_header_type == 2)  img_width *= 3;
@@ -3244,13 +3244,13 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         fout_fput32_little_endian(datasize);
 
         for (i = 0; i < 16; i++) {
-          fout_fputc(0);
+          g_precomp.ctx->fout->put(0);
         }
 
         if (bmp_header_type == 1) {
           // write BMP palette
           for (i = 0; i < 1024; i++) {
-            fout_fputc(0);
+            g_precomp.ctx->fout->put(0);
           }
         }
       }
@@ -3285,7 +3285,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
           }
 
           for (int i = 0; i < (4 - (img_width % 4)); i++) {
-            fout_fputc(0);
+            g_precomp.ctx->fout->put(0);
           }
 
         }
@@ -3476,6 +3476,7 @@ void show_used_levels() {
 bool compress_file(float min_percent, float max_percent) {
 
   g_precomp.ctx->comp_decomp_state = P_COMPRESS;
+  if (recursion_depth == 0) write_header();
   g_precomp.ctx->fout->compression_otf_method = g_precomp.ctx->compression_otf_method;
   g_precomp.ctx->fout->compression_otf_max_memory = g_precomp.switches.compression_otf_max_memory;
   g_precomp.ctx->fout->compression_otf_thread_count = g_precomp.switches.compression_otf_thread_count;
@@ -3486,7 +3487,6 @@ bool compress_file(float min_percent, float max_percent) {
   g_precomp.ctx->global_min_percent = min_percent;
   g_precomp.ctx->global_max_percent = max_percent;
 
-  if (recursion_depth == 0) write_header();
   g_precomp.ctx->uncompressed_length = -1;
   g_precomp.ctx->uncompressed_bytes_total = 0;
   g_precomp.ctx->uncompressed_bytes_written = 0;
@@ -3903,7 +3903,7 @@ bool compress_file(float min_percent, float max_percent) {
           PrecompTmpFile tmp_png3;
           tmp_png3.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
           tmp_png3.close();
-          OfStreamWrapper tmp_png;
+          Precomp_OfStream tmp_png;
           tmp_png.open(png_tmp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
           force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
@@ -4474,7 +4474,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore PDF header
-      ostream_printf(*g_precomp.ctx->fout->stream, "/FlateDecode");
+      ostream_printf(*g_precomp.ctx->fout, "/FlateDecode");
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, false);
       fin_fget_recon_data(rdres);
       int bmp_c = (header1 >> 6);
@@ -4561,7 +4561,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore IDAT
-      ostream_printf(*g_precomp.ctx->fout->stream, "IDAT");
+      ostream_printf(*g_precomp.ctx->fout, "IDAT");
 
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
       fin_fget_recon_data(rdres);
@@ -4581,7 +4581,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       recompress_deflate_result rdres;
       unsigned hdr_length;
       // restore first IDAT
-      ostream_printf(*g_precomp.ctx->fout->stream, "IDAT");
+      ostream_printf(*g_precomp.ctx->fout, "IDAT");
       
       fin_fget_deflate_hdr(rdres, header1, in, hdr_length, true);
 
@@ -4659,7 +4659,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       tempfile2 += "gif";
       remove(tempfile.c_str());
       {
-        OfStreamWrapper ftempout;
+        Precomp_OfStream ftempout;
         ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
         fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
         ftempout.close();
@@ -4669,7 +4669,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
 
       {
         remove(tempfile2.c_str());
-        OfStreamWrapper frecomp;
+        Precomp_OfStream frecomp;
         frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
 
         // recompress data
@@ -4716,7 +4716,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
           pb_pos += (unsigned char)g_precomp.ctx->penalty_bytes[pbc + 3];
 
           g_precomp.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-          g_precomp.ctx->fout->own_fwrite(g_precomp.ctx->penalty_bytes.data() + pbc + 4, 1, 1);
+          g_precomp.ctx->fout->write(g_precomp.ctx->penalty_bytes.data() + pbc + 4, 1);
         }
 
         g_precomp.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);
@@ -4781,7 +4781,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
         remove(tempfile.c_str());
 
         {
-          OfStreamWrapper ftempout;
+          Precomp_OfStream ftempout;
           ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
           ftempout.close();
@@ -4913,7 +4913,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
       }
       g_precomp.ctx->fin->read(reinterpret_cast<char*>(in), base64_header_length);
       g_precomp.ctx->fout->put(*(in)+1); // first char was decreased
-      g_precomp.ctx->fout->own_fwrite(in + 1, 1, base64_header_length - 1);
+      g_precomp.ctx->fout->write(reinterpret_cast<char*>(in + 1), base64_header_length - 1);
 
       // read line length list
       int line_count = fin_fget_vlint();
@@ -5036,7 +5036,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
           pb_pos += (unsigned char)g_precomp.ctx->penalty_bytes[pbc + 3];
 
           g_precomp.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-          g_precomp.ctx->fout->own_fwrite(g_precomp.ctx->penalty_bytes.data() + pbc + 4, 1, 1);
+          g_precomp.ctx->fout->write(g_precomp.ctx->penalty_bytes.data() + pbc + 4, 1);
         }
 
         g_precomp.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);
@@ -5077,7 +5077,7 @@ while (!otf_none_end_check() || g_precomp.ctx->compression_otf_method != OTF_NON
         remove(tempfile.c_str());
 
         {
-          OfStreamWrapper ftempout;
+          Precomp_OfStream ftempout;
           ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
           ftempout.close();
@@ -5191,7 +5191,7 @@ void convert_file() {
         bytes_read = 0;
       }
     }
-    if (conv_bytes > -1) g_precomp.ctx->fout->own_fwrite(convbuf, 1, conv_bytes);
+    if (conv_bytes > -1) g_precomp.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
     for (int i = 0; i < bytes_read; i++) {
       convbuf[i] = copybuf[i];
     }
@@ -5207,7 +5207,7 @@ void convert_file() {
       show_progress(percent, true, true);
     }
   }
-  g_precomp.ctx->fout->own_fwrite(convbuf, 1, conv_bytes);
+  g_precomp.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
 
   denit_convert();
 }
@@ -5218,7 +5218,7 @@ long long try_to_decompress_bzip2(Precomp_IfStream& file, int compression_level,
   print_work_sign(true);
 
   remove(tmpfile.file_path.c_str());
-  OfStreamWrapper ftempout;
+  Precomp_OfStream ftempout;
   ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
   force_seekg(file, &file == g_precomp.ctx->fin.get() ? g_precomp.ctx->input_file_pos : 0, std::ios_base::beg);
@@ -5275,9 +5275,13 @@ void try_recompress_bzip2(Precomp_IfStream& origfile, int level, long long& comp
 
 
 void write_header() {
+  if (g_precomp.ctx->fout->compression_otf_method != OTF_NONE) {
+    print_to_console("Attempted to write header while compression is enabled");
+    exit(1);
+  }
   char* input_file_name_without_path = new char[g_precomp.ctx->input_file_name.length() + 1];
 
-  ostream_printf(*g_precomp.ctx->fout->stream, "PCF");
+  ostream_printf(*g_precomp.ctx->fout, "PCF");
 
   // version number
   g_precomp.ctx->fout->put(V_MAJOR);
@@ -5295,7 +5299,7 @@ void write_header() {
     strcpy(input_file_name_without_path, g_precomp.ctx->input_file_name.c_str());
   }
 
-  ostream_printf(*g_precomp.ctx->fout->stream, input_file_name_without_path);
+  ostream_printf(*g_precomp.ctx->fout, input_file_name_without_path);
   g_precomp.ctx->fout->put(0);
 
   delete[] input_file_name_without_path;
@@ -5409,7 +5413,7 @@ void convert_header() {
     c = g_precomp.ctx->fin->get();
     if (c != 0) header_filename += c;
   } while (c != 0);
-  ostream_printf(*g_precomp.ctx->fout->stream, header_filename);
+  ostream_printf(*g_precomp.ctx->fout, header_filename);
   g_precomp.ctx->fout->put(0);
 }
 
@@ -5418,7 +5422,7 @@ void progress_update(long long bytes_written) {
   show_progress(percent, true, true);
 }
 
-void fast_copy(Precomp_IfStream& file1, OfStreamWrapper& file2, long long bytecount, bool update_progress) {
+void fast_copy(Precomp_IfStream& file1, Precomp_OfStream& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
   long long i;
@@ -5427,7 +5431,7 @@ void fast_copy(Precomp_IfStream& file1, OfStreamWrapper& file2, long long byteco
 
   for (i = 1; i <= maxi; i++) {
     file1.read(reinterpret_cast<char*>(copybuf), COPY_BUF_SIZE);
-    file2.own_fwrite(copybuf, 1, COPY_BUF_SIZE, false, update_progress);
+    file2.write(reinterpret_cast<char*>(copybuf), COPY_BUF_SIZE);
 
     if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) {
       print_work_sign(true);
@@ -5436,7 +5440,7 @@ void fast_copy(Precomp_IfStream& file1, OfStreamWrapper& file2, long long byteco
   }
   if (remaining_bytes != 0) {
     file1.read(reinterpret_cast<char*>(copybuf), remaining_bytes);
-    file2.own_fwrite(copybuf, 1, remaining_bytes, false, update_progress);
+    file2.write(reinterpret_cast<char*>(copybuf), remaining_bytes);
   }
 
   if ((update_progress) && (!DEBUG_MODE)) g_precomp.ctx->uncompressed_bytes_written += bytecount;
@@ -5459,7 +5463,7 @@ void fast_copy(Precomp_IfStream& file, unsigned char* mem, long long bytecount) 
   }
 }
 
-void fast_copy(unsigned char* mem, OfStreamWrapper& file, long long bytecount) {
+void fast_copy(unsigned char* mem, Precomp_OfStream& file, long long bytecount) {
     if (bytecount == 0) return;
 
   long long i;
@@ -5467,12 +5471,12 @@ void fast_copy(unsigned char* mem, OfStreamWrapper& file, long long bytecount) {
   long long maxi = (bytecount / COPY_BUF_SIZE);
 
   for (i = 1; i <= maxi; i++) {
-    file.own_fwrite(mem + (i - 1) * COPY_BUF_SIZE, 1, COPY_BUF_SIZE);
+    file.write(reinterpret_cast<char*>(mem + (i - 1) * COPY_BUF_SIZE), COPY_BUF_SIZE);
 
     if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) print_work_sign(true);
   }
   if (remaining_bytes != 0) {
-    file.own_fwrite(mem + maxi * COPY_BUF_SIZE, 1, remaining_bytes);
+    file.write(reinterpret_cast<char*>(mem + maxi * COPY_BUF_SIZE), remaining_bytes);
   }
 }
 
@@ -5730,7 +5734,7 @@ void try_decompression_png_multi(Precomp_IfStream& fpng, int windowbits, Precomp
 // GIF functions
 
 bool newgif_may_write;
-OfStreamWrapper* frecompress_gif = NULL;
+Precomp_OfStream* frecompress_gif = NULL;
 Precomp_IfStream* freadfunc = NULL;
 
 int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
@@ -5742,7 +5746,7 @@ int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
 int writeFunc(GifFileType* GifFile, const GifByteType* buf, int count)
 {
   if (newgif_may_write) {
-    frecompress_gif->own_fwrite(buf, 1, count);
+    frecompress_gif->write(reinterpret_cast<char*>(const_cast<GifByteType*>(buf)), count);
     return frecompress_gif->bad() ? 0 : count;
   } else {
     return count;
@@ -5798,7 +5802,7 @@ bool r_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* n
   return r_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool recompress_gif(Precomp_IfStream& srcfile, OfStreamWrapper& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
+bool recompress_gif(Precomp_IfStream& srcfile, Precomp_OfStream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
   int i, j;
   long long last_pos = -1;
   int Row, Col, Width, Height, ExtCode;
@@ -5940,7 +5944,7 @@ bool d_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile) {
   return d_gif_result(ScreenBuff, myGifFile, true);
 }
 
-bool decompress_gif(Precomp_IfStream& srcfile, OfStreamWrapper& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
+bool decompress_gif(Precomp_IfStream& srcfile, Precomp_OfStream& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
   int i, j;
   GifFileType* myGifFile;
   int Row, Col, Width, Height, ExtCode;
@@ -6029,7 +6033,7 @@ bool decompress_gif(Precomp_IfStream& srcfile, OfStreamWrapper& dstfile, long lo
           }
           // write to dstfile
           for (i = Row; i < (Row + Height); i++) {
-            dstfile.own_fwrite(&ScreenBuff[i][Col], 1, Width);
+            dstfile.write(reinterpret_cast<char*>(&ScreenBuff[i][Col]), Width);
           }
         } else {
           for (i = Row; i < (Row + Height); i++) {
@@ -6037,7 +6041,7 @@ bool decompress_gif(Precomp_IfStream& srcfile, OfStreamWrapper& dstfile, long lo
               return d_gif_error(ScreenBuff, myGifFile);
             }
             // write to dstfile
-            dstfile.own_fwrite(&ScreenBuff[i][Col], 1, Width);
+            dstfile.write(reinterpret_cast<char*>(&ScreenBuff[i][Col]), Width);
           }
         }
 
@@ -6099,7 +6103,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   tmpfile.close();
   // read GIF file
   {
-    OfStreamWrapper ftempout;
+    Precomp_OfStream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
     if (!decompress_gif(*g_precomp.ctx->fin, ftempout, g_precomp.ctx->input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
@@ -6124,7 +6128,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   PrecompTmpFile frecomp_tmp;
   frecomp_tmp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   frecomp_tmp.close();
-  OfStreamWrapper frecomp;
+  Precomp_OfStream frecomp;
   frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
 
@@ -6169,8 +6173,8 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
         if (block_size == 254) add_bits += 4;
         if (recompress_success_needed) add_bits += 128;
 
-        fout_fputc(1 + add_bits);
-        fout_fputc(D_GIF); // GIF
+        g_precomp.ctx->fout->put(1 + add_bits);
+        g_precomp.ctx->fout->put(D_GIF); // GIF
 
         // store diff bytes
         fout_fput_vlint(gDiff.GIFDiffIndex);
@@ -6179,7 +6183,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
             print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
         }
         for (int dbc = 0; dbc < gDiff.GIFDiffIndex; dbc++) {
-          fout_fputc(gDiff.GIFDiff[dbc]);
+          g_precomp.ctx->fout->put(gDiff.GIFDiff[dbc]);
         }
 
         // store penalty bytes, if any
@@ -6191,7 +6195,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
           fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
 
           for (int pbc = 0; pbc < g_precomp.ctx->best_penalty_bytes_len; pbc++) {
-            fout_fputc(g_precomp.ctx->best_penalty_bytes[pbc]);
+            g_precomp.ctx->fout->put(g_precomp.ctx->best_penalty_bytes[pbc]);
           }
         }
 
@@ -6369,7 +6373,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  }
 		  // try to decompress at current position
           {
-            OfStreamWrapper decompressed_jpg;
+            Precomp_OfStream decompressed_jpg;
             decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
             force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
             fast_copy(*g_precomp.ctx->fin, decompressed_jpg, jpg_length);
@@ -6434,12 +6438,12 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             } while (!found_ffda);
             std::string mjpgdht_tempfile = tmpfile.file_path + "_mjpgdht";
             if (found_ffda) {
-              OfStreamWrapper decompressed_jpg_w_MJPGDHT;
+              Precomp_OfStream decompressed_jpg_w_MJPGDHT;
               decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
               force_seekg(decompressed_jpg, 0, std::ios_base::beg);
               fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
               // insert MJPGDHT
-              decompressed_jpg_w_MJPGDHT.own_fwrite(MJPGDHT, 1, MJPGDHT_LEN);
+              decompressed_jpg_w_MJPGDHT.write(reinterpret_cast<char*>(MJPGDHT), MJPGDHT_LEN);
               force_seekg(decompressed_jpg, ffda_pos - 1, std::ios_base::beg);
               fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, jpg_length - (ffda_pos - 1));
             }
@@ -6510,8 +6514,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  if (mjpg_dht_used) jpg_flags += 4; // motion JPG DHT used
 		  if (brunsli_used) jpg_flags += 8;
 		  if (brotli_used) jpg_flags += 16;
-		  fout_fputc(jpg_flags);
-          fout_fputc(D_JPG); // JPG
+		  g_precomp.ctx->fout->put(jpg_flags);
+          g_precomp.ctx->fout->put(D_JPG); // JPG
 
           fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
           fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp);
@@ -6566,7 +6570,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
         } else { // large stream => use temporary files
           // try to decompress at current position
           {
-            OfStreamWrapper decompressed_mp3;
+            Precomp_OfStream decompressed_mp3;
             decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
             force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
             fast_copy(*g_precomp.ctx->fin, decompressed_mp3, mp3_length);
@@ -6680,8 +6684,8 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
 
           // write compressed data header (MP3)
 
-          fout_fputc(1); // no penalty bytes
-          fout_fputc(D_MP3); // MP3
+          g_precomp.ctx->fout->put(1); // no penalty bytes
+          g_precomp.ctx->fout->put(D_MP3); // MP3
 
           fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
           fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp);
@@ -6852,9 +6856,9 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
             if (r.success) {
               header_byte += 128;
             }
-            fout_fputc(header_byte);
-            fout_fputc(D_BZIP2); // Base64
-            fout_fputc(compression_level);
+            g_precomp.ctx->fout->put(header_byte);
+            g_precomp.ctx->fout->put(D_BZIP2); // Base64
+            g_precomp.ctx->fout->put(compression_level);
 
             // store penalty bytes, if any
             if (g_precomp.ctx->best_penalty_bytes_len != 0) {
@@ -6863,7 +6867,7 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
               }
               fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
               for (int pbc = 0; pbc < g_precomp.ctx->best_penalty_bytes_len; pbc++) {
-                fout_fputc(g_precomp.ctx->best_penalty_bytes[pbc]);
+                g_precomp.ctx->fout->put(g_precomp.ctx->best_penalty_bytes[pbc]);
               }
             }
 
@@ -6918,7 +6922,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(Precomp_IfStream& file_in, OfStreamWrapper& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
+void base64_reencode(Precomp_IfStream& file_in, Precomp_OfStream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
           int line_nr = 0;
           unsigned int act_line_len = 0;
           int avail_in;
@@ -6948,49 +6952,49 @@ void base64_reencode(Precomp_IfStream& file_in, OfStreamWrapper& file_out, int l
               a = in[i * 3];
               b = in[i * 3 + 1];
               c = in[i * 3 + 2];
-              if (act_byte_count < max_byte_count) own_fputc(b64[a >> 2], file_out);
+              if (act_byte_count < max_byte_count) file_out.put(b64[a >> 2]);
               act_byte_count++;
               act_line_len++;
               if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-                if (act_byte_count < max_byte_count) own_fputc(13, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(13);
                 act_byte_count++;
-                if (act_byte_count < max_byte_count) own_fputc(10, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(10);
                 act_byte_count++;
                 act_line_len = 0;
                 line_nr++;
                 if (line_nr == line_count) break;
               }
-              if (act_byte_count < max_byte_count) own_fputc(b64[((a & 0x03) << 4) | (b >> 4)], file_out);
+              if (act_byte_count < max_byte_count) file_out.put(b64[((a & 0x03) << 4) | (b >> 4)]);
               act_byte_count++;
               act_line_len++;
               if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-                if (act_byte_count < max_byte_count) own_fputc(13, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(13);
                 act_byte_count++;
-                if (act_byte_count < max_byte_count) own_fputc(10, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(10);
                 act_byte_count++;
                 act_line_len = 0;
                 line_nr++;
                 if (line_nr == line_count) break;
               }
-              if (act_byte_count < max_byte_count) own_fputc(b64[((b & 0x0F) << 2) | (c >> 6)], file_out);
+              if (act_byte_count < max_byte_count) file_out.put(b64[((b & 0x0F) << 2) | (c >> 6)]);
               act_byte_count++;
               act_line_len++;
               if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-                if (act_byte_count < max_byte_count) own_fputc(13, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(13);
                 act_byte_count++;
-                if (act_byte_count < max_byte_count) own_fputc(10, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(10);
                 act_byte_count++;
                 act_line_len = 0;
                 line_nr++;
                 if (line_nr == line_count) break;
               }
-              if (act_byte_count < max_byte_count) own_fputc(b64[c & 63], file_out);
+              if (act_byte_count < max_byte_count) file_out.put(b64[c & 63]);
               act_byte_count++;
               act_line_len++;
               if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-                if (act_byte_count < max_byte_count) own_fputc(13, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(13);
                 act_byte_count++;
-                if (act_byte_count < max_byte_count) own_fputc(10, file_out);
+                if (act_byte_count < max_byte_count) file_out.put(10);
                 act_byte_count++;
                 act_line_len = 0;
                 line_nr++;
@@ -7160,7 +7164,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       PrecompTmpFile frecomp_tmp;
       frecomp_tmp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
       frecomp_tmp.close();
-      OfStreamWrapper frecomp_out;
+      Precomp_OfStream frecomp_out;
       frecomp_out.open(frecomp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
       base64_reencode(ftempout, frecomp_out, line_count, base64_line_len);
@@ -7195,24 +7199,24 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       if (r.success) {
         header_byte += 128;
       }
-      fout_fputc(header_byte);
-      fout_fputc(D_BASE64); // Base64
+      g_precomp.ctx->fout->put(header_byte);
+      g_precomp.ctx->fout->put(D_BASE64); // Base64
 
       fout_fput_vlint(base64_header_length);
 
       // write "header", but change first char to prevent re-detection
-      fout_fputc(g_precomp.ctx->in_buf[g_precomp.ctx->cb] - 1);
-      g_precomp.ctx->fout->own_fwrite(g_precomp.ctx->in_buf + g_precomp.ctx->cb + 1, 1, base64_header_length - 1);
+      g_precomp.ctx->fout->put(g_precomp.ctx->in_buf[g_precomp.ctx->cb] - 1);
+      g_precomp.ctx->fout->write(reinterpret_cast<char*>(g_precomp.ctx->in_buf + g_precomp.ctx->cb + 1), base64_header_length - 1);
 
       fout_fput_vlint(line_count);
       if (line_case == 2) {
         for (i = 0; i < line_count; i++) {
-          fout_fputc(base64_line_len[i]);
+          g_precomp.ctx->fout->put(base64_line_len[i]);
         }
       }
       else {
-        fout_fputc(base64_line_len[0]);
-        if (line_case == 1) fout_fputc(base64_line_len[line_count - 1]);
+        g_precomp.ctx->fout->put(base64_line_len[0]);
+        if (line_case == 1) g_precomp.ctx->fout->put(base64_line_len[line_count - 1]);
       }
 
       delete[] base64_line_len;
@@ -7314,7 +7318,7 @@ void recursion_pop() {
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile) {
   if (in_memory) {
-    OfStreamWrapper ftempout;
+    Precomp_OfStream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
     fast_copy(g_precomp.ctx->decomp_io_buf, ftempout, byte_count);
     ftempout.close();
@@ -7362,7 +7366,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx->output_file_name = tmpfile.file_path;
   g_precomp.ctx->output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx->output_file_name;
-  auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx->fout = std::move(fout);
 
@@ -7435,7 +7439,7 @@ recursion_result recursion_write_file_and_compress(const recompress_deflate_resu
 }
 
 recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile) {
-  OfStreamWrapper recursion_fin;
+  Precomp_OfStream recursion_fin;
   recursion_result tmp_r;
 
   remove(tmpfile.file_path.c_str());
@@ -7461,7 +7465,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   g_precomp.ctx->output_file_name = tmpfile.file_path;
   g_precomp.ctx->output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx->output_file_name;
-  auto fout = std::unique_ptr<OfStreamWrapper>(new OfStreamWrapper());
+  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx->fout = std::move(fout);
 
@@ -7491,67 +7495,49 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   return tmp_r;
 }
 
-void own_fputc(char c, OfStreamWrapper& f) {
-  if (f.compression_otf_method == OTF_NONE) {
-    f.put(c);
-  } else {
-    fout_fputc(c);
-  }
-}
-
-void fout_fputc(char c) {
-  if (g_precomp.ctx->compression_otf_method == OTF_NONE) { // uncompressed
-    g_precomp.ctx->fout->put(c);
-  } else {
-    unsigned char temp_buf[1];
-    temp_buf[0] = c;
-    g_precomp.ctx->fout->own_fwrite(temp_buf, 1, 1);
-  }
-}
-
 void fout_fput32_little_endian(int v) {
-  fout_fputc(v % 256);
-  fout_fputc((v >> 8) % 256);
-  fout_fputc((v >> 16) % 256);
-  fout_fputc((v >> 24) % 256);
+  g_precomp.ctx->fout->put(v % 256);
+  g_precomp.ctx->fout->put((v >> 8) % 256);
+  g_precomp.ctx->fout->put((v >> 16) % 256);
+  g_precomp.ctx->fout->put((v >> 24) % 256);
 }
 
 void fout_fput32(int v) {
-  fout_fputc((v >> 24) % 256);
-  fout_fputc((v >> 16) % 256);
-  fout_fputc((v >> 8) % 256);
-  fout_fputc(v % 256);
+  g_precomp.ctx->fout->put((v >> 24) % 256);
+  g_precomp.ctx->fout->put((v >> 16) % 256);
+  g_precomp.ctx->fout->put((v >> 8) % 256);
+  g_precomp.ctx->fout->put(v % 256);
 }
 
 void fout_fput32(unsigned int v) {
-  fout_fputc((v >> 24) % 256);
-  fout_fputc((v >> 16) % 256);
-  fout_fputc((v >> 8) % 256);
-  fout_fputc(v % 256);
+  g_precomp.ctx->fout->put((v >> 24) % 256);
+  g_precomp.ctx->fout->put((v >> 16) % 256);
+  g_precomp.ctx->fout->put((v >> 8) % 256);
+  g_precomp.ctx->fout->put(v % 256);
 }
 
 void fout_fput_vlint(unsigned long long v) {
   while (v >= 128) {
-    fout_fputc((v & 127) + 128);
+    g_precomp.ctx->fout->put((v & 127) + 128);
     v = (v >> 7) - 1;
   }
-  fout_fputc(v);
+  g_precomp.ctx->fout->put(v);
 }
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, 
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length,
                            const bool inc_last_hdr_byte) {
-  fout_fputc(1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2) + flags);
-  fout_fputc(type); // PDF/PNG/...
+  g_precomp.ctx->fout->put(1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2) + flags);
+  g_precomp.ctx->fout->put(type); // PDF/PNG/...
   if (rdres.zlib_perfect) {
-    fout_fputc(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
+    g_precomp.ctx->fout->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
   }
   fout_fput_vlint(hdr_length);
   if (!inc_last_hdr_byte) {
-    g_precomp.ctx->fout->own_fwrite(hdr, 1, hdr_length);
+    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length);
   } else {
-    g_precomp.ctx->fout->own_fwrite(hdr, 1, hdr_length - 1);
-    fout_fputc(hdr[hdr_length - 1] + 1);
+    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length - 1);
+    g_precomp.ctx->fout->put(hdr[hdr_length - 1] + 1);
   }
 }
 void fin_fget_deflate_hdr(recompress_deflate_result& rdres, const unsigned char flags, 
@@ -7571,12 +7557,12 @@ void fin_fget_deflate_hdr(recompress_deflate_result& rdres, const unsigned char 
     g_precomp.ctx->fin->read(reinterpret_cast<char*>(hdr_data), hdr_length - 1);
     hdr_data[hdr_length - 1] = g_precomp.ctx->fin->get() - 1;
   }
-  g_precomp.ctx->fout->own_fwrite(hdr_data, 1, hdr_length);
+  g_precomp.ctx->fout->write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
 void fout_fput_recon_data(const recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     fout_fput_vlint(rdres.recon_data.size());
-    g_precomp.ctx->fout->own_fwrite(rdres.recon_data.data(), 1, rdres.recon_data.size());
+    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(rdres.recon_data.data())), rdres.recon_data.size());
   }
 
   fout_fput_vlint(rdres.compressed_stream_size);

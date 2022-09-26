@@ -13,7 +13,8 @@ int lzma_max_memory_default() {
   return max_memory;
 }
 
-void OfStreamWrapper::lzma_progress_update() {
+void Precomp_OfStream::lzma_progress_update() {
+  if (compression_otf_method != OTF_XZ_MT) return;
   //float percent = ((g_precomp.ctx->input_file_pos + g_precomp.ctx->uncompressed_bytes_written) / ((float)g_precomp.ctx->fin_length + g_precomp.ctx->uncompressed_bytes_total)) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent;
   float percent = -1;
 
@@ -26,10 +27,10 @@ void OfStreamWrapper::lzma_progress_update() {
   show_progress(percent, true, true, lzma_mib_total, lzma_mib_written);
 }
 
-void OfStreamWrapper::own_fwrite(const void* ptr, size_t size, size_t count, bool final_byte, bool update_lzma_progress) {
+Precomp_OfStream& Precomp_OfStream::own_fwrite(const void* ptr, std::streamsize size, std::streamsize count, bool final_byte) {
   switch (this->compression_otf_method) {
   case OTF_NONE: {
-    this->stream->write(static_cast<const char*>(ptr), size * count);
+    this->std::ofstream::write(static_cast<const char*>(ptr), size * count);
     if (this->bad()) {
       error(ERR_DISK_FULL);
     }
@@ -51,7 +52,7 @@ void OfStreamWrapper::own_fwrite(const void* ptr, size_t size, size_t count, boo
       otf_bz2_stream_c->next_out = (char*)otf_out.get();
       ret = BZ2_bzCompress(otf_bz2_stream_c.get(), flush);
       have = CHUNK - otf_bz2_stream_c->avail_out;
-      this->write(reinterpret_cast<char*>(otf_out.get()), have);
+      this->std::ofstream::write(reinterpret_cast<char*>(otf_out.get()), have);
       if (this->bad()) {
         error(ERR_DISK_FULL);
       }
@@ -76,7 +77,7 @@ void OfStreamWrapper::own_fwrite(const void* ptr, size_t size, size_t count, boo
       otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
       ret = lzma_code(otf_xz_stream_c.get(), action);
       have = CHUNK - otf_xz_stream_c->avail_out;
-      this->write(reinterpret_cast<char*>(otf_out.get()), have);
+      this->std::ofstream::write(reinterpret_cast<char*>(otf_out.get()), have);
       if (this->bad()) {
         error(ERR_DISK_FULL);
       }
@@ -102,11 +103,12 @@ void OfStreamWrapper::own_fwrite(const void* ptr, size_t size, size_t count, boo
 #endif // COMFORT
         exit(1);
       } // .avail_out == 0
-      if ((!DEBUG_MODE) && (update_lzma_progress)) lzma_progress_update();
+      if (!DEBUG_MODE) lzma_progress_update();
     } while ((otf_xz_stream_c->avail_in > 0) || (final_byte && (ret != LZMA_STREAM_END)));
     break;
   }
   }
+  return *this;
 }
 
 size_t Precomp_IfStream::own_fread(void* ptr, size_t size, size_t count) {
