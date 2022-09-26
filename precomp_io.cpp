@@ -109,11 +109,11 @@ void OfStreamWrapper::own_fwrite(const void* ptr, size_t size, size_t count, boo
   }
 }
 
-size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
+size_t Precomp_IfStream::own_fread(void* ptr, size_t size, size_t count) {
   switch (this->compression_otf_method) {
   case OTF_NONE: {
-    this->read(static_cast<char*>(ptr), size * count);
-    return this->gcount();
+    this->std::ifstream::read(static_cast<char*>(ptr), size * count);
+    return this->std::ifstream::gcount();
   }
   case OTF_BZIP2: {
     init_otf_in_if_needed();
@@ -128,8 +128,8 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
     do {
 
       if (this->otf_bz2_stream_d->avail_in == 0) {
-        this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-        this->otf_bz2_stream_d->avail_in = this->gcount();
+        this->std::ifstream::read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
+        this->otf_bz2_stream_d->avail_in = this->std::ifstream::gcount();
         this->otf_bz2_stream_d->next_in = (char*)otf_in.get();
         if (this->otf_bz2_stream_d->avail_in == 0) break;
       }
@@ -159,10 +159,10 @@ size_t IfStreamWrapper::own_fread(void* ptr, size_t size, size_t count) {
 
     do {
       print_work_sign(true);
-      if ((otf_xz_stream_d->avail_in == 0) && !this->stream->eof()) {
+      if ((otf_xz_stream_d->avail_in == 0) && !this->eof()) {
         otf_xz_stream_d->next_in = (uint8_t*)otf_in.get();
-        this->read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
-        otf_xz_stream_d->avail_in = this->gcount();
+        this->std::ifstream::read(reinterpret_cast<char*>(otf_in.get()), CHUNK);
+        otf_xz_stream_d->avail_in = this->std::ifstream::gcount();
 
         if (this->bad()) {
           print_to_console("ERROR: Could not read input file\n");

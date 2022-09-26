@@ -38,14 +38,14 @@ public:
 };
 
 template <typename T>
-class IStreamWrapper_Base : public StreamWrapper_Base<T>
+class Precomp_IStream_Base : public T
 {
-  static_assert(std::is_base_of_v<std::istream, T>, "IStreamWrapper must get an std::istream derivative as template parameter");
+  static_assert(std::is_base_of_v<std::istream, T>, "Precomp_IStream must get an std::istream derivative as template parameter");
 public:
-  void rdbuf(std::streambuf* new_sb)
+  void rdbuf(std::streambuf* streambuffer)
   {
-    std::istream& istream = *StreamWrapper_Base<T>::stream;
-    istream.rdbuf(new_sb);
+    std::istream& stream_ref = *this;
+    stream_ref.rdbuf(streambuffer);
   }
 
   int compression_otf_method = OTF_NONE;
@@ -79,7 +79,7 @@ public:
     }
   }
 
-  ~IStreamWrapper_Base()
+  ~Precomp_IStream_Base()
   {
     if (otf_bz2_stream_d != nullptr)
     {
@@ -90,51 +90,37 @@ public:
       (void)lzma_end(otf_xz_stream_d.get());
     }
   }
-
-  T& read(char* buf, std::streamsize size)
-  {
-    StreamWrapper_Base<T>::stream->read(buf, size);
-    return *StreamWrapper_Base<T>::stream;
-  }
-
-  std::ifstream::traits_type::int_type get()
-  {
-    return StreamWrapper_Base<T>::stream->get();
-  }
-
-  std::streamsize gcount()
-  {
-    return StreamWrapper_Base<T>::stream->gcount();
-  }
-
-  std::istream::traits_type::pos_type tellg()
-  {
-    return StreamWrapper_Base<T>::stream->tellg();
-  }
 };
 
 template <typename T>
-class IStreamWrapper : public IStreamWrapper_Base<T> {};
+class Precomp_IStream : public Precomp_IStream_Base<T> {};
 
-class IfStreamWrapper : public IStreamWrapper_Base<std::ifstream>
+class Precomp_IfStream : public Precomp_IStream_Base<std::ifstream>
 {
-public:
-  void open(std::string filename, std::ios_base::openmode mode)
-  {
-    stream->open(filename, mode);
-  }
-
-  bool is_open()
-  {
-    return stream->is_open();
-  }
-
-  void close()
-  {
-    stream->close();
-  }
-
   size_t own_fread(void* ptr, size_t size, size_t count);
+public:
+  std::streamsize last_gcount = 0;
+
+  std::streamsize gcount() { return last_gcount; }
+
+  int get() {
+    if (compression_otf_method == OTF_NONE) {
+      int chr = this->std::ifstream::get();
+      last_gcount = this->std::ifstream::gcount();
+      return chr;
+    }
+    else {
+      unsigned char temp_buf[1];
+      read(reinterpret_cast<char*>(temp_buf), 1);
+      return temp_buf[0];
+    }
+  }
+
+  std::ifstream& read(char* buf, std::streamsize size)
+  {
+    last_gcount = this->own_fread(buf, 1, size);
+    return *this;
+  }
 };
 
 template <typename T>
