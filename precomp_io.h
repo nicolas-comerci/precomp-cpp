@@ -15,91 +15,200 @@ enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzm
 
 int lzma_max_memory_default();
 
-template <typename T>
-class Precomp_IStream_Base : public T
+class Bz2StreamBuffer : public std::streambuf
 {
-  static_assert(std::is_base_of_v<std::istream, T>, "Precomp_IStream must get an std::istream derivative as template parameter");
 public:
-  void rdbuf(std::streambuf* streambuffer)
-  {
-    std::istream& stream_ref = *this;
-    stream_ref.rdbuf(streambuffer);
-  }
-
-  int compression_otf_method = OTF_NONE;
-  bool decompress_otf_end = false;
+  std::istream* wrapped_istream;
+  bool owns_wrapped_istream = false;
   std::unique_ptr<bz_stream> otf_bz2_stream_d;
-  std::unique_ptr<lzma_stream> otf_xz_stream_d;
-  std::unique_ptr<unsigned char[]> otf_in;
+  std::unique_ptr<char[]> otf_in;
+  std::unique_ptr<char[]> otf_dec;
 
-  void init_otf_in_if_needed()
-  {
-    if (otf_in != nullptr) return;
-    otf_in = std::make_unique<unsigned char[]>(CHUNK);
-    if (this->compression_otf_method == OTF_BZIP2) {
-      otf_bz2_stream_d = std::unique_ptr<bz_stream>(new bz_stream());
-      otf_bz2_stream_d->bzalloc = NULL;
-      otf_bz2_stream_d->bzfree = NULL;
-      otf_bz2_stream_d->opaque = NULL;
-      otf_bz2_stream_d->avail_in = 0;
-      otf_bz2_stream_d->next_in = NULL;
-      if (BZ2_bzDecompressInit(otf_bz2_stream_d.get(), 0, 0) != BZ_OK) {
-        print_to_console("ERROR: bZip2 init failed\n");
-        exit(1);
-      }
-    }
-    else if (this->compression_otf_method == OTF_XZ_MT) {
-      otf_xz_stream_d = std::unique_ptr<lzma_stream>(new lzma_stream());
-      if (!init_decoder(otf_xz_stream_d.get())) {
-        print_to_console("ERROR: liblzma init failed\n");
-        exit(1);
-      }
-    }
+  Bz2StreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream) {
+    init();
   }
 
-  ~Precomp_IStream_Base()
-  {
-    if (otf_bz2_stream_d != nullptr)
-    {
-      (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
+  Bz2StreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
+    this->wrapped_istream = wrapped_istream.release();
+    owns_wrapped_istream = true;
+    init();
+  }
+
+  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
+    auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
+    auto bz2_streambuf = new Bz2StreamBuffer(std::move(istream));
+    new_fin->rdbuf(bz2_streambuf);
+    return new_fin;
+  }
+
+  void init() {
+    otf_in = std::make_unique<char[]>(CHUNK);
+    otf_dec = std::make_unique<char[]>(CHUNK * 10);
+    otf_bz2_stream_d = std::unique_ptr<bz_stream>(new bz_stream());
+    otf_bz2_stream_d->bzalloc = NULL;
+    otf_bz2_stream_d->bzfree = NULL;
+    otf_bz2_stream_d->opaque = NULL;
+    otf_bz2_stream_d->avail_in = 0;
+    otf_bz2_stream_d->next_in = NULL;
+    if (BZ2_bzDecompressInit(otf_bz2_stream_d.get(), 0, 0) != BZ_OK) {
+      print_to_console("ERROR: bZip2 init failed\n");
+      exit(1);
     }
-    if (otf_xz_stream_d != nullptr)
-    {
-      (void)lzma_end(otf_xz_stream_d.get());
-    }
+
+    setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
+  }
+
+  ~Bz2StreamBuffer() override {
+    (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
+    if (owns_wrapped_istream) delete wrapped_istream;
+  }
+
+  int underflow() override {
+    if (gptr() < egptr())
+      return *gptr();
+
+    int ret;
+    print_work_sign(true);
+
+    this->otf_bz2_stream_d->avail_out = CHUNK*10;
+    this->otf_bz2_stream_d->next_out = otf_dec.get();
+
+    bool stream_eof = false;
+    do {
+
+      if (this->otf_bz2_stream_d->avail_in == 0) {
+        wrapped_istream->read(otf_in.get(), CHUNK);
+        this->otf_bz2_stream_d->avail_in = wrapped_istream->gcount();
+        this->otf_bz2_stream_d->next_in = otf_in.get();
+        if (this->otf_bz2_stream_d->avail_in == 0) break;
+      }
+
+      ret = BZ2_bzDecompress(otf_bz2_stream_d.get());
+      if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
+        (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
+        print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
+        exit(1);
+      }
+
+      if (ret == BZ_STREAM_END) stream_eof = true;
+
+    } while (this->otf_bz2_stream_d->avail_out > 0 && ret != BZ_STREAM_END);
+
+    std::streamsize amt_read = CHUNK * 10 - this->otf_bz2_stream_d->avail_out;
+    setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
+    if (amt_read == 0 && stream_eof) return EOF;
+    return static_cast<unsigned char>(*gptr());
   }
 };
 
-template <typename T>
-class Precomp_IStream : public Precomp_IStream_Base<T> {};
-
-class Precomp_IfStream : public Precomp_IStream_Base<std::ifstream>
+class XzStreamBuffer: public std::streambuf
 {
-  size_t own_fread(void* ptr, size_t size, size_t count);
 public:
-  std::streamsize last_gcount = 0;
+  std::istream* wrapped_istream;
+  bool owns_wrapped_istream = false;
+  std::unique_ptr<lzma_stream> otf_xz_stream_d;
+  std::unique_ptr<char[]> otf_in;
+  std::unique_ptr<char[]> otf_dec;
 
-  std::streamsize gcount() { return last_gcount; }
-
-  int get() {
-    if (compression_otf_method == OTF_NONE) {
-      int chr = this->std::ifstream::get();
-      last_gcount = this->std::ifstream::gcount();
-      return chr;
-    }
-    else {
-      unsigned char temp_buf[1];
-      read(reinterpret_cast<char*>(temp_buf), 1);
-      return temp_buf[0];
-    }
+  XzStreamBuffer(std::istream& wrapped_istream): wrapped_istream(&wrapped_istream) {
+    init();
   }
 
-  std::ifstream& read(char* buf, std::streamsize size)
-  {
-    last_gcount = this->own_fread(buf, 1, size);
-    return *this;
+  XzStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
+    this->wrapped_istream = wrapped_istream.release();
+    owns_wrapped_istream = true;
+    init();
+  }
+
+  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
+    auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
+    auto xz_streambuf = new XzStreamBuffer(std::move(istream));
+    new_fin->rdbuf(xz_streambuf);
+    return new_fin;
+  }
+
+  void init() {
+    otf_in = std::make_unique<char[]>(CHUNK);
+    otf_dec = std::make_unique<char[]>(CHUNK * 10);
+    otf_xz_stream_d = std::unique_ptr<lzma_stream>(new lzma_stream());
+    if (!init_decoder(otf_xz_stream_d.get())) {
+      print_to_console("ERROR: liblzma init failed\n");
+      exit(1);
+    }
+
+    setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
+  }
+
+  ~XzStreamBuffer() override {
+    lzma_end(otf_xz_stream_d.get());
+    if (owns_wrapped_istream) delete wrapped_istream;
+  }
+
+  int underflow() override {
+    if (gptr() < egptr())
+      return *gptr();
+
+    otf_xz_stream_d->avail_out = CHUNK * 10;
+    otf_xz_stream_d->next_out = (uint8_t*)otf_dec.get();
+
+    bool stream_eof = false;
+    do {
+      print_work_sign(true);
+      if ((otf_xz_stream_d->avail_in == 0) && !wrapped_istream->eof()) {
+        otf_xz_stream_d->next_in = (uint8_t*)otf_in.get();
+        wrapped_istream->read(otf_in.get(), CHUNK);
+        otf_xz_stream_d->avail_in = wrapped_istream->gcount();
+
+        if (wrapped_istream->bad()) {
+          print_to_console("ERROR: Could not read input file\n");
+          exit(1);
+        }
+      }
+
+      lzma_ret ret = lzma_code(otf_xz_stream_d.get(), LZMA_RUN);
+
+      if (ret == LZMA_STREAM_END) {
+        stream_eof = true;
+        break;
+      }
+
+      if (ret != LZMA_OK) {
+        const char* msg;
+        switch (ret) {
+        case LZMA_MEM_ERROR:
+          msg = "Memory allocation failed";
+          break;
+        case LZMA_FORMAT_ERROR:
+          msg = "Wrong file format";
+          break;
+        case LZMA_OPTIONS_ERROR:
+          msg = "Unsupported compression options";
+          break;
+        case LZMA_DATA_ERROR:
+        case LZMA_BUF_ERROR:
+          msg = "Compressed file is corrupt";
+          break;
+        default:
+          msg = "Unknown error, possibly a bug";
+          break;
+        }
+
+        print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+#ifdef COMFORT
+        wait_for_key();
+#endif // COMFORT
+        exit(1);
+      }
+    } while (otf_xz_stream_d->avail_out > 0);
+
+    std::streamsize amt_read = CHUNK * 10 - otf_xz_stream_d->avail_out;
+    setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
+    if (amt_read == 0 && stream_eof) return EOF;
+    return static_cast<unsigned char>(*gptr());
   }
 };
+
+std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
 
 template <typename T>
 class Precomp_OStream : public T
