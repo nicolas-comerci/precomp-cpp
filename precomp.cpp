@@ -225,7 +225,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
   }
   g_precomp.ctx->fin = std::move(fin);
 
-  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
@@ -268,7 +268,7 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
   }
   g_precomp.ctx->fin = std::move(fin);
 
-  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
@@ -472,7 +472,6 @@ int init(int argc, char* argv[]) {
   bool lzma_filters_set = false;
   bool long_help = false;
   bool preserve_extension = false;
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
 
   for (i = 1; (i < argc) && (parse_on); i++) {
     if (argv[i][0] == '-') { // switch
@@ -552,18 +551,18 @@ int init(int argc, char* argv[]) {
               lzma_thread_count_set = true;
             } else if (toupper(argv[i][2]) == 'L') {
               if (toupper(argv[i][3]) == 'C') {
-                otf_xz_extra_params->lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
-                int lclp = (otf_xz_extra_params->lc != 0 ? otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
-                  + (otf_xz_extra_params->lp != 0 ? otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
+                g_precomp.otf_xz_extra_params->lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
+                int lclp = (g_precomp.otf_xz_extra_params->lc != 0 ? g_precomp.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+                  + (g_precomp.otf_xz_extra_params->lp != 0 ? g_precomp.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
                 if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
                   print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                          LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
                   exit(1);
                 }
               } else if (toupper(argv[i][3]) == 'P') {
-                  otf_xz_extra_params->lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
-                  int lclp = (otf_xz_extra_params->lc != 0 ? otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
-                    + (otf_xz_extra_params->lp != 0 ? otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
+                  g_precomp.otf_xz_extra_params->lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
+                  int lclp = (g_precomp.otf_xz_extra_params->lc != 0 ? g_precomp.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+                    + (g_precomp.otf_xz_extra_params->lp != 0 ? g_precomp.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
                   if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
                     print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
                            LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
@@ -575,8 +574,8 @@ int init(int argc, char* argv[]) {
               }
             } else if (toupper(argv[i][2]) == 'P') {
               if (toupper(argv[i][3]) == 'B') {
-                otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
-                int pb = otf_xz_extra_params->pb != 0 ? otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
+                g_precomp.otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
+                int pb = g_precomp.otf_xz_extra_params->pb != 0 ? g_precomp.otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
                 if (pb < LZMA_PB_MIN || pb > LZMA_PB_MAX) {
                   print_to_console("LZMA pb (default %d) must be inside %d..%d\n",
                          LZMA_PB_DEFAULT, LZMA_PB_MIN, LZMA_PB_MAX);
@@ -610,22 +609,22 @@ int init(int argc, char* argv[]) {
               while (argv[i][argindex] != 0) {
                 switch (toupper(argv[i][argindex])) {
                   case 'X':
-                    otf_xz_extra_params->enable_filter_x86 = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_x86 = true;
                     break;
                   case 'P':
-                    otf_xz_extra_params->enable_filter_powerpc = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_powerpc = true;
                     break;
                   case 'I':
-                    otf_xz_extra_params->enable_filter_ia64 = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_ia64 = true;
                     break;
                   case 'A':
-                    otf_xz_extra_params->enable_filter_arm = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_arm = true;
                     break;
                   case 'T':
-                    otf_xz_extra_params->enable_filter_armthumb = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_armthumb = true;
                     break;
                   case 'S':
-                    otf_xz_extra_params->enable_filter_sparc = true;
+                    g_precomp.otf_xz_extra_params->enable_filter_sparc = true;
                     break;
                   case 'D':
                     {
@@ -636,14 +635,14 @@ int init(int argc, char* argv[]) {
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
                       }
-                      otf_xz_extra_params->enable_filter_delta = true;
+                      g_precomp.otf_xz_extra_params->enable_filter_delta = true;
                       while ((argv[i][argindex] > '0') && (argv[i][argindex] < '9')) {
-                        otf_xz_extra_params->filter_delta_distance *= 10;
-                        otf_xz_extra_params->filter_delta_distance += (argv[i][argindex] - '0');
+                        g_precomp.otf_xz_extra_params->filter_delta_distance *= 10;
+                        g_precomp.otf_xz_extra_params->filter_delta_distance += (argv[i][argindex] - '0');
                         argindex++;
                       }
-                      if (otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN 
-                           || otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+                      if (g_precomp.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN 
+                           || g_precomp.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                         print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                                LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                         exit(1);
@@ -1088,7 +1087,7 @@ int init(int argc, char* argv[]) {
       }
     }
 
-    auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+    auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
     fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!fout->is_open()) {
       print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
@@ -1096,7 +1095,6 @@ int init(int argc, char* argv[]) {
     }
     g_precomp.ctx->fout = std::move(fout);
   }
-  g_precomp.ctx->fout->otf_xz_extra_params = std::move(otf_xz_extra_params);
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
@@ -1174,8 +1172,6 @@ int init_comfort(int argc, char* argv[]) {
   g_precomp.ctx->suppress_mp3_inconsistent_emphasis_sum = -1;
   g_precomp.ctx->suppress_mp3_inconsistent_original_bit = -1;
   g_precomp.ctx->mp3_parsing_cache_second_frame = -1;
-
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
 
   // parse parameters (should be input file only)
   if (argc == 1) {
@@ -1475,22 +1471,22 @@ int init_comfort(int argc, char* argv[]) {
           for (j = 0; j < (int)strlen(value); j++) {
             switch (toupper(value[j])) {
               case 'X':
-                otf_xz_extra_params->enable_filter_x86 = true;
+                g_precomp.otf_xz_extra_params->enable_filter_x86 = true;
                 break;
               case 'P':
-                otf_xz_extra_params->enable_filter_powerpc = true;
+                g_precomp.otf_xz_extra_params->enable_filter_powerpc = true;
                 break;
               case 'I':
-                otf_xz_extra_params->enable_filter_ia64 = true;
+                g_precomp.otf_xz_extra_params->enable_filter_ia64 = true;
                 break;
               case 'A':
-                otf_xz_extra_params->enable_filter_arm = true;
+                g_precomp.otf_xz_extra_params->enable_filter_arm = true;
                 break;
               case 'T':
-                otf_xz_extra_params->enable_filter_armthumb = true;
+                g_precomp.otf_xz_extra_params->enable_filter_armthumb = true;
                 break;
               case 'S':
-                otf_xz_extra_params->enable_filter_sparc = true;
+                g_precomp.otf_xz_extra_params->enable_filter_sparc = true;
                 break;
               case 'D':
                 {
@@ -1502,14 +1498,14 @@ int init_comfort(int argc, char* argv[]) {
                     wait_for_key();
                     exit(1);
                   }
-                  otf_xz_extra_params->enable_filter_delta = true;
+                  g_precomp.otf_xz_extra_params->enable_filter_delta = true;
                   while ((value[j] > '0') && (value[j] < '9')) {
-                    otf_xz_extra_params->filter_delta_distance *= 10;
-                    otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
+                    g_precomp.otf_xz_extra_params->filter_delta_distance *= 10;
+                    g_precomp.otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
                     j++;
                   }
-                  if (otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
-                       || otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+                  if (g_precomp.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
+                       || g_precomp.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                     print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
                         LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
                     wait_for_key();
@@ -2129,7 +2125,7 @@ int init_comfort(int argc, char* argv[]) {
     print_to_console("\n");
   }
 
-  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     print_to_console("ERROR: Can't create output file \"%s\"\n", g_precomp.ctx->output_file_name.c_str());
@@ -2137,7 +2133,6 @@ int init_comfort(int argc, char* argv[]) {
     exit(1);
   }
   g_precomp.ctx->fout = std::move(fout);
-  g_precomp.ctx->fout->otf_xz_extra_params = std::move(otf_xz_extra_params);
 
   print_to_console("Input file: %s\n", g_precomp.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", g_precomp.ctx->output_file_name.c_str());
@@ -2400,7 +2395,7 @@ long long def_compare_bzip2(std::istream& source, std::istream& compfile, int le
   return rek_same_byte_count;
 }
 
-int def_part_bzip2(std::istream& source, Precomp_OfStream& dest, int level, long long stream_size_in, long long stream_size_out) {
+int def_part_bzip2(std::istream& source, std::ostream& dest, int level, long long stream_size_in, long long stream_size_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2578,7 +2573,7 @@ bool check_inf_result(int cb_pos, int windowbits, bool use_brute_parameters = fa
   return false;
 }
 
-int inf_bzip2(std::istream& source, Precomp_OfStream& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
+int inf_bzip2(std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
   int ret;
   unsigned have;
   bz_stream strm;
@@ -2645,7 +2640,7 @@ int inf_bzip2(std::istream& source, Precomp_OfStream& dest, long long& compresse
 }
 
 
-int def_bzip2(std::istream& source, Precomp_OfStream& dest, int level) {
+int def_bzip2(std::istream& source, std::ostream& dest, int level) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -2914,7 +2909,7 @@ private:
 class UncompressedOutStream : public OutputStream {
 public:
   std::string tmp_filename;
-  Precomp_OfStream ftempout;
+  std::ofstream ftempout;
   UncompressedOutStream(bool& in_memory, std::string tmp_filename) : _written(0), _in_memory(in_memory), tmp_filename(tmp_filename) {
     ftempout.open(tmp_filename, std::ios_base::out | std::ios_base::binary);
   }
@@ -3009,23 +3004,23 @@ recompress_deflate_result try_recompression_deflate(std::istream& file, std::str
 
 class OwnOStream : public OutputStream {
 public:
-  OwnOStream(Precomp_OfStream* f) : _f(f) {}
+  OwnOStream(std::ostream* f) : _f(f) {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
     _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
     return _f->bad() ? 0 : size;
   }
 private:
-  Precomp_OfStream* _f;
+  std::ostream* _f;
 };
 
-bool try_reconstructing_deflate(std::istream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres) {
+bool try_reconstructing_deflate(std::istream& fin, std::ostream& fout, const recompress_deflate_result& rdres) {
   OwnOStream os(&fout);
   OwnIStream is(&fin);
   bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, []() { print_work_sign(true); });
   return result;
 }
-bool try_reconstructing_deflate_skip(std::istream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(std::istream& fin, std::ostream& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   frs_offset = 0;
@@ -3039,7 +3034,7 @@ bool try_reconstructing_deflate_skip(std::istream& fin, Precomp_OfStream& fout, 
 }
 class OwnOStreamMultiPNG : public OutputStream {
 public:
-  OwnOStreamMultiPNG(Precomp_OfStream* f,
+  OwnOStreamMultiPNG(std::ostream* f,
                       const size_t idat_count, 
                       const uint32_t* idat_crcs, 
                       const uint32_t* idat_lengths) 
@@ -3076,13 +3071,13 @@ public:
     return written;
   }
 private:
-  Precomp_OfStream* _f;
+  std::ostream* _f;
   const size_t _idat_count;
   const uint32_t* _idat_crcs;
   const uint32_t* _idat_lengths;
   size_t _idat_idx, _to_read;
 };
-bool try_reconstructing_deflate_multipng(std::istream& fin, Precomp_OfStream& fout, const recompress_deflate_result& rdres,
+bool try_reconstructing_deflate_multipng(std::istream& fin, std::ostream& fout, const recompress_deflate_result& rdres,
                                 const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
@@ -3477,10 +3472,13 @@ bool compress_file(float min_percent, float max_percent) {
 
   g_precomp.ctx->comp_decomp_state = P_COMPRESS;
   if (recursion_depth == 0) write_header();
-  g_precomp.ctx->fout->compression_otf_method = g_precomp.ctx->compression_otf_method;
-  g_precomp.ctx->fout->compression_otf_max_memory = g_precomp.switches.compression_otf_max_memory;
-  g_precomp.ctx->fout->compression_otf_thread_count = g_precomp.switches.compression_otf_thread_count;
-  g_precomp.ctx->fout->init_otf_in_if_needed();
+  g_precomp.ctx->fout = wrap_ostream_otf_compression(
+    std::move(g_precomp.ctx->fout),
+    g_precomp.ctx->compression_otf_method,
+    std::move(g_precomp.otf_xz_extra_params),
+    g_precomp.switches.compression_otf_max_memory,
+    g_precomp.switches.compression_otf_thread_count
+  );
 
   g_precomp.ctx->decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
 
@@ -3903,7 +3901,7 @@ bool compress_file(float min_percent, float max_percent) {
           PrecompTmpFile tmp_png3;
           tmp_png3.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
           tmp_png3.close();
-          Precomp_OfStream tmp_png;
+          std::ofstream tmp_png;
           tmp_png.open(png_tmp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
           force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
@@ -4657,7 +4655,7 @@ while (g_precomp.ctx->fin->good()) {
       tempfile2 += "gif";
       remove(tempfile.c_str());
       {
-        Precomp_OfStream ftempout;
+        std::ofstream ftempout;
         ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
         fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
         ftempout.close();
@@ -4667,7 +4665,7 @@ while (g_precomp.ctx->fin->good()) {
 
       {
         remove(tempfile2.c_str());
-        Precomp_OfStream frecomp;
+        std::ofstream frecomp;
         frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
 
         // recompress data
@@ -4779,7 +4777,7 @@ while (g_precomp.ctx->fin->good()) {
         remove(tempfile.c_str());
 
         {
-          Precomp_OfStream ftempout;
+          std::ofstream ftempout;
           ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
           ftempout.close();
@@ -5075,7 +5073,7 @@ while (g_precomp.ctx->fin->good()) {
         remove(tempfile.c_str());
 
         {
-          Precomp_OfStream ftempout;
+          std::ofstream ftempout;
           ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
           fast_copy(*g_precomp.ctx->fin, ftempout, decompressed_data_length);
           ftempout.close();
@@ -5171,10 +5169,13 @@ void convert_file() {
 
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
   g_precomp.ctx->fin = wrap_istream_otf_compression(std::move(g_precomp.ctx->fin), conversion_from_method);
-  g_precomp.ctx->fout->compression_otf_method = conversion_to_method;
-  g_precomp.ctx->fout->compression_otf_max_memory = g_precomp.switches.compression_otf_max_memory;
-  g_precomp.ctx->fout->compression_otf_thread_count = g_precomp.switches.compression_otf_thread_count;
-  g_precomp.ctx->fout->init_otf_in_if_needed();
+  g_precomp.ctx->fout = wrap_ostream_otf_compression(
+    std::move(g_precomp.ctx->fout),
+    conversion_to_method,
+    std::move(g_precomp.otf_xz_extra_params),
+    g_precomp.switches.compression_otf_max_memory,
+    g_precomp.switches.compression_otf_thread_count
+  );
 
   if (!DEBUG_MODE) show_progress(0, false, false);
 
@@ -5216,7 +5217,7 @@ long long try_to_decompress_bzip2(std::istream& file, int compression_level, lon
   print_work_sign(true);
 
   remove(tmpfile.file_path.c_str());
-  Precomp_OfStream ftempout;
+  std::ofstream ftempout;
   ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
   force_seekg(file, &file == g_precomp.ctx->fin.get() ? g_precomp.ctx->input_file_pos : 0, std::ios_base::beg);
@@ -5273,10 +5274,7 @@ void try_recompress_bzip2(std::istream& origfile, int level, long long& compress
 
 
 void write_header() {
-  if (g_precomp.ctx->fout->compression_otf_method != OTF_NONE) {
-    print_to_console("Attempted to write header while compression is enabled");
-    exit(1);
-  }
+  // write the PCF file header, beware that this needs to be done before wrapping the output file with a CompressedOStreamBuffer
   char* input_file_name_without_path = new char[g_precomp.ctx->input_file_name.length() + 1];
 
   ostream_printf(*g_precomp.ctx->fout, "PCF");
@@ -5420,7 +5418,7 @@ void progress_update(long long bytes_written) {
   show_progress(percent, true, true);
 }
 
-void fast_copy(std::istream& file1, Precomp_OfStream& file2, long long bytecount, bool update_progress) {
+void fast_copy(std::istream& file1, std::ostream& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
   long long i;
@@ -5461,7 +5459,7 @@ void fast_copy(std::istream& file, unsigned char* mem, long long bytecount) {
   }
 }
 
-void fast_copy(unsigned char* mem, Precomp_OfStream& file, long long bytecount) {
+void fast_copy(unsigned char* mem, std::ostream& file, long long bytecount) {
     if (bytecount == 0) return;
 
   long long i;
@@ -5732,7 +5730,7 @@ void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpF
 // GIF functions
 
 bool newgif_may_write;
-Precomp_OfStream* frecompress_gif = NULL;
+std::ostream* frecompress_gif = NULL;
 std::istream* freadfunc = NULL;
 
 int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
@@ -5800,7 +5798,7 @@ bool r_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* n
   return r_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool recompress_gif(std::istream& srcfile, Precomp_OfStream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
+bool recompress_gif(std::istream& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
   int i, j;
   long long last_pos = -1;
   int Row, Col, Width, Height, ExtCode;
@@ -5942,7 +5940,7 @@ bool d_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile) {
   return d_gif_result(ScreenBuff, myGifFile, true);
 }
 
-bool decompress_gif(std::istream& srcfile, Precomp_OfStream& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
+bool decompress_gif(std::istream& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
   int i, j;
   GifFileType* myGifFile;
   int Row, Col, Width, Height, ExtCode;
@@ -6101,7 +6099,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   tmpfile.close();
   // read GIF file
   {
-    Precomp_OfStream ftempout;
+    std::ofstream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
     if (!decompress_gif(*g_precomp.ctx->fin, ftempout, g_precomp.ctx->input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
@@ -6126,7 +6124,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   PrecompTmpFile frecomp_tmp;
   frecomp_tmp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   frecomp_tmp.close();
-  Precomp_OfStream frecomp;
+  std::ofstream frecomp;
   frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
 
@@ -6371,7 +6369,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  }
 		  // try to decompress at current position
           {
-            Precomp_OfStream decompressed_jpg;
+            std::ofstream decompressed_jpg;
             decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
             force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
             fast_copy(*g_precomp.ctx->fin, decompressed_jpg, jpg_length);
@@ -6436,7 +6434,7 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
             } while (!found_ffda);
             std::string mjpgdht_tempfile = tmpfile.file_path + "_mjpgdht";
             if (found_ffda) {
-              Precomp_OfStream decompressed_jpg_w_MJPGDHT;
+              std::ofstream decompressed_jpg_w_MJPGDHT;
               decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
               force_seekg(decompressed_jpg, 0, std::ios_base::beg);
               fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
@@ -6568,7 +6566,7 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
         } else { // large stream => use temporary files
           // try to decompress at current position
           {
-            Precomp_OfStream decompressed_mp3;
+            std::ofstream decompressed_mp3;
             decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
             force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
             fast_copy(*g_precomp.ctx->fin, decompressed_mp3, mp3_length);
@@ -6920,7 +6918,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(std::istream& file_in, Precomp_OfStream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
+void base64_reencode(std::istream& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
           int line_nr = 0;
           unsigned int act_line_len = 0;
           int avail_in;
@@ -7162,7 +7160,7 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       PrecompTmpFile frecomp_tmp;
       frecomp_tmp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
       frecomp_tmp.close();
-      Precomp_OfStream frecomp_out;
+      std::ofstream frecomp_out;
       frecomp_out.open(frecomp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
       base64_reencode(ftempout, frecomp_out, line_count, base64_line_len);
@@ -7316,7 +7314,7 @@ void recursion_pop() {
 
 void write_ftempout_if_not_present(long long byte_count, bool in_memory, PrecompTmpFile& tmpfile) {
   if (in_memory) {
-    Precomp_OfStream ftempout;
+    std::ofstream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
     fast_copy(g_precomp.ctx->decomp_io_buf, ftempout, byte_count);
     ftempout.close();
@@ -7364,7 +7362,7 @@ recursion_result recursion_compress(long long compressed_bytes, long long decomp
   g_precomp.ctx->output_file_name = tmpfile.file_path;
   g_precomp.ctx->output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx->output_file_name;
-  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx->fout = std::move(fout);
 
@@ -7437,7 +7435,7 @@ recursion_result recursion_write_file_and_compress(const recompress_deflate_resu
 }
 
 recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile) {
-  Precomp_OfStream recursion_fin;
+  std::ofstream recursion_fin;
   recursion_result tmp_r;
 
   remove(tmpfile.file_path.c_str());
@@ -7463,7 +7461,7 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   g_precomp.ctx->output_file_name = tmpfile.file_path;
   g_precomp.ctx->output_file_name += '_';
   tmp_r.file_name = g_precomp.ctx->output_file_name;
-  auto fout = std::unique_ptr<Precomp_OfStream>(new Precomp_OfStream());
+  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(g_precomp.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   g_precomp.ctx->fout = std::move(fout);
 

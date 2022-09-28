@@ -7,7 +7,9 @@
 
 #include <memory>
 #include <fstream>
+#include <functional>
 
+class CompressedOStreamBuffer;
 constexpr auto CHUNK = 262144; // 256 KB buffersize
 
 // compression-on-the-fly
@@ -15,7 +17,7 @@ enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzm
 
 int lzma_max_memory_default();
 
-class Bz2StreamBuffer : public std::streambuf
+class Bz2IStreamBuffer : public std::streambuf
 {
 public:
   std::istream* wrapped_istream;
@@ -24,11 +26,11 @@ public:
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
 
-  Bz2StreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream) {
+  Bz2IStreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream) {
     init();
   }
 
-  Bz2StreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
+  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
     this->wrapped_istream = wrapped_istream.release();
     owns_wrapped_istream = true;
     init();
@@ -36,7 +38,7 @@ public:
 
   static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
     auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
-    auto bz2_streambuf = new Bz2StreamBuffer(std::move(istream));
+    auto bz2_streambuf = new Bz2IStreamBuffer(std::move(istream));
     new_fin->rdbuf(bz2_streambuf);
     return new_fin;
   }
@@ -58,7 +60,7 @@ public:
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
   }
 
-  ~Bz2StreamBuffer() override {
+  ~Bz2IStreamBuffer() override {
     (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
     if (owns_wrapped_istream) delete wrapped_istream;
   }
@@ -101,7 +103,7 @@ public:
   }
 };
 
-class XzStreamBuffer: public std::streambuf
+class XzIStreamBuffer: public std::streambuf
 {
 public:
   std::istream* wrapped_istream;
@@ -110,11 +112,11 @@ public:
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
 
-  XzStreamBuffer(std::istream& wrapped_istream): wrapped_istream(&wrapped_istream) {
+  XzIStreamBuffer(std::istream& wrapped_istream): wrapped_istream(&wrapped_istream) {
     init();
   }
 
-  XzStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
+  XzIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
     this->wrapped_istream = wrapped_istream.release();
     owns_wrapped_istream = true;
     init();
@@ -122,7 +124,7 @@ public:
 
   static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
     auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
-    auto xz_streambuf = new XzStreamBuffer(std::move(istream));
+    auto xz_streambuf = new XzIStreamBuffer(std::move(istream));
     new_fin->rdbuf(xz_streambuf);
     return new_fin;
   }
@@ -139,7 +141,7 @@ public:
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
   }
 
-  ~XzStreamBuffer() override {
+  ~XzIStreamBuffer() override {
     lzma_end(otf_xz_stream_d.get());
     if (owns_wrapped_istream) delete wrapped_istream;
   }
@@ -215,108 +217,235 @@ class Precomp_OStream : public T
 {
   static_assert(std::is_base_of_v<std::ostream, T>, "OStreamWrapper must get an std::ostream derivative as template parameter");
 public:
+  std::unique_ptr<CompressedOStreamBuffer> otf_compression_streambuf;
   void rdbuf(std::streambuf* streambuffer)
   {
     std::ostream& stream_ref = *this;
     stream_ref.rdbuf(streambuffer);
   }
 
-  int compression_otf_method = OTF_NONE;
-  uint64_t compression_otf_max_memory;
-  unsigned int compression_otf_thread_count;
-  std::unique_ptr<bz_stream> otf_bz2_stream_c;
-  std::unique_ptr<lzma_stream> otf_xz_stream_c;
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
-  std::unique_ptr<unsigned char[]> otf_out;
-
-  void init_otf_in_if_needed()
-  {
-    if (otf_out != nullptr) return;
-    otf_out = std::make_unique<unsigned char[]>(CHUNK);
-    if (this->compression_otf_method == OTF_BZIP2) {
-      otf_bz2_stream_c = std::unique_ptr<bz_stream>(new bz_stream());
-      otf_bz2_stream_c->bzalloc = NULL;
-      otf_bz2_stream_c->bzfree = NULL;
-      otf_bz2_stream_c->opaque = NULL;
-      if (BZ2_bzCompressInit(otf_bz2_stream_c.get(), 9, 0, 0) != BZ_OK) {
-        print_to_console("ERROR: bZip2 init failed\n");
-        exit(1);
-      }
-    }
-    else if (this->compression_otf_method == OTF_XZ_MT) {
-      otf_xz_stream_c = std::unique_ptr<lzma_stream>(new lzma_stream());
-      uint64_t memory_usage = 0;
-      uint64_t block_size = 0;
-      uint64_t max_memory = this->compression_otf_max_memory * 1024 * 1024LL;
-      int threads = this->compression_otf_thread_count;
-
-      if (max_memory == 0) {
-        max_memory = lzma_max_memory_default() * 1024 * 1024LL;
-      }
-      if (threads == 0) {
-        threads = auto_detected_thread_count();
-      }
-
-      if (!init_encoder_mt(otf_xz_stream_c.get(), threads, max_memory, memory_usage, block_size, *otf_xz_extra_params)) {
-        print_to_console("ERROR: xz Multi-Threaded init failed\n");
-        exit(1);
-      }
-
-      std::string plural = "";
-      if (threads > 1) {
-        plural = "s";
-      }
-      print_to_console(
-        "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
-      );
-    }
+  ~Precomp_OStream() {
+    if (otf_compression_streambuf != nullptr) otf_compression_streambuf->set_stream_eof();
   }
 };
 
-template <typename T>
-class OStreamWrapper : public Precomp_OStream<T> {};
-
-class Precomp_OfStream : public Precomp_OStream<std::ofstream>
+class CompressedOStreamBuffer : public std::streambuf
 {
-  Precomp_OfStream& own_fwrite(const void* ptr, std::streamsize size, std::streamsize count, bool final_byte = false);
 public:
-  ~Precomp_OfStream()
+  std::unique_ptr<std::ostream> wrapped_ostream;
+  bool is_stream_eof = false;
+  std::unique_ptr<char[]> otf_in;
+  std::unique_ptr<char[]> otf_out;
+
+  CompressedOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream): wrapped_ostream(std::move(wrapped_ostream))
   {
-    if (this->compression_otf_method > OTF_NONE) {
+    otf_in = std::make_unique<char[]>(CHUNK);
+    otf_out = std::make_unique<char[]>(CHUNK);
+  }
 
-      // uncompressed data of length 0 ends compress-on-the-fly data
-      char final_buf[9];
-      for (int i = 0; i < 9; i++) {
-        final_buf[i] = 0;
+  virtual int sync(bool final_byte) = 0;
+  int sync() override { return sync(false); }
+
+  void set_stream_eof() {
+    if (is_stream_eof) return;
+    // uncompressed data of length 0 ends compress-on-the-fly data
+    for (int i = 0; i < 9; i++) {
+      overflow(0);
+    }
+    sync(true);
+    is_stream_eof = true;
+  }
+
+  int overflow(int c) override {
+    if (c == EOF) {
+      set_stream_eof();
+      return c;
+    }
+
+    if (pptr() == epptr()) {
+      sync();
+    }
+    *pptr() = c;
+    pbump(1);
+
+    return c;
+  }
+};
+
+class Bz2OStreamBuffer : public CompressedOStreamBuffer
+{
+public:
+  std::unique_ptr<bz_stream, std::function<void(bz_stream*)>> otf_bz2_stream_c;
+
+  Bz2OStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) :
+    CompressedOStreamBuffer(std::move(wrapped_ostream))
+  {
+    init();
+  }
+
+  static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
+
+  void init() {
+    otf_bz2_stream_c = std::unique_ptr<bz_stream, std::function<void(bz_stream*)>>(
+      new bz_stream(),
+      [](bz_stream* ptr) {
+        BZ2_bzCompressEnd(ptr);
       }
-      this->own_fwrite(final_buf, 1, 9, true);
+    );
+    otf_bz2_stream_c->bzalloc = NULL;
+    otf_bz2_stream_c->bzfree = NULL;
+    otf_bz2_stream_c->opaque = NULL;
+    if (BZ2_bzCompressInit(otf_bz2_stream_c.get(), 9, 0, 0) != BZ_OK) {
+      print_to_console("ERROR: bZip2 init failed\n");
+      exit(1);
     }
-    if (otf_bz2_stream_c != nullptr)
-    {
-      (void)BZ2_bzCompressEnd(otf_bz2_stream_c.get());
-    }
-    if (otf_xz_stream_c != nullptr)
-    {
-      (void)lzma_end(otf_xz_stream_c.get());
-    }
+
+    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }
 
-  Precomp_OfStream& write(char* buf, std::streamsize count) {
-    return this->own_fwrite(buf, 1, count);
+  int sync(bool final_byte) override {
+    int flush, ret;
+    print_work_sign(true);
+
+    flush = final_byte ? BZ_FINISH : BZ_RUN;
+
+    otf_bz2_stream_c->avail_in = pptr() - pbase();
+    otf_bz2_stream_c->next_in = otf_in.get();
+    do {
+      otf_bz2_stream_c->avail_out = CHUNK;
+      otf_bz2_stream_c->next_out = otf_out.get();
+      ret = BZ2_bzCompress(otf_bz2_stream_c.get(), flush);
+      unsigned have = CHUNK - otf_bz2_stream_c->avail_out;
+      this->wrapped_ostream->write(otf_out.get(), have);
+      if (this->wrapped_ostream->bad()) {
+        error(ERR_DISK_FULL);
+      }
+    } while (otf_bz2_stream_c->avail_out == 0);
+    if (ret < 0) {
+      print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
+      exit(1);
+    }
+
+    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
+    return 0;
+  }
+};
+
+class XzOStreamBuffer : public CompressedOStreamBuffer
+{
+public:
+  uint64_t compression_otf_max_memory;
+  unsigned int compression_otf_thread_count;
+  std::unique_ptr<lzma_stream, std::function<void(lzma_stream*)>> otf_xz_stream_c;
+  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
+
+  XzOStreamBuffer(
+    std::unique_ptr<std::ostream>&& wrapped_ostream,
+    uint64_t compression_otf_max_memory,
+    unsigned int compression_otf_thread_count,
+    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params
+  ) :
+    CompressedOStreamBuffer(std::move(wrapped_ostream)), compression_otf_max_memory(compression_otf_max_memory), compression_otf_thread_count(compression_otf_thread_count)
+  {
+    init(std::move(otf_xz_extra_params));
   }
 
-  Precomp_OfStream& put(char c) {
-    if (this->compression_otf_method == OTF_NONE) { // uncompressed
-      this->std::ofstream::put(c);
+  static std::unique_ptr<std::ostream> from_ostream(
+    std::unique_ptr<std::ostream>&& ostream,
+    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
+    uint64_t compression_otf_max_memory,
+    unsigned int compression_otf_thread_count
+  );
+
+  void init(std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params) {
+    this->otf_xz_extra_params = std::move(otf_xz_extra_params);
+    otf_xz_stream_c = std::unique_ptr<lzma_stream, std::function<void(lzma_stream*)>>(
+      new lzma_stream(),
+      [](lzma_stream* ptr) {
+        lzma_end(ptr);
+      }
+    );
+    uint64_t memory_usage = 0;
+    uint64_t block_size = 0;
+    uint64_t max_memory = this->compression_otf_max_memory * 1024 * 1024LL;
+    int threads = this->compression_otf_thread_count;
+
+    if (max_memory == 0) {
+      max_memory = lzma_max_memory_default() * 1024 * 1024LL;
     }
-    else {
-      unsigned char temp_buf[1];
-      temp_buf[0] = c;
-      this->own_fwrite(temp_buf, 1, 1);
+    if (threads == 0) {
+      threads = auto_detected_thread_count();
     }
-    return *this;
+
+    if (!init_encoder_mt(otf_xz_stream_c.get(), threads, max_memory, memory_usage, block_size, *this->otf_xz_extra_params)) {
+      print_to_console("ERROR: xz Multi-Threaded init failed\n");
+      exit(1);
+    }
+
+    std::string plural = "";
+    if (threads > 1) {
+      plural = "s";
+    }
+    print_to_console(
+      "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
+    );
+
+    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }
 
   void lzma_progress_update();
+
+  int sync(bool final_byte) override {
+    lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
+    lzma_ret ret;
+
+    otf_xz_stream_c->avail_in = pptr() - pbase();
+    otf_xz_stream_c->next_in = (uint8_t*)otf_in.get();
+    do {
+      print_work_sign(true);
+      otf_xz_stream_c->avail_out = CHUNK;
+      otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
+      ret = lzma_code(otf_xz_stream_c.get(), action);
+      unsigned have = CHUNK - otf_xz_stream_c->avail_out;
+      this->wrapped_ostream->write(otf_out.get(), have);
+      if (this->wrapped_ostream->bad()) {
+        error(ERR_DISK_FULL);
+      }
+      if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
+        const char* msg;
+        switch (ret) {
+        case LZMA_MEM_ERROR:
+          msg = "Memory allocation failed";
+          break;
+
+        case LZMA_DATA_ERROR:
+          msg = "File size limits exceeded";
+          break;
+
+        default:
+          msg = "Unknown error, possibly a bug";
+          break;
+        }
+
+        print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
+#ifdef COMFORT
+        wait_for_key();
+#endif // COMFORT
+        exit(1);
+      }
+      if (!DEBUG_MODE) lzma_progress_update();
+    } while (otf_xz_stream_c->avail_in > 0 || otf_xz_stream_c->avail_out != CHUNK || final_byte && ret != LZMA_STREAM_END);
+
+    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
+    return 0;
+  }
 };
+
+std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
+  std::unique_ptr<std::ostream>&& ostream,
+  int otf_compression_method,
+  std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
+  uint64_t compression_otf_max_memory,
+  unsigned int compression_otf_thread_count
+);
 #endif // PRECOMP_IO_H
