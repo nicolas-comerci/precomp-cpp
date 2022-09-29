@@ -2908,23 +2908,16 @@ private:
 };
 class UncompressedOutStream : public OutputStream {
 public:
-  std::string tmp_filename;
-  std::ofstream ftempout;
-  UncompressedOutStream(bool& in_memory, std::string tmp_filename) : _written(0), _in_memory(in_memory), tmp_filename(tmp_filename) {
-    ftempout.open(tmp_filename, std::ios_base::out | std::ios_base::binary);
-  }
-  ~UncompressedOutStream() {
-    if (!_in_memory) {
-      ftempout.close();
-    }
-  }
+  std::ostream* ftempout;
+  UncompressedOutStream(bool& in_memory, std::ostream& tmpfile) : ftempout(&tmpfile), _written(0), _in_memory(in_memory) {}
+  ~UncompressedOutStream() {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
     print_work_sign(true);
     if (_in_memory) {
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
-        fast_copy(g_precomp.ctx->decomp_io_buf, ftempout, _written);
+        fast_copy(g_precomp.ctx->decomp_io_buf, *ftempout, _written);
       }
       else {
         memcpy(g_precomp.ctx->decomp_io_buf + _written, buffer, size);
@@ -2933,8 +2926,8 @@ public:
       }
     }
     _written += size;
-    ftempout.write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
-    return ftempout.bad() ? 0 : size;
+    ftempout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
+    return ftempout->bad() ? 0 : size;
   }
 
   uint64_t written() const {
@@ -2946,7 +2939,7 @@ private:
   bool& _in_memory;
 };
 
-recompress_deflate_result try_recompression_deflate(std::istream& file, std::string tmp_filename) {
+recompress_deflate_result try_recompression_deflate(std::istream& file, PrecompTmpFile& tmpfile) {
   force_seekg(file, &file == g_precomp.ctx->fin.get() ? g_precomp.ctx->input_file_pos : 0, std::ios_base::beg);
 
   recompress_deflate_result result;
@@ -2956,7 +2949,7 @@ recompress_deflate_result try_recompression_deflate(std::istream& file, std::str
 
   {
     result.uncompressed_in_memory = true;
-    UncompressedOutStream uos(result.uncompressed_in_memory, tmp_filename);
+    UncompressedOutStream uos(result.uncompressed_in_memory, tmpfile);
     uint64_t compressed_stream_size = 0;
     result.accepted = preflate_decode(uos, result.recon_data,
                                       compressed_stream_size, is, []() { print_work_sign(true); },
@@ -2973,10 +2966,7 @@ recompress_deflate_result try_recompression_deflate(std::istream& file, std::str
 
       MemStream reencoded_deflate;
       MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(g_precomp.ctx->decomp_io_buf, g_precomp.ctx->decomp_io_buf + result.uncompressed_stream_size) : std::vector<uint8_t>());
-      uos.ftempout.close();
-      std::ifstream uncompressed_file_wrapper;
-      uncompressed_file_wrapper.open(tmp_filename, std::ios_base::in | std::ios_base::binary);
-      OwnIStream uncompressed_file(result.uncompressed_in_memory ? NULL : &uncompressed_file_wrapper);
+      OwnIStream uncompressed_file(result.uncompressed_in_memory ? NULL : &tmpfile);
       if (!preflate_reencode(reencoded_deflate, result.recon_data, 
                              result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file, 
                              result.uncompressed_stream_size,
@@ -3111,8 +3101,7 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
   int bmp_header_type = 0; // 0 = none, 1 = 8-bit, 2 = 24-bit
 
   // try to decompress at current position
-  tmpfile.close();
-  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile.file_path);
+  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -3310,8 +3299,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
   init_decompression_variables();
 
   // try to decompress at current position
-  tmpfile.close();
-  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile.file_path);
+  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
     g_precomp.statistics.decompressed_streams_count++;
@@ -3898,11 +3886,8 @@ bool compress_file(float min_percent, float max_percent) {
           // copy to temp0.dat before trying to recompress
           std::string png_tmp_filename = tempfile + "png";
           remove(png_tmp_filename.c_str());
-          PrecompTmpFile tmp_png3;
-          tmp_png3.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-          tmp_png3.close();
-          std::ofstream tmp_png;
-          tmp_png.open(png_tmp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+          PrecompTmpFile tmp_png;
+          tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
           force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
 
@@ -3917,11 +3902,7 @@ bool compress_file(float min_percent, float max_percent) {
           tempfile += "pngmulti";
           PrecompTmpFile tmp_pngmulti;
           tmp_pngmulti.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          tmp_png.close();
-          std::ifstream tmp_png2;
-          tmp_png2.open(png_tmp_filename, std::ios_base::in | std::ios_base::binary);
-          try_decompression_png_multi(tmp_png2, -windowbits, tmp_pngmulti);
-          tmp_png2.close();
+          try_decompression_png_multi(tmp_png, -windowbits, tmp_pngmulti);
           g_precomp.ctx->cb += 6;
         }
 
@@ -4689,11 +4670,7 @@ while (g_precomp.ctx->fin->good()) {
       {
         PrecompTmpFile frecomp;
         frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-        frecomp.close();
-        std::ifstream frecomp2;
-        frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-        fast_copy(frecomp2, *g_precomp.ctx->fout, recompressed_data_length);
-        frecomp2.close();
+        fast_copy(frecomp, *g_precomp.ctx->fout, recompressed_data_length);
       }
 
       remove(tempfile2.c_str());
@@ -4794,11 +4771,8 @@ while (g_precomp.ctx->fin->good()) {
         exit(1);
       }
 
-      PrecompTmpFile frecomp2;
-      std::ifstream frecomp;
+      PrecompTmpFile frecomp;
       if (!in_memory) {
-        frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-        frecomp2.close();
         frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
       }
 
@@ -4949,7 +4923,6 @@ while (g_precomp.ctx->fin->good()) {
       if (recursion_used) {
         PrecompTmpFile tmp_base64;
         tmp_base64.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-        tmp_base64.close();
         recursion_result r = recursion_decompress(recursion_data_length, tmp_base64);
         base64_reencode(*r.frecurse, *g_precomp.ctx->fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
         r.frecurse->close();
@@ -5005,7 +4978,6 @@ while (g_precomp.ctx->fin->good()) {
       if (recursion_used) {
         PrecompTmpFile tmp_bzip2;
         tmp_bzip2.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-        tmp_bzip2.close();
         recursion_result r = recursion_decompress(recursion_data_length, tmp_bzip2);
         g_precomp.ctx->retval = def_part_bzip2(*r.frecurse, *g_precomp.ctx->fout, level, decompressed_data_length, recompressed_data_length);
         r.frecurse->close();
@@ -5099,11 +5071,7 @@ while (g_precomp.ctx->fin->good()) {
         {
           PrecompTmpFile frecomp;
           frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-          frecomp.close();
-          std::ifstream frecomp2;
-          frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-          fast_copy(frecomp2, *g_precomp.ctx->fout, recompressed_data_length);
-          frecomp2.close();
+          fast_copy(frecomp, *g_precomp.ctx->fout, recompressed_data_length);
         }
 
         remove(tempfile2.c_str());
@@ -5587,8 +5555,7 @@ void try_decompression_png (int windowbits, PrecompTmpFile& tmpfile) {
   init_decompression_variables();
 
   // try to decompress at current position
-  tmpfile.close();
-  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile.file_path);
+  recompress_deflate_result rdres = try_recompression_deflate(*g_precomp.ctx->fin, tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -5638,8 +5605,7 @@ void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpF
   init_decompression_variables();
 
   // try to decompress at current position
-  tmpfile.close();
-  recompress_deflate_result rdres = try_recompression_deflate(fpng, tmpfile.file_path);
+  recompress_deflate_result rdres = try_recompression_deflate(fpng, tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -6121,10 +6087,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
   std::string tempfile2 = tmpfile.file_path + "_rec_";
   std::ifstream ftempout;
   ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-  PrecompTmpFile frecomp_tmp;
-  frecomp_tmp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
-  frecomp_tmp.close();
-  std::ofstream frecomp;
+  PrecompTmpFile frecomp;
   frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
   if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
 
@@ -7157,21 +7120,12 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
       std::string frecomp_filename = tmpfile.file_path + "_rec";
       remove(frecomp_filename.c_str());
-      PrecompTmpFile frecomp_tmp;
-      frecomp_tmp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-      frecomp_tmp.close();
-      std::ofstream frecomp_out;
-      frecomp_out.open(frecomp_filename, std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-
-      base64_reencode(ftempout, frecomp_out, line_count, base64_line_len);
-      frecomp_out.close();
+      PrecompTmpFile frecomp;
+      frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+      base64_reencode(ftempout, frecomp, line_count, base64_line_len);
 
       ftempout.close();
-
-      std::ifstream frecomp_in;
-      frecomp_in.open(frecomp_filename, std::ios_base::in | std::ios_base::binary);
-      g_precomp.ctx->identical_bytes_decomp = compare_files(*g_precomp.ctx->fin, frecomp_in, g_precomp.ctx->input_file_pos, 0);
-      frecomp_in.close();
+      g_precomp.ctx->identical_bytes_decomp = compare_files(*g_precomp.ctx->fin, frecomp, g_precomp.ctx->input_file_pos, 0);
     }
 
     if (g_precomp.ctx->identical_bytes_decomp > g_precomp.switches.min_ident_size) {
@@ -7435,15 +7389,10 @@ recursion_result recursion_write_file_and_compress(const recompress_deflate_resu
 }
 
 recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile) {
-  std::ofstream recursion_fin;
   recursion_result tmp_r;
 
-  remove(tmpfile.file_path.c_str());
-  recursion_fin.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-
-  fast_copy(*g_precomp.ctx->fin, recursion_fin, recursion_data_length);
-
-  recursion_fin.close();
+  fast_copy(*g_precomp.ctx->fin, tmpfile, recursion_data_length);
+  tmpfile.close();
 
   recursion_push();
 
@@ -7606,7 +7555,6 @@ bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char 
   // write decompressed data
   if (flags & 128) {
     recursion_length = fin_fget_vlint();
-    tmpfile.close();
     recursion_result r = recursion_decompress(recursion_length, tmpfile);
     debug_pos();
     bool result = try_reconstructing_deflate(*r.frecurse, *g_precomp.ctx->fout, rdres);

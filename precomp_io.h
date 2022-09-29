@@ -9,6 +9,31 @@
 #include <fstream>
 #include <functional>
 
+class PrecompTmpFile : public std::fstream {
+public:
+  std::string file_path;
+  std::ios_base::openmode mode;
+
+  ~PrecompTmpFile() {
+    close();
+    std::remove(file_path.c_str());
+  }
+
+  void open(std::string file_path, std::ios_base::openmode mode) {
+    this->file_path = file_path;
+    this->mode = mode;
+    std::fstream::open(file_path, mode);
+  }
+
+  void reopen() {
+    if (is_open()) close();
+    open(file_path, mode);
+  }
+
+  long long filesize();
+  void resize(long long size);
+};
+
 class CompressedOStreamBuffer;
 constexpr auto CHUNK = 262144; // 256 KB buffersize
 
@@ -211,23 +236,6 @@ public:
 };
 
 std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
-
-template <typename T>
-class Precomp_OStream : public T
-{
-  static_assert(std::is_base_of_v<std::ostream, T>, "OStreamWrapper must get an std::ostream derivative as template parameter");
-public:
-  std::unique_ptr<CompressedOStreamBuffer> otf_compression_streambuf;
-  void rdbuf(std::streambuf* streambuffer)
-  {
-    std::ostream& stream_ref = *this;
-    stream_ref.rdbuf(streambuffer);
-  }
-
-  ~Precomp_OStream() {
-    if (otf_compression_streambuf != nullptr) otf_compression_streambuf->set_stream_eof();
-  }
-};
 
 class CompressedOStreamBuffer : public std::streambuf
 {

@@ -1,5 +1,22 @@
 #include "precomp_io.h"
 
+template <typename T>
+class Precomp_OStream : public T
+{
+  static_assert(std::is_base_of_v<std::ostream, T>, "OStreamWrapper must get an std::ostream derivative as template parameter");
+public:
+  std::unique_ptr<CompressedOStreamBuffer> otf_compression_streambuf;
+  void rdbuf(std::streambuf * streambuffer)
+  {
+    std::ostream& stream_ref = *this;
+    stream_ref.rdbuf(streambuffer);
+  }
+
+  ~Precomp_OStream() {
+    if (otf_compression_streambuf != nullptr) otf_compression_streambuf->set_stream_eof();
+  }
+};
+
 // Return maximal memory to use per default for LZMA in MiB
 // Use only 1 GiB in the 32-bit windows variant
 // because of the 2 or 3 GiB limit on these systems

@@ -8,31 +8,6 @@
 #include <fstream>
 #include <memory>
 
-class PrecompTmpFile : public std::fstream {
-public:
-  std::string file_path;
-  std::ios_base::openmode mode;
-
-  ~PrecompTmpFile() {
-    close();
-    std::remove(file_path.c_str());
-  }
-
-  void open(std::string file_path, std::ios_base::openmode mode) {
-    this->file_path = file_path;
-    this->mode = mode;
-    std::fstream::open(file_path, mode);
-  }
-
-  void reopen() {
-    if (is_open()) close();
-    open(file_path, mode);
-  }
-
-  long long filesize();
-  void resize(long long size);
-};
-
 // Switches class
 class Switches {
   public:
