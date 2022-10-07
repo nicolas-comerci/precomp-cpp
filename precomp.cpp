@@ -776,6 +776,9 @@ int init(int argc, char* argv[]) {
               case 'L': // lzma2 multithreaded
                 g_precomp.ctx->compression_otf_method = OTF_XZ_MT;
                 break;
+              case 'Z': // Zpaq
+                g_precomp.ctx->compression_otf_method = OTF_ZPAQ;
+                break;
               case 'T': // enable compression test mode
                 g_precomp.switches.compression_test_mode = true;
                 break;
@@ -1412,6 +1415,12 @@ int init_comfort(int argc, char* argv[]) {
           if (strcmp(value, "2") == 0) {
             print_to_console("INI: Using lzma2 multithreaded compression method\n");
             g_precomp.ctx->compression_otf_method = OTF_XZ_MT;
+            valid_param = true;
+          }
+
+          if (strcmp(value, "3") == 0) {
+            print_to_console("INI: Using ZPAQ compression method\n");
+            g_precomp.ctx->compression_otf_method = OTF_ZPAQ;
             valid_param = true;
           }
 
