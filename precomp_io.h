@@ -34,6 +34,51 @@ public:
   void resize(long long size);
 };
 
+class memiostream: public std::iostream
+{
+  class membuf : public std::streambuf
+  {
+  public:
+    membuf() = delete;
+    membuf(char* begin, char* end)
+    {
+      this->setg(begin, begin, end);
+      this->setp(begin, end);
+    }
+
+    pos_type seekoff(off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override
+    {
+      if (dir == std::ios_base::cur) {
+        gbump(off);
+        pbump(off);
+      }
+      else if (dir == std::ios_base::end) {
+        setg(eback(), egptr() + off, egptr());
+        setg(pbase(), epptr() + off, epptr());
+      }
+      else if (dir == std::ios_base::beg) {
+        setg(eback(), eback() + off, egptr());
+        setg(pbase(), pbase() + off, epptr());
+      }
+      return gptr() - eback();
+    }
+
+    pos_type seekpos(pos_type sp, std::ios_base::openmode which) override
+    {
+      return seekoff(sp - pos_type(off_type(0)), std::ios_base::beg, which);
+    }
+  };
+
+  std::unique_ptr<membuf> buf;
+  memiostream(membuf* buf): std::iostream(buf), buf(std::unique_ptr<membuf>(buf)) {}
+
+public:
+  static memiostream make(byte* begin, byte* end) {
+    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
+    return {membuf_ptr};
+  }
+};
+
 class CompressedOStreamBuffer;
 constexpr auto CHUNK = 262144; // 256 KB buffersize
 

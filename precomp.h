@@ -126,8 +126,6 @@ void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tm
 #define P_CONVERT 3
 
 void fast_copy(std::istream& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
-void fast_copy(std::istream& file, unsigned char* out, long long bytecount);
-void fast_copy(unsigned char* in, std::ostream& file, long long bytecount);
 
 unsigned char base64_char_decode(unsigned char c);
 void base64_reencode(std::istream& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);

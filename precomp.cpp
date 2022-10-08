@@ -2718,7 +2718,8 @@ void write_decompressed_data(long long byte_count, const char* decompressed_file
 
 void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name) {
     if (in_memory) {
-      fast_copy(g_precomp.ctx->decomp_io_buf, *g_precomp.ctx->fout, byte_count);
+      memiostream memstream = memiostream::make(g_precomp.ctx->decomp_io_buf, g_precomp.ctx->decomp_io_buf + byte_count);
+      fast_copy(memstream, *g_precomp.ctx->fout, byte_count);
     } else {
       write_decompressed_data(byte_count, decompressed_file_name);
     }
@@ -2917,7 +2918,8 @@ public:
     if (_in_memory) {
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
-        fast_copy(g_precomp.ctx->decomp_io_buf, *ftempout, _written);
+        memiostream memstream = memiostream::make(g_precomp.ctx->decomp_io_buf, g_precomp.ctx->decomp_io_buf + _written);
+        fast_copy(memstream, *ftempout, _written);
       }
       else {
         memcpy(g_precomp.ctx->decomp_io_buf + _written, buffer, size);
@@ -3262,7 +3264,8 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         for (int y = 0; y < img_height; y++) {
 
           if (rdres.uncompressed_in_memory) {
-            fast_copy(buf_ptr, *g_precomp.ctx->fout, img_width);
+            memiostream memstream = memiostream::make(buf_ptr, buf_ptr + img_width);
+            fast_copy(memstream, *g_precomp.ctx->fout, img_width);
             buf_ptr += img_width;
           } else {
             fast_copy(ftempout2, *g_precomp.ctx->fout, img_width);
@@ -4726,8 +4729,8 @@ while (g_precomp.ctx->fin->good()) {
 
       if (in_memory) {
         jpg_mem_in = new unsigned char[decompressed_data_length];
-
-        fast_copy(*g_precomp.ctx->fin, jpg_mem_in, decompressed_data_length);
+        memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + decompressed_data_length);
+        fast_copy(*g_precomp.ctx->fin, memstream, decompressed_data_length);
 
 		if (brunsli_used) {
 			brunsli::JPEGData jpegData;
@@ -4816,8 +4819,10 @@ while (g_precomp.ctx->fin->good()) {
 
         // remove motion JPG huffman table
         if (in_memory) {
-          fast_copy(jpg_mem_out, *g_precomp.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
-          fast_copy(jpg_mem_out + (ffda_pos - 1), *g_precomp.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
+          memiostream memstream1 = memiostream::make(jpg_mem_out, jpg_mem_out + ffda_pos - 1 - MJPGDHT_LEN);
+          fast_copy(memstream1, *g_precomp.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+          memiostream memstream2 = memiostream::make(jpg_mem_out + (ffda_pos - 1), jpg_mem_out + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
+          fast_copy(memstream2, *g_precomp.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
         } else {
           force_seekg(frecomp, frecomp_pos, std::ios_base::beg);
           fast_copy(frecomp, *g_precomp.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
@@ -4828,7 +4833,8 @@ while (g_precomp.ctx->fin->good()) {
         }
       } else {
         if (in_memory) {
-          fast_copy(jpg_mem_out, *g_precomp.ctx->fout, recompressed_data_length);
+          memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + recompressed_data_length);
+          fast_copy(memstream, *g_precomp.ctx->fout, recompressed_data_length);
         } else {
           fast_copy(frecomp, *g_precomp.ctx->fout, recompressed_data_length);
         }
@@ -5036,8 +5042,8 @@ while (g_precomp.ctx->fin->good()) {
 
       if (in_memory) {
         mp3_mem_in = new unsigned char[decompressed_data_length];
-
-        fast_copy(*g_precomp.ctx->fin, mp3_mem_in, decompressed_data_length);
+        memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + decompressed_data_length);
+        fast_copy(*g_precomp.ctx->fin, memstream, decompressed_data_length);
 
         pmplib_init_streams(mp3_mem_in, 1, decompressed_data_length, mp3_mem_out, 1);
         recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
@@ -5063,7 +5069,8 @@ while (g_precomp.ctx->fin->good()) {
       }
 
       if (in_memory) {
-        fast_copy(mp3_mem_out, *g_precomp.ctx->fout, recompressed_data_length);
+        memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + recompressed_data_length);
+        fast_copy(memstream, *g_precomp.ctx->fout, recompressed_data_length);
 
         if (mp3_mem_in != NULL) delete[] mp3_mem_in;
         if (mp3_mem_out != NULL) delete[] mp3_mem_out;
@@ -5408,40 +5415,6 @@ void fast_copy(std::istream& file1, std::ostream& file2, long long bytecount, bo
   }
 
   if ((update_progress) && (!DEBUG_MODE)) g_precomp.ctx->uncompressed_bytes_written += bytecount;
-}
-
-void fast_copy(std::istream& file, unsigned char* mem, long long bytecount) {
-    if (bytecount == 0) return;
-
-  long long i;
-  int remaining_bytes = (bytecount % COPY_BUF_SIZE);
-  long long maxi = (bytecount / COPY_BUF_SIZE);
-
-  for (i = 1; i <= maxi; i++) {
-    file.read(reinterpret_cast<char*>(mem + (i - 1) * COPY_BUF_SIZE), COPY_BUF_SIZE);
-
-    if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) print_work_sign(true);
-  }
-  if (remaining_bytes != 0) {
-    file.read(reinterpret_cast<char*>(mem + maxi * COPY_BUF_SIZE), remaining_bytes);
-  }
-}
-
-void fast_copy(unsigned char* mem, std::ostream& file, long long bytecount) {
-    if (bytecount == 0) return;
-
-  long long i;
-  int remaining_bytes = (bytecount % COPY_BUF_SIZE);
-  long long maxi = (bytecount / COPY_BUF_SIZE);
-
-  for (i = 1; i <= maxi; i++) {
-    file.write(reinterpret_cast<char*>(mem + (i - 1) * COPY_BUF_SIZE), COPY_BUF_SIZE);
-
-    if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) print_work_sign(true);
-  }
-  if (remaining_bytes != 0) {
-    file.write(reinterpret_cast<char*>(mem + maxi * COPY_BUF_SIZE), remaining_bytes);
-  }
 }
 
 bool file_exists(const char* filename) {
@@ -6236,9 +6209,10 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
         bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
 
         if (in_memory) { // small stream => do everything in memory
-          jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
           force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
-          fast_copy(*g_precomp.ctx->fin, jpg_mem_in, jpg_length);
+          jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
+          memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + jpg_length);
+          fast_copy(*g_precomp.ctx->fin, memstream, jpg_length);
 
 		  bool brunsli_success = false;
 
@@ -6481,7 +6455,8 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 
           // write compressed JPG
           if (in_memory) {
-            fast_copy(jpg_mem_out, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
+            memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + g_precomp.ctx->best_identical_bytes_decomp);
+            fast_copy(memstream, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
           } else {
             write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
           }
@@ -6520,9 +6495,10 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
         bool in_memory = (mp3_length <= MP3_MAX_MEMORY_SIZE);
 
         if (in_memory) { // small stream => do everything in memory
-          mp3_mem_in = new unsigned char[mp3_length];
           force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, std::ios_base::beg);
-          fast_copy(*g_precomp.ctx->fin, mp3_mem_in, mp3_length);
+          mp3_mem_in = new unsigned char[mp3_length];
+          memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
+          fast_copy(*g_precomp.ctx->fin, memstream, mp3_length);
 
           pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
           recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
@@ -6651,7 +6627,8 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
 
           // write compressed MP3
           if (in_memory) {
-            fast_copy(mp3_mem_out, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
+            memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + g_precomp.ctx->best_identical_bytes_decomp);
+            fast_copy(memstream, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
           } else {
             write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
           }
@@ -7270,7 +7247,8 @@ void write_ftempout_if_not_present(long long byte_count, bool in_memory, Precomp
   if (in_memory) {
     std::ofstream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-    fast_copy(g_precomp.ctx->decomp_io_buf, ftempout, byte_count);
+    memiostream memstream = memiostream::make(g_precomp.ctx->decomp_io_buf, g_precomp.ctx->decomp_io_buf + byte_count);
+    fast_copy(memstream, ftempout, byte_count);
     ftempout.close();
   }
 }
