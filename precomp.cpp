@@ -776,6 +776,9 @@ int init(int argc, char* argv[]) {
               case 'L': // lzma2 multithreaded
                 g_precomp.ctx->compression_otf_method = OTF_XZ_MT;
                 break;
+              case 'T': // enable compression test mode
+                g_precomp.switches.compression_test_mode = true;
+                break;
               default:
                 print_to_console("ERROR: Invalid compression method %c\n", argv[i][2]);
                 exit(1);
@@ -1414,6 +1417,25 @@ int init_comfort(int argc, char* argv[]) {
 
           if (!valid_param) {
             print_to_console("ERROR: Invalid compression method value: %s\n", value);
+            wait_for_key();
+            exit(1);
+          }
+        }
+
+        if (strcmp(param, "compression_test_mode") == 0) {
+          if (strcmp(value, "off") == 0) {
+            print_to_console("INI: Disabled compression test mode\n");
+            valid_param = true;
+          }
+
+          if (strcmp(value, "on") == 0) {
+            print_to_console("INI: Enabled compression test mode\n");
+            g_precomp.switches.compression_test_mode = true;
+            valid_param = true;
+          }
+
+          if (!valid_param) {
+            print_to_console("ERROR: Invalid compression test value: %s\n", value);
             wait_for_key();
             exit(1);
           }
@@ -2703,23 +2725,23 @@ long long file_recompress_bzip2(std::istream& origfile, int level, long long& de
   return retval < 0 ? -1 : retval;
 }
 
-void write_decompressed_data(long long byte_count, const char* decompressed_file_name) {
+void write_decompressed_data(long long byte_count, const char* decompressed_file_name, std::ostream* ostream) {
   std::ifstream ftempout;
   ftempout.open(decompressed_file_name, std::ios_base::in | std::ios_base::binary);
   if (!ftempout.is_open()) error(ERR_TEMP_FILE_DISAPPEARED, decompressed_file_name);
 
   force_seekg(ftempout, 0, std::ios_base::beg);
 
-  fast_copy(ftempout, *g_precomp.ctx->fout, byte_count);
+  fast_copy(ftempout, *ostream, byte_count);
   ftempout.close();
 }
 
-void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name) {
+void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name, std::ostream* ostream) {
     if (in_memory) {
       memiostream memstream = memiostream::make(g_precomp.ctx->decomp_io_buf, g_precomp.ctx->decomp_io_buf + byte_count);
-      fast_copy(memstream, *g_precomp.ctx->fout, byte_count);
+      fast_copy(memstream, *ostream, byte_count);
     } else {
-      write_decompressed_data(byte_count, decompressed_file_name);
+      write_decompressed_data(byte_count, decompressed_file_name, ostream);
     }
 }
 
@@ -2819,7 +2841,7 @@ void end_uncompressed_data() {
 
   if (!g_precomp.ctx->uncompressed_data_in_work) return;
 
-  fout_fput_vlint(g_precomp.ctx->uncompressed_length);
+  fout_fput_vlint(g_precomp.ctx->uncompressed_length, g_precomp.ctx->fout.get());
 
   // fast copy of uncompressed data
   force_seekg(*g_precomp.ctx->fin, g_precomp.ctx->uncompressed_pos, std::ios_base::beg);
@@ -3115,41 +3137,9 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
     debug_deflate_detected(rdres, "in PDF");
 
     if (rdres.accepted) {
-      g_precomp.statistics.recompressed_streams_count++;
-      g_precomp.statistics.recompressed_pdf_count++;
-
-      g_precomp.ctx->non_zlib_was_used = true;
       debug_sums(rdres);
 
-      if (img_bpc == 8) {
-        if (rdres.uncompressed_stream_size == (img_width * img_height)) {
-          bmp_header_type = 1;
-          if (DEBUG_MODE) {
-            print_to_console("Image size did match (8 bit)\n");
-          }
-          g_precomp.statistics.recompressed_pdf_count_8_bit++;
-          g_precomp.statistics.recompressed_pdf_count--;
-        } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
-          bmp_header_type = 2;
-          if (DEBUG_MODE) {
-            print_to_console("Image size did match (24 bit)\n");
-          }
-          g_precomp.statistics.decompressed_pdf_count_8_bit--;
-          g_precomp.statistics.decompressed_pdf_count_24_bit++;
-          g_precomp.statistics.recompressed_pdf_count_24_bit++;
-          g_precomp.statistics.recompressed_pdf_count--;
-        } else {
-          if (DEBUG_MODE) {
-            print_to_console("Image size didn't match with stream size\n");
-          }
-          g_precomp.statistics.decompressed_pdf_count_8_bit--;
-          g_precomp.statistics.decompressed_pdf_count++;
-        }
-      }
-
-      // end uncompressed data
-
-      g_precomp.ctx->compressed_data_found = true;
+      // end uncompressed data      
       end_uncompressed_data();
 
       debug_pos();
@@ -3167,17 +3157,17 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         bmp_c = 128;
       }
 
-      fout_fput_deflate_hdr(D_PDF, bmp_c, rdres, g_precomp.ctx->in_buf + g_precomp.ctx->cb + 12, pdf_header_length - 12, false);
-      fout_fput_recon_data(rdres);
+      PrecompTmpFile img_data;
+      auto img_data_path = temp_files_tag() + "_pdf_img";
+      img_data.open(img_data_path, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
-      // eventually write BMP header
-
+      // eventually write BMP header to img_data
       if (bmp_header_type > 0) {
 
         int i;
 
-        g_precomp.ctx->fout->put('B');
-        g_precomp.ctx->fout->put('M');
+        img_data.put('B');
+        img_data.put('M');
         // BMP size in bytes
         int bmp_size = ((img_width+3) & -4) * img_height;
         if (bmp_header_type == 2) bmp_size *= 3;
@@ -3186,64 +3176,63 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
         } else {
           bmp_size += 54;
         }
-        fout_fput32_little_endian(bmp_size);
+        fout_fput32_little_endian(bmp_size, &img_data);
 
         for (i = 0; i < 4; i++) {
-          g_precomp.ctx->fout->put(0);
+          img_data.put(0);
         }
-        g_precomp.ctx->fout->put(54);
+        img_data.put(54);
         if (bmp_header_type == 1) {
-          g_precomp.ctx->fout->put(4);
+          img_data.put(4);
         } else {
-          g_precomp.ctx->fout->put(0);
+          img_data.put(0);
         }
-        g_precomp.ctx->fout->put(0);
-        g_precomp.ctx->fout->put(0);
-        g_precomp.ctx->fout->put(40);
-        g_precomp.ctx->fout->put(0);
-        g_precomp.ctx->fout->put(0);
-        g_precomp.ctx->fout->put(0);
+        img_data.put(0);
+        img_data.put(0);
+        img_data.put(40);
+        img_data.put(0);
+        img_data.put(0);
+        img_data.put(0);
 
-        fout_fput32_little_endian(img_width);
-        fout_fput32_little_endian(img_height);
+        fout_fput32_little_endian(img_width, &img_data);
+        fout_fput32_little_endian(img_height, &img_data);
 
-        g_precomp.ctx->fout->put(1);
-        g_precomp.ctx->fout->put(0);
+        img_data.put(1);
+        img_data.put(0);
 
         if (bmp_header_type == 1) {
-          g_precomp.ctx->fout->put(8);
+          img_data.put(8);
         } else {
-          g_precomp.ctx->fout->put(24);
+          img_data.put(24);
         }
-        g_precomp.ctx->fout->put(0);
+        img_data.put(0);
 
         for (i = 0; i < 4; i++) {
-          g_precomp.ctx->fout->put(0);
+          img_data.put(0);
         }
 
         if (bmp_header_type == 2)  img_width *= 3;
 
         int datasize = ((img_width+3) & -4) * img_height;
         if (bmp_header_type == 2) datasize *= 3;
-        fout_fput32_little_endian(datasize);
+        fout_fput32_little_endian(datasize, &img_data);
 
         for (i = 0; i < 16; i++) {
-          g_precomp.ctx->fout->put(0);
+          img_data.put(0);
         }
 
         if (bmp_header_type == 1) {
           // write BMP palette
           for (i = 0; i < 1024; i++) {
-            g_precomp.ctx->fout->put(0);
+            img_data.put(0);
           }
         }
       }
 
-      // write decompressed data
-
+      // write BMP or other data to img_data
       if ((bmp_header_type == 0) || ((img_width % 4) == 0)) {
         tmpfile.reopen();
-        fout_fput_uncompressed(rdres, tmpfile);
+        fout_fput_uncompressed(rdres, tmpfile, &img_data);
       } else {
         std::fstream ftempout;
         if (!rdres.uncompressed_in_memory) {
@@ -3263,18 +3252,56 @@ void try_decompression_pdf(int windowbits, int pdf_header_length, int img_width,
 
           if (rdres.uncompressed_in_memory) {
             memiostream memstream = memiostream::make(buf_ptr, buf_ptr + img_width);
-            fast_copy(memstream, *g_precomp.ctx->fout, img_width);
+            fast_copy(memstream, img_data, img_width);
             buf_ptr += img_width;
           } else {
-            fast_copy(ftempout2, *g_precomp.ctx->fout, img_width);
+            fast_copy(ftempout2, img_data, img_width);
           }
 
           for (int i = 0; i < (4 - (img_width % 4)); i++) {
-            g_precomp.ctx->fout->put(0);
+            img_data.put(0);
           }
 
         }
       }
+
+      img_data.close();
+      // write compressed data header, reconstruction and decompressed data
+      bool was_worth_it = fout_fput_deflate_precomp_data(D_PDF, rdres, g_precomp.ctx->in_buf + g_precomp.ctx->cb + 12, pdf_header_length - 12, false, nullptr, img_data);
+      if (!was_worth_it) return;
+
+      g_precomp.statistics.recompressed_streams_count++;
+      g_precomp.statistics.recompressed_pdf_count++;
+
+      g_precomp.ctx->non_zlib_was_used = true;
+      if (img_bpc == 8) {
+        if (rdres.uncompressed_stream_size == (img_width * img_height)) {
+          bmp_header_type = 1;
+          if (DEBUG_MODE) {
+            print_to_console("Image size did match (8 bit)\n");
+          }
+          g_precomp.statistics.recompressed_pdf_count_8_bit++;
+          g_precomp.statistics.recompressed_pdf_count--;
+        }
+        else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
+          bmp_header_type = 2;
+          if (DEBUG_MODE) {
+            print_to_console("Image size did match (24 bit)\n");
+          }
+          g_precomp.statistics.decompressed_pdf_count_8_bit--;
+          g_precomp.statistics.decompressed_pdf_count_24_bit++;
+          g_precomp.statistics.recompressed_pdf_count_24_bit++;
+          g_precomp.statistics.recompressed_pdf_count--;
+        }
+        else {
+          if (DEBUG_MODE) {
+            print_to_console("Image size didn't match with stream size\n");
+          }
+          g_precomp.statistics.decompressed_pdf_count_8_bit--;
+          g_precomp.statistics.decompressed_pdf_count++;
+        }
+      }
+      g_precomp.ctx->compressed_data_found = true;
 
       // start new uncompressed data
       debug_pos();
@@ -3309,18 +3336,12 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
     debug_deflate_detected(rdres, debugname);
 
     if (rdres.accepted) {
-      g_precomp.statistics.recompressed_streams_count++;
       rcounter++;
-
-      g_precomp.ctx->non_zlib_was_used = true;
 
       debug_sums(rdres);
 
       // end uncompressed data
-
       debug_pos();
-
-      g_precomp.ctx->compressed_data_found = true;
       end_uncompressed_data();
 
       // check recursion
@@ -3332,7 +3353,7 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       // ones? (It makes sense if the uncompressed stream contains a JPEG, or something similar.
       if (rdres.uncompressed_stream_size <= rdres.compressed_stream_size && !r.success) {
         g_precomp.statistics.recompressed_streams_count--;
-        compressed_data_found = false;
+        g_precomp.ctx->compressed_data_found = false;
         return;
       }
 #endif
@@ -3340,8 +3361,15 @@ void try_decompression_deflate_type(unsigned& dcounter, unsigned& rcounter,
       debug_pos();
 
       // write compressed data header without first bytes
-      tmpfile.reopen();
-      fout_fput_deflate_rec(type, rdres, hdr, hdr_length, inc_last, r, tmpfile);
+      tmpfile.close();
+      bool was_worth_it = fout_fput_deflate_precomp_data(type, rdres, hdr, hdr_length, inc_last, &r, tmpfile);
+      // If decompressing the deflate stream made compression worse (usually small streams where preflate's recon data outweighs gains,
+      // or where the deflate stream contained uncompressible data) we skip it
+      if (!was_worth_it) return;
+
+      g_precomp.statistics.recompressed_streams_count++;
+      g_precomp.ctx->non_zlib_was_used = true;
+      g_precomp.ctx->compressed_data_found = true;
 
       debug_pos();
 
@@ -5536,26 +5564,22 @@ void try_decompression_png (int windowbits, PrecompTmpFile& tmpfile) {
     debug_deflate_detected(rdres, "in PNG");
 
     if (rdres.accepted) {
-      g_precomp.statistics.recompressed_streams_count++;
-      g_precomp.statistics.recompressed_png_count++;
-
-      g_precomp.ctx->non_zlib_was_used = true;
-
       debug_sums(rdres);
 
       // end uncompressed data
-      g_precomp.ctx->compressed_data_found = true;
       end_uncompressed_data();
 
       debug_pos();
 
-      // write compressed data header (PNG)
-      fout_fput_deflate_hdr(D_PNG, 0, rdres, zlib_header, 2, true);
+      // write compressed data header (PNG), reconstruction and decompressed data
+      tmpfile.close();
+      bool was_worth_it = fout_fput_deflate_precomp_data(D_PNG, rdres, zlib_header, 2, true, nullptr, tmpfile);
+      if (!was_worth_it) return;
 
-      // write reconstruction and decompressed data
-      fout_fput_recon_data(rdres);
-      tmpfile.reopen();
-      fout_fput_uncompressed(rdres, tmpfile);
+      g_precomp.statistics.recompressed_streams_count++;
+      g_precomp.statistics.recompressed_png_count++;
+      g_precomp.ctx->compressed_data_found = true;
+      g_precomp.ctx->non_zlib_was_used = true;
 
       debug_pos();
       // set input file pointer after recompressed data
@@ -5586,64 +5610,61 @@ void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpF
     debug_deflate_detected(rdres, "in multiPNG");
 
     if (rdres.accepted) {
-      g_precomp.statistics.recompressed_streams_count++;
-      g_precomp.statistics.recompressed_png_multi_count++;
-
-      g_precomp.ctx->non_zlib_was_used = true;
-
       debug_sums(rdres);
 
       // end uncompressed data
-      g_precomp.ctx->compressed_data_found = true;
       end_uncompressed_data();
 
       debug_pos();
 
-      // write compressed data header (PNG)
-      fout_fput_deflate_hdr(D_MULTIPNG, 0, rdres, zlib_header, 2, true);
-
-      // simulate IDAT write to get IDAT pairs count
-      int i = 1;
-      int idat_pos = idat_lengths[0] - 2;
       unsigned int idat_pairs_written_count = 0;
-      if (idat_pos < rdres.compressed_stream_size) {
-        do {
-          idat_pairs_written_count++;
+      auto multipng_extra_hdr_data = [&rdres, &idat_pairs_written_count](std::ostream* ostream) {
+        // simulate IDAT write to get IDAT pairs count
+        int i = 1;
+        int idat_pos = idat_lengths[0] - 2;
+        if (idat_pos < rdres.compressed_stream_size) {
+          do {
+            idat_pairs_written_count++;
 
-          idat_pos += idat_lengths[i];
-          if (idat_pos >= rdres.compressed_stream_size) break;
+            idat_pos += idat_lengths[i];
+            if (idat_pos >= rdres.compressed_stream_size) break;
 
-          i++;
-        } while (i < idat_count);
-      }
-      // store IDAT pairs count
-      fout_fput_vlint(idat_pairs_written_count);
+            i++;
+          } while (i < idat_count);
+        }
+        // store IDAT pairs count
+        fout_fput_vlint(idat_pairs_written_count, ostream);
 
-      // store IDAT CRCs and lengths
-      fout_fput_vlint(idat_lengths[0]);
+        // store IDAT CRCs and lengths
+        fout_fput_vlint(idat_lengths[0], ostream);
 
-      // store IDAT CRCs and lengths
-      i = 1;
-      idat_pos = idat_lengths[0] - 2;
-      idat_pairs_written_count = 0;
-      if (idat_pos < rdres.compressed_stream_size) {
-        do {
-          fout_fput32(idat_crcs[i]);
-          fout_fput_vlint(idat_lengths[i]);
+        // store IDAT CRCs and lengths
+        i = 1;
+        idat_pos = idat_lengths[0] - 2;
+        idat_pairs_written_count = 0;
+        if (idat_pos < rdres.compressed_stream_size) {
+          do {
+            fout_fput32(idat_crcs[i], ostream);
+            fout_fput_vlint(idat_lengths[i], ostream);
 
-          idat_pairs_written_count++;
+            idat_pairs_written_count++;
 
-          idat_pos += idat_lengths[i];
-          if (idat_pos >= rdres.compressed_stream_size) break;
+            idat_pos += idat_lengths[i];
+            if (idat_pos >= rdres.compressed_stream_size) break;
 
-          i++;
-        } while (i < idat_count);
-      }
+            i++;
+          } while (i < idat_count);
+        }
+      };
 
-      // write reconstruction and decompressed data
-      fout_fput_recon_data(rdres);
-      tmpfile.reopen();
-      fout_fput_uncompressed(rdres, tmpfile);
+      // write compressed data header (PNG) and reconstruction and decompressed data
+      bool was_worth_it = fout_fput_deflate_precomp_data(D_MULTIPNG, rdres, zlib_header, 2, true, nullptr, tmpfile, multipng_extra_hdr_data);
+      if (!was_worth_it) return;
+
+      g_precomp.statistics.recompressed_streams_count++;
+      g_precomp.statistics.recompressed_png_multi_count++;
+      g_precomp.ctx->compressed_data_found = true;
+      g_precomp.ctx->non_zlib_was_used = true;
 
       debug_pos();
 
@@ -6107,7 +6128,7 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
         g_precomp.ctx->fout->put(D_GIF); // GIF
 
         // store diff bytes
-        fout_fput_vlint(gDiff.GIFDiffIndex);
+        fout_fput_vlint(gDiff.GIFDiffIndex, g_precomp.ctx->fout.get());
         if(DEBUG_MODE) {
           if (gDiff.GIFDiffIndex > 0)
             print_to_console("Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
@@ -6122,18 +6143,18 @@ void try_decompression_gif(unsigned char version[5], PrecompTmpFile& tmpfile) {
             print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
           }
 
-          fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
+          fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len, g_precomp.ctx->fout.get());
 
           for (int pbc = 0; pbc < g_precomp.ctx->best_penalty_bytes_len; pbc++) {
             g_precomp.ctx->fout->put(g_precomp.ctx->best_penalty_bytes[pbc]);
           }
         }
 
-        fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
-        fout_fput_vlint(decomp_length);
+        fout_fput_vlint(g_precomp.ctx->best_identical_bytes, g_precomp.ctx->fout.get());
+        fout_fput_vlint(decomp_length, g_precomp.ctx->fout.get());
 
         // write decompressed data
-        write_decompressed_data(decomp_length, tmpfile.file_path.c_str());
+        write_decompressed_data(decomp_length, tmpfile.file_path.c_str(), g_precomp.ctx->fout.get());
 
         // start new uncompressed data
 
@@ -6448,15 +6469,15 @@ void try_decompression_jpg (long long jpg_length, bool progressive_jpg, PrecompT
 		  g_precomp.ctx->fout->put(jpg_flags);
           g_precomp.ctx->fout->put(D_JPG); // JPG
 
-          fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
-          fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp);
+          fout_fput_vlint(g_precomp.ctx->best_identical_bytes, g_precomp.ctx->fout.get());
+          fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp, g_precomp.ctx->fout.get());
 
           // write compressed JPG
           if (in_memory) {
             memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + g_precomp.ctx->best_identical_bytes_decomp);
             fast_copy(memstream, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
           } else {
-            write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
+            write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str(), g_precomp.ctx->fout.get());
           }
 
           // start new uncompressed data
@@ -6620,15 +6641,15 @@ void try_decompression_mp3 (long long mp3_length, PrecompTmpFile& tmpfile) {
           g_precomp.ctx->fout->put(1); // no penalty bytes
           g_precomp.ctx->fout->put(D_MP3); // MP3
 
-          fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
-          fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp);
+          fout_fput_vlint(g_precomp.ctx->best_identical_bytes, g_precomp.ctx->fout.get());
+          fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp, g_precomp.ctx->fout.get());
 
           // write compressed MP3
           if (in_memory) {
             memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + g_precomp.ctx->best_identical_bytes_decomp);
             fast_copy(memstream, *g_precomp.ctx->fout, g_precomp.ctx->best_identical_bytes_decomp);
           } else {
-            write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
+            write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str(), g_precomp.ctx->fout.get());
           }
 
           // start new uncompressed data
@@ -6799,25 +6820,25 @@ void try_decompression_bzip2(int compression_level, PrecompTmpFile& tmpfile) {
               if (DEBUG_MODE) {
                 print_to_console("Penalty bytes were used: %i bytes\n", g_precomp.ctx->best_penalty_bytes_len);
               }
-              fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len);
+              fout_fput_vlint(g_precomp.ctx->best_penalty_bytes_len, g_precomp.ctx->fout.get());
               for (int pbc = 0; pbc < g_precomp.ctx->best_penalty_bytes_len; pbc++) {
                 g_precomp.ctx->fout->put(g_precomp.ctx->best_penalty_bytes[pbc]);
               }
             }
 
-            fout_fput_vlint(g_precomp.ctx->best_identical_bytes);
-            fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp);
+            fout_fput_vlint(g_precomp.ctx->best_identical_bytes, g_precomp.ctx->fout.get());
+            fout_fput_vlint(g_precomp.ctx->best_identical_bytes_decomp, g_precomp.ctx->fout.get());
 
             if (r.success) {
-              fout_fput_vlint(r.file_length);
+              fout_fput_vlint(r.file_length, g_precomp.ctx->fout.get());
             }
 
             // write decompressed data
             if (r.success) {
-              write_decompressed_data(r.file_length, r.file_name.c_str());
+              write_decompressed_data(r.file_length, r.file_name.c_str(), g_precomp.ctx->fout.get());
               remove(r.file_name.c_str());
             } else {
-              write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
+              write_decompressed_data(g_precomp.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str(), g_precomp.ctx->fout.get());
             }
 
             // start new uncompressed data
@@ -7127,13 +7148,13 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
       g_precomp.ctx->fout->put(header_byte);
       g_precomp.ctx->fout->put(D_BASE64); // Base64
 
-      fout_fput_vlint(base64_header_length);
+      fout_fput_vlint(base64_header_length, g_precomp.ctx->fout.get());
 
       // write "header", but change first char to prevent re-detection
       g_precomp.ctx->fout->put(g_precomp.ctx->in_buf[g_precomp.ctx->cb] - 1);
       g_precomp.ctx->fout->write(reinterpret_cast<char*>(g_precomp.ctx->in_buf + g_precomp.ctx->cb + 1), base64_header_length - 1);
 
-      fout_fput_vlint(line_count);
+      fout_fput_vlint(line_count, g_precomp.ctx->fout.get());
       if (line_case == 2) {
         for (i = 0; i < line_count; i++) {
           g_precomp.ctx->fout->put(base64_line_len[i]);
@@ -7146,19 +7167,19 @@ void try_decompression_base64(int base64_header_length, PrecompTmpFile& tmpfile)
 
       delete[] base64_line_len;
 
-      fout_fput_vlint(g_precomp.ctx->identical_bytes);
-      fout_fput_vlint(g_precomp.ctx->identical_bytes_decomp);
+      fout_fput_vlint(g_precomp.ctx->identical_bytes, g_precomp.ctx->fout.get());
+      fout_fput_vlint(g_precomp.ctx->identical_bytes_decomp, g_precomp.ctx->fout.get());
 
       if (r.success) {
-        fout_fput_vlint(r.file_length);
+        fout_fput_vlint(r.file_length, g_precomp.ctx->fout.get());
       }
 
       // write decompressed data
       if (r.success) {
-        write_decompressed_data(r.file_length, r.file_name.c_str());
+        write_decompressed_data(r.file_length, r.file_name.c_str(), g_precomp.ctx->fout.get());
         remove(r.file_name.c_str());
       } else {
-        write_decompressed_data(g_precomp.ctx->identical_bytes, tmpfile.file_path.c_str());
+        write_decompressed_data(g_precomp.ctx->identical_bytes, tmpfile.file_path.c_str(), g_precomp.ctx->fout.get());
       }
 
       // start new uncompressed data
@@ -7416,49 +7437,49 @@ recursion_result recursion_decompress(long long recursion_data_length, PrecompTm
   return tmp_r;
 }
 
-void fout_fput32_little_endian(int v) {
-  g_precomp.ctx->fout->put(v % 256);
-  g_precomp.ctx->fout->put((v >> 8) % 256);
-  g_precomp.ctx->fout->put((v >> 16) % 256);
-  g_precomp.ctx->fout->put((v >> 24) % 256);
+void fout_fput32_little_endian(int v, std::ostream* ostream) {
+  ostream->put(v % 256);
+  ostream->put((v >> 8) % 256);
+  ostream->put((v >> 16) % 256);
+  ostream->put((v >> 24) % 256);
 }
 
-void fout_fput32(int v) {
-  g_precomp.ctx->fout->put((v >> 24) % 256);
-  g_precomp.ctx->fout->put((v >> 16) % 256);
-  g_precomp.ctx->fout->put((v >> 8) % 256);
-  g_precomp.ctx->fout->put(v % 256);
+void fout_fput32(int v, std::ostream* ostream) {
+  ostream->put((v >> 24) % 256);
+  ostream->put((v >> 16) % 256);
+  ostream->put((v >> 8) % 256);
+  ostream->put(v % 256);
 }
 
-void fout_fput32(unsigned int v) {
-  g_precomp.ctx->fout->put((v >> 24) % 256);
-  g_precomp.ctx->fout->put((v >> 16) % 256);
-  g_precomp.ctx->fout->put((v >> 8) % 256);
-  g_precomp.ctx->fout->put(v % 256);
+void fout_fput32(unsigned int v, std::ostream* ostream) {
+  ostream->put((v >> 24) % 256);
+  ostream->put((v >> 16) % 256);
+  ostream->put((v >> 8) % 256);
+  ostream->put(v % 256);
 }
 
-void fout_fput_vlint(unsigned long long v) {
+void fout_fput_vlint(unsigned long long v, std::ostream* ostream) {
   while (v >= 128) {
-    g_precomp.ctx->fout->put((v & 127) + 128);
+    ostream->put((v & 127) + 128);
     v = (v >> 7) - 1;
   }
-  g_precomp.ctx->fout->put(v);
+  ostream->put(v);
 }
 void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, 
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length,
-                           const bool inc_last_hdr_byte) {
-  g_precomp.ctx->fout->put(1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2) + flags);
-  g_precomp.ctx->fout->put(type); // PDF/PNG/...
+                           const bool inc_last_hdr_byte, std::ostream* ostream) {
+  ostream->put(1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2) + flags);
+  ostream->put(type); // PDF/PNG/...
   if (rdres.zlib_perfect) {
-    g_precomp.ctx->fout->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
+    ostream->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
   }
-  fout_fput_vlint(hdr_length);
+  fout_fput_vlint(hdr_length, ostream);
   if (!inc_last_hdr_byte) {
-    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length);
+    ostream->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length);
   } else {
-    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length - 1);
-    g_precomp.ctx->fout->put(hdr[hdr_length - 1] + 1);
+    ostream->write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length - 1);
+    ostream->put(hdr[hdr_length - 1] + 1);
   }
 }
 void fin_fget_deflate_hdr(recompress_deflate_result& rdres, const unsigned char flags, 
@@ -7480,14 +7501,14 @@ void fin_fget_deflate_hdr(recompress_deflate_result& rdres, const unsigned char 
   }
   g_precomp.ctx->fout->write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
-void fout_fput_recon_data(const recompress_deflate_result& rdres) {
+void fout_fput_recon_data(const recompress_deflate_result& rdres, std::ostream* ostream) {
   if (!rdres.zlib_perfect) {
-    fout_fput_vlint(rdres.recon_data.size());
-    g_precomp.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(rdres.recon_data.data())), rdres.recon_data.size());
+    fout_fput_vlint(rdres.recon_data.size(), ostream);
+    ostream->write(reinterpret_cast<char*>(const_cast<unsigned char*>(rdres.recon_data.data())), rdres.recon_data.size());
   }
 
-  fout_fput_vlint(rdres.compressed_stream_size);
-  fout_fput_vlint(rdres.uncompressed_stream_size);
+  fout_fput_vlint(rdres.compressed_stream_size, ostream);
+  fout_fput_vlint(rdres.uncompressed_stream_size, ostream);
 }
 void fin_fget_recon_data(recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
@@ -7499,25 +7520,109 @@ void fin_fget_recon_data(recompress_deflate_result& rdres) {
   rdres.compressed_stream_size = fin_fget_vlint();
   rdres.uncompressed_stream_size = fin_fget_vlint();
 }
-void fout_fput_uncompressed(const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile) {
-    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, tmpfile.file_path.c_str());
+void fout_fput_uncompressed(const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile, std::ostream* ostream) {
+    write_decompressed_data_io_buf(rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, tmpfile.file_path.c_str(), ostream);
 }
 void fin_fget_uncompressed(const recompress_deflate_result&) {
 }
-void fout_fput_deflate_rec(const unsigned char type,
+
+uintmax_t compression_worthiness_test_size(std::istream& istream, long long orig_pos, long long byte_count) {
+  auto bck_pos = istream.tellg();
+  istream.seekg(orig_pos);
+  
+  std::string tmp_filename = temp_files_tag() + "_cmp_test";
+  {
+    std::unique_ptr<std::ostream> tmp = std::unique_ptr<std::ofstream>(new std::ofstream());
+    (reinterpret_cast<std::ofstream*>(tmp.get()))->open(tmp_filename, std::ios_base::out | std::ios_base::binary);
+    tmp = wrap_ostream_otf_compression(
+      std::move(tmp),
+      OTF_XZ_MT,
+      std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters()),
+      g_precomp.switches.compression_otf_max_memory,
+      g_precomp.switches.compression_otf_thread_count,
+      true
+    );
+    fast_copy(istream, *tmp, byte_count);
+    tmp->put(EOF);
+  }
+
+  istream.seekg(bck_pos);
+  std::error_code ec;
+  auto compressed_size = std::filesystem::file_size(tmp_filename, ec);
+  remove(tmp_filename.c_str());
+  return compressed_size;
+}
+
+bool fout_fput_deflate_precomp_data(const unsigned char type,
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length, const bool inc_last,
-                           const recursion_result& recres, PrecompTmpFile& tmpfile) {
-  fout_fput_deflate_hdr(type, recres.success ? 128 : 0, rdres, hdr, hdr_length, inc_last);
-  fout_fput_recon_data(rdres);
+                           recursion_result* recres, PrecompTmpFile& tmpfile, std::function<void(std::ostream*)> fout_fput_extra_hdr_data) {
+  // compress original data so we know an approximation of how good it compresses
+  auto original_compressed_size = compression_worthiness_test_size(*g_precomp.ctx->fin, g_precomp.ctx->input_file_pos, rdres.compressed_stream_size);
+
+  auto write_header_and_recon_data = [&](std::ostream* ostream) {
+    fout_fput_deflate_hdr(type, recres != nullptr && recres->success ? 128 : 0, rdres, hdr, hdr_length, inc_last, ostream);
+    fout_fput_extra_hdr_data(ostream);
+    fout_fput_recon_data(rdres, ostream);
+  };
+
+  auto write_to_tempfile_and_test_compression = [](std::function<void(std::ostream*)> func) {
+    auto test_filename = temp_files_tag() + "_result";
+    {
+      std::ofstream test_outfile;
+      test_outfile.open(test_filename, std::ios_base::out | std::ios_base::binary);
+      func(&test_outfile);
+    }
+    auto tmp_filesize = fileSize64(test_filename.c_str());
+    uintmax_t compressed_size;
+    {
+      std::ifstream test_infile;
+      test_infile.open(test_filename, std::ios_base::in | std::ios_base::binary);
+      if (g_precomp.switches.compression_test_mode) {
+        compressed_size = compression_worthiness_test_size(test_infile, 0, tmp_filesize);
+      } else {
+        compressed_size = tmp_filesize;
+      }
+    }
+    return std::make_tuple(test_filename, tmp_filesize, compressed_size);
+  };
+
+  auto write_to_outputfile_if_worthit = [&](std::function<void(std::ostream*)> func) {
+    // Write the needed data to a tempfile and test compressing it so we can check if it compresses better
+    auto results = write_to_tempfile_and_test_compression(func);
+    std::string tmp_path = std::get<0>(results);
+    std::ifstream tmp_compression_test;
+    tmp_compression_test.open(tmp_path, std::ios_base::in | std::ios_base::binary);
+    auto tmp_compression_filesize = std::get<1>(results);
+    auto recursive_compressed_size = std::get<2>(results);
+
+    // If it compresses better, we write it to the output stream, else just quit
+    // If compression test mode is disabled we always assume decompressing the deflate stream is worth it
+    bool is_decompression_worthit = g_precomp.switches.compression_test_mode ? recursive_compressed_size < original_compressed_size : true;
+    if (is_decompression_worthit) fast_copy(tmp_compression_test, *g_precomp.ctx->fout, tmp_compression_filesize);
+    tmp_compression_test.close();
+    remove(tmp_path.c_str());
+    return is_decompression_worthit;
+  };
   
   // write decompressed data
-  if (recres.success) {
-    fout_fput_vlint(recres.file_length);
-    write_decompressed_data(recres.file_length, recres.file_name.c_str());
-    remove(recres.file_name.c_str());
+  if (recres != nullptr && recres->success) {
+    auto write_recursive_data = [&](std::ostream* ostream) {
+      write_header_and_recon_data(ostream);
+      fout_fput_vlint(recres->file_length, ostream);
+      write_decompressed_data(recres->file_length, recres->file_name.c_str(), ostream);
+    };
+
+    auto is_recursion_worthit = write_to_outputfile_if_worthit(write_recursive_data);
+    remove(recres->file_name.c_str());
+    return is_recursion_worthit;
   } else {
-    fout_fput_uncompressed(rdres, tmpfile);
+    auto write_direct_data = [&](std::ostream* ostream) {
+      write_header_and_recon_data(ostream);
+      fout_fput_uncompressed(rdres, tmpfile, ostream);
+    };
+
+    return write_to_outputfile_if_worthit(write_direct_data);
   }
 }
 bool fin_fget_deflate_rec(recompress_deflate_result& rdres, const unsigned char flags, 

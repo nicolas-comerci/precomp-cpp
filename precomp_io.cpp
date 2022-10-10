@@ -63,10 +63,11 @@ std::unique_ptr<std::ostream> XzOStreamBuffer::from_ostream(
   std::unique_ptr<std::ostream>&& ostream,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
   uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count
+  unsigned int compression_otf_thread_count,
+  bool silent
 ) {
   auto new_fout = new Precomp_OStream<std::ofstream>();
-  auto xz_streambuf = new XzOStreamBuffer(std::move(ostream), compression_otf_max_memory, compression_otf_thread_count, std::move(otf_xz_extra_params));
+  auto xz_streambuf = new XzOStreamBuffer(std::move(ostream), compression_otf_max_memory, compression_otf_thread_count, std::move(otf_xz_extra_params), silent);
   new_fout->otf_compression_streambuf = std::unique_ptr<XzOStreamBuffer>(xz_streambuf);
   new_fout->rdbuf(xz_streambuf);
   return std::unique_ptr<std::ostream>(new_fout);
@@ -85,7 +86,8 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
   uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count
+  unsigned int compression_otf_thread_count,
+  bool silent
 ) {
   switch (otf_compression_method) {
   case OTF_NONE: {
@@ -95,7 +97,7 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
     return Bz2OStreamBuffer::from_ostream(std::move(ostream));
   }
   case OTF_XZ_MT: {
-    return XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count);
+    return XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count, silent);
   }
   }
   print_to_console("Unknown compression method!");

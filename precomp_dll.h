@@ -53,6 +53,8 @@ class Switches {
 
     bool level_switch_used;            //level switch used? (default: no)
     bool use_zlib_level[81];      //compression levels to use (default: all)
+
+    bool compression_test_mode;
 };
 
 //Switches constructor

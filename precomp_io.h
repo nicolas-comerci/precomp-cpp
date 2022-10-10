@@ -391,14 +391,16 @@ public:
   unsigned int compression_otf_thread_count;
   std::unique_ptr<lzma_stream, std::function<void(lzma_stream*)>> otf_xz_stream_c;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
+  bool silent;
 
   XzOStreamBuffer(
     std::unique_ptr<std::ostream>&& wrapped_ostream,
     uint64_t compression_otf_max_memory,
     unsigned int compression_otf_thread_count,
-    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params
+    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
+    bool silent = false
   ) :
-    CompressedOStreamBuffer(std::move(wrapped_ostream)), compression_otf_max_memory(compression_otf_max_memory), compression_otf_thread_count(compression_otf_thread_count)
+    CompressedOStreamBuffer(std::move(wrapped_ostream)), compression_otf_max_memory(compression_otf_max_memory), compression_otf_thread_count(compression_otf_thread_count), silent(silent)
   {
     init(std::move(otf_xz_extra_params));
   }
@@ -407,7 +409,8 @@ public:
     std::unique_ptr<std::ostream>&& ostream,
     std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
     uint64_t compression_otf_max_memory,
-    unsigned int compression_otf_thread_count
+    unsigned int compression_otf_thread_count,
+    bool silent = false
   );
 
   void init(std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params) {
@@ -439,6 +442,8 @@ public:
     if (threads > 1) {
       plural = "s";
     }
+
+    if (!silent)
     print_to_console(
       "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
     );
@@ -486,7 +491,7 @@ public:
 #endif // COMFORT
         exit(1);
       }
-      if (!DEBUG_MODE) lzma_progress_update();
+      if (!DEBUG_MODE && !silent) lzma_progress_update();
     } while (otf_xz_stream_c->avail_in > 0 || otf_xz_stream_c->avail_out != CHUNK || final_byte && ret != LZMA_STREAM_END);
 
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);
@@ -499,6 +504,7 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
   uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count
+  unsigned int compression_otf_thread_count,
+  bool silent = false
 );
 #endif // PRECOMP_IO_H

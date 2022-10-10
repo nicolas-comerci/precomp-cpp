@@ -20,8 +20,8 @@ bool brute_mode_is_active();
 int inf_bzip2(std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
 int def_bzip2(std::istream& source, std::ostream& dest, int level);
 long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
-void write_decompressed_data(long long byte_count, const char* decompressed_file_name);
-void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name);
+void write_decompressed_data(long long byte_count, const char* decompressed_file_name, std::ostream* ostream);
+void write_decompressed_data_io_buf(long long byte_count, bool in_memory, const char* decompressed_file_name, std::ostream* ostream);
 unsigned long long compare_files(std::istream& file1, std::istream& file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(std::istream& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
 long long compare_files_penalty(std::istream& file1, std::istream& file2, long long pos1, long long pos2);
@@ -112,13 +112,13 @@ void fin_fget_deflate_hdr(recompress_deflate_result&, const unsigned char flags,
 void fin_fget_recon_data(recompress_deflate_result&);
 bool fin_fget_deflate_rec(recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, PrecompTmpFile& tmpfile);
 void fin_fget_uncompressed(const recompress_deflate_result&);
-void fout_fput32_little_endian(int v);
-void fout_fput32(int v);
-void fout_fput32(unsigned int v);
-void fout_fput_vlint(unsigned long long v);
-void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
-void fout_fput_recon_data(const recompress_deflate_result&);
-void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
+void fout_fput32_little_endian(int v, std::ostream* ostream);
+void fout_fput32(int v, std::ostream* ostream);
+void fout_fput32(unsigned int v, std::ostream* ostream);
+void fout_fput_vlint(unsigned long long v, std::ostream* ostream);
+void fout_fput_deflate_hdr(const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last, std::ostream* ostream);
+void fout_fput_recon_data(const recompress_deflate_result&, std::ostream* ostream);
+void fout_fput_uncompressed(const recompress_deflate_result&, PrecompTmpFile& tmpfile, std::ostream* ostream);
 
 #define P_NONE 0
 #define P_COMPRESS 1
@@ -142,7 +142,8 @@ struct recursion_result {
 recursion_result recursion_compress(long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
 recursion_result recursion_decompress(long long recursion_data_length, PrecompTmpFile& tmpfile);
 recursion_result recursion_write_file_and_compress(const recompress_deflate_result&, PrecompTmpFile& tmpfile);
-void fout_fput_deflate_rec(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
+bool fout_fput_deflate_precomp_data(const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last,
+  recursion_result* recres, PrecompTmpFile& tmpfile, std::function<void(std::ostream*)> fout_fput_extra_hdr_data = [](std::ostream*){});
 
 void try_decompression_png_multi(std::istream& fpng, int windowbits, PrecompTmpFile& tmpfile);
 
