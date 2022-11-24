@@ -81,7 +81,7 @@ public:
 };
 
 class CompressedOStreamBuffer;
-constexpr auto CHUNK = 262144; // 256 KB buffersize
+constexpr auto CHUNK = 262144 * 4 * 10; // 10 MB buffersize
 
 // compression-on-the-fly
 enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2, OTF_ZPAQ = 3 };
@@ -354,12 +354,23 @@ public:
 
   void init() {
     otf_dec = std::make_unique<char[]>(CHUNK * 10);
+    zpaq_decompresser.setInput(&reader);
+    zpaq_decompresser.setOutput(&writer);
 
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
   }
 
   ~ZpaqIStreamBuffer() override {
     if (owns_wrapped_istream) delete wrapped_istream;
+  }
+
+  bool findBlock() {
+    bool found = true;
+    double memory;                         // bytes required to decompress
+    found &= zpaq_decompresser.findBlock(&memory);
+    found &= zpaq_decompresser.findFilename(); // This finds the segment
+    zpaq_decompresser.readComment();
+    return found;
   }
 
   int underflow() override {
@@ -369,18 +380,22 @@ public:
     print_work_sign(true);
 
     if (!decompression_started) {
-      double memory;                         // bytes required to decompress
-      zpaq_decompresser.setInput(&reader);
-      zpaq_decompresser.findBlock(&memory);
-      zpaq_decompresser.findFilename(); // This finds the segment
-      zpaq_decompresser.readComment();
-      zpaq_decompresser.setOutput(&writer);
+      findBlock();
       decompression_started = true;
     }
-    bool still_more_data = zpaq_decompresser.decompress(CHUNK);
-    if (!still_more_data) zpaq_decompresser.readSegmentEnd();
+    int amt_read;
+    while (true) {
+      bool still_more_data = zpaq_decompresser.decompress(CHUNK);
+      amt_read = writer.curr_write - otf_dec.get();
+      if (still_more_data) break;
 
-    auto amt_read = writer.curr_write - otf_dec.get();
+      zpaq_decompresser.readSegmentEnd();
+      decompression_started = false;
+      // If we didn't read anything, check that we are not at the end of a block and the start of another
+      // If that is the case, we read again now that we have found the new block
+      if (amt_read != 0 || !findBlock()) break;
+    }
+    
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
     if (amt_read == 0) return EOF;
     writer.reset_write_ptr();
@@ -402,6 +417,7 @@ public:
   {
     otf_in = std::make_unique<char[]>(CHUNK);
     otf_out = std::make_unique<char[]>(CHUNK);
+    setp(otf_in.get(), otf_in.get() + CHUNK);
   }
 
   virtual int sync(bool final_byte) = 0;
@@ -460,8 +476,6 @@ public:
       print_to_console("ERROR: bZip2 init failed\n");
       exit(1);
     }
-
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }
 
   int sync(bool final_byte) override {
@@ -555,8 +569,6 @@ public:
     print_to_console(
       "Compressing with LZMA, " + std::to_string(threads) + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
     );
-
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }
 
   void lzma_progress_update();
@@ -620,6 +632,19 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
       data_end = streambuf_otf_in->get() + CHUNK;
     }
 
+    int read(char* buf, int n) override {
+      if (curr_read == nullptr) reset_read_ptr();
+      if (curr_read == data_end) return 0;
+      auto remaining_data_size = data_end - curr_read;
+      auto read_size = remaining_data_size;
+      if (n < remaining_data_size) {
+        read_size = n;
+      }
+      memcpy(buf, curr_read, read_size);
+      curr_read += read_size;
+      return read_size;
+    }
+
     int get() override {
       if (curr_read == nullptr) reset_read_ptr();
       if (curr_read == data_end) return EOF;
@@ -638,6 +663,10 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
 
     ZpaqOStreamBufWriter(std::ostream* wrapped_ostream) : streambuf_wrapped_ostream(wrapped_ostream) {}
 
+    void write(const char* buf, int n) override {
+      streambuf_wrapped_ostream->write(buf, n);
+    }
+
     void put(int c) override {
       streambuf_wrapped_ostream->put(c);
     }
@@ -646,12 +675,12 @@ public:
   libzpaq::Compressor compressor;
   ZpaqOStreamBufReader reader;
   ZpaqOStreamBufWriter writer;
-  bool compression_started = false;
 
   ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) :
     CompressedOStreamBuffer(std::move(wrapped_ostream)), reader(&this->otf_in), writer(this->wrapped_ostream.get())
   {
-    setp(otf_in.get(), otf_in.get() + CHUNK);
+    compressor.setOutput(&writer);
+    compressor.setInput(&reader);
   }
 
   static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
@@ -660,19 +689,12 @@ public:
     if (final_byte) {
       reader.data_end = pptr();
     }
-    if (!compression_started) {
-      compressor.setOutput(&writer);
-      compressor.writeTag();
-      compressor.startBlock(2);
-      compressor.startSegment();
-      compressor.setInput(&reader);
-      compression_started = true;
-    }
-    while (compressor.compress(-1)) {}
-    if (final_byte) {
-      compressor.endSegment();
-      compressor.endBlock();
-    }
+    compressor.writeTag();
+    compressor.startBlock(2);
+    compressor.startSegment();
+    compressor.compress(CHUNK);
+    compressor.endSegment();
+    compressor.endBlock();
     reader.reset_read_ptr();
 
     setp(otf_in.get(), otf_in.get(), otf_in.get() + CHUNK);
