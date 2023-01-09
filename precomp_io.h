@@ -624,12 +624,14 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
   class ZpaqOStreamBufReader : public libzpaq::Reader
   {
   public:
-    std::unique_ptr<char[]>* streambuf_otf_in;
+    std::unique_ptr<char[]> buffer;
     char* curr_read = nullptr;
     char* data_end;
 
-    ZpaqOStreamBufReader(std::unique_ptr<char[]>* otf_in) : streambuf_otf_in(otf_in) {
-      data_end = streambuf_otf_in->get() + CHUNK;
+    ZpaqOStreamBufReader(std::unique_ptr<char[]>* otf_in) {
+      buffer = std::make_unique<char[]>(CHUNK);
+      std::copy_n(otf_in->get(), CHUNK, buffer.get());
+      data_end = buffer.get() + CHUNK;
     }
 
     int read(char* buf, int n) override {
@@ -653,7 +655,7 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
       return chr;
     }
 
-    void reset_read_ptr() { curr_read = streambuf_otf_in->get(); }
+    void reset_read_ptr() { curr_read = buffer.get(); }
   };
 
   class ZpaqOStreamBufWriter : public libzpaq::Writer
@@ -672,23 +674,22 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
     }
   };
 public:
-  libzpaq::Compressor compressor;
-  ZpaqOStreamBufReader reader;
-  ZpaqOStreamBufWriter writer;
 
-  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) :
-    CompressedOStreamBuffer(std::move(wrapped_ostream)), reader(&this->otf_in), writer(this->wrapped_ostream.get())
-  {
-    compressor.setOutput(&writer);
-    compressor.setInput(&reader);
-  }
+  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) : CompressedOStreamBuffer(std::move(wrapped_ostream)) { }
 
   static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
 
   int sync(bool final_byte) override {
+    libzpaq::Compressor compressor;
+    ZpaqOStreamBufReader reader = ZpaqOStreamBufReader(&this->otf_in);
+    compressor.setInput(&reader);
     if (final_byte) {
-      reader.data_end = pptr();
+      reader.data_end = reader.buffer.get() + (pptr() - pbase());
     }
+
+    ZpaqOStreamBufWriter writer = ZpaqOStreamBufWriter(this->wrapped_ostream.get());
+    compressor.setOutput(&writer);
+
     compressor.writeTag();
     compressor.startBlock(2);
     compressor.startSegment();
