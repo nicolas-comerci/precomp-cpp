@@ -9,6 +9,8 @@
 #include <memory>
 #include <fstream>
 #include <functional>
+#include <queue>
+#include <thread>
 
 class PrecompTmpFile : public std::fstream {
 public:
@@ -637,7 +639,7 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
     int read(char* buf, int n) override {
       if (curr_read == nullptr) reset_read_ptr();
       if (curr_read == data_end) return 0;
-      auto remaining_data_size = data_end - curr_read;
+      const auto remaining_data_size = data_end - curr_read;
       auto read_size = remaining_data_size;
       if (n < remaining_data_size) {
         read_size = n;
@@ -650,7 +652,7 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
     int get() override {
       if (curr_read == nullptr) reset_read_ptr();
       if (curr_read == data_end) return EOF;
-      auto chr = static_cast<unsigned char>(*curr_read);
+      const auto chr = static_cast<unsigned char>(*curr_read);
       curr_read++;
       return chr;
     }
@@ -682,31 +684,79 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
 
     long long written_amt() const { return current_buffer_pos - buffer.get(); }
   };
-public:
 
-  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) : CompressedOStreamBuffer(std::move(wrapped_ostream)) { }
+  class ZpaqOstreamBlockManager
+  {
+  public:
+    libzpaq::Compressor compressor;
+    ZpaqOStreamBufReader reader;
+    ZpaqOStreamBufWriter writer;
+    std::thread compression_thread;
+    bool compression_finished = false;
+
+    ZpaqOstreamBlockManager(std::unique_ptr<char[]>* otf_in) : reader(otf_in)
+    {
+      compressor.setInput(&reader);
+      compressor.setOutput(&writer);
+    }
+
+    void compress_on_thread(const bool final_byte, long long size)
+    {
+      compression_thread = std::thread(&ZpaqOstreamBlockManager::compress, this, final_byte, size);
+    }
+
+    void compress(const bool final_byte, long long size)
+    {
+      if (final_byte) {
+        reader.data_end = reader.buffer.get() + size;
+      }
+
+      compressor.writeTag();
+      compressor.startBlock(2);
+      compressor.startSegment();
+      compressor.compress(CHUNK);
+      compressor.endSegment();
+      compressor.endBlock();
+      reader.reset_read_ptr();
+      compression_finished = true;
+    }
+
+    void write_to_ostream(std::ostream& ostream)
+    {
+      ostream.write(writer.buffer.get(), writer.written_amt());
+    }
+  };
+public:
+  std::queue<std::unique_ptr<ZpaqOstreamBlockManager>> block_managers;
+  int max_thread_count;
+
+  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream, int max_thread_count = std::thread::hardware_concurrency())
+    : CompressedOStreamBuffer(std::move(wrapped_ostream)), max_thread_count(max_thread_count) { }
 
   static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
 
-  int sync(bool final_byte) override {
-    libzpaq::Compressor compressor;
-    ZpaqOStreamBufReader reader = ZpaqOStreamBufReader(&this->otf_in);
-    compressor.setInput(&reader);
-    if (final_byte) {
-      reader.data_end = reader.buffer.get() + (pptr() - pbase());
+  void write_blocks_finished_compressing(bool final_byte)
+  {
+    while (!block_managers.empty())
+    {
+      const auto& manager = block_managers.front();
+      if (!manager->compression_finished && !final_byte && block_managers.size() != max_thread_count)
+      {
+        // If we are at the final byte of the stream we want to wait and dump everything to the ostream (as this function won't be called again),
+        // and if we are already at the max_thread_count we want to wait until at least a thread slot is emptied, so we never go over that thread count.
+        // In any other case, we break out of here, postponing the dumping to ostream, and allow the threads to continue running.
+        break;
+      }
+      manager->compression_thread.join();
+      manager->write_to_ostream(*this->wrapped_ostream);
+      block_managers.pop();
     }
+  }
 
-    ZpaqOStreamBufWriter writer;
-    compressor.setOutput(&writer);
-
-    compressor.writeTag();
-    compressor.startBlock(2);
-    compressor.startSegment();
-    compressor.compress(CHUNK);
-    compressor.endSegment();
-    compressor.endBlock();
-    reader.reset_read_ptr();
-    this->wrapped_ostream->write(writer.buffer.get(), writer.written_amt());
+  int sync(bool final_byte) override {
+    const auto& manager = block_managers.emplace(new ZpaqOstreamBlockManager(&this->otf_in));
+    manager->compress_on_thread(final_byte, pptr() - pbase());
+    write_blocks_finished_compressing(final_byte); // dump to the ostream any finished blocks
 
     setp(otf_in.get(), otf_in.get(), otf_in.get() + CHUNK);
     return 0;
