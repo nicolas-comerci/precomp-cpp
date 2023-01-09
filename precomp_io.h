@@ -661,17 +661,26 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
   class ZpaqOStreamBufWriter : public libzpaq::Writer
   {
   public:
-    std::ostream* streambuf_wrapped_ostream;
+    std::unique_ptr<char[]> buffer;
+    char* current_buffer_pos = nullptr;
 
-    ZpaqOStreamBufWriter(std::ostream* wrapped_ostream) : streambuf_wrapped_ostream(wrapped_ostream) {}
+    ZpaqOStreamBufWriter()
+    {
+      buffer = std::make_unique<char[]>(2*CHUNK);
+      current_buffer_pos = buffer.get();
+    }
 
     void write(const char* buf, int n) override {
-      streambuf_wrapped_ostream->write(buf, n);
+      std::copy_n(buf, n, current_buffer_pos);
+      current_buffer_pos += n;
     }
 
     void put(int c) override {
-      streambuf_wrapped_ostream->put(c);
+      *current_buffer_pos = c;
+      current_buffer_pos++;
     }
+
+    long long written_amt() const { return current_buffer_pos - buffer.get(); }
   };
 public:
 
@@ -687,7 +696,7 @@ public:
       reader.data_end = reader.buffer.get() + (pptr() - pbase());
     }
 
-    ZpaqOStreamBufWriter writer = ZpaqOStreamBufWriter(this->wrapped_ostream.get());
+    ZpaqOStreamBufWriter writer;
     compressor.setOutput(&writer);
 
     compressor.writeTag();
@@ -697,6 +706,7 @@ public:
     compressor.endSegment();
     compressor.endBlock();
     reader.reset_read_ptr();
+    this->wrapped_ostream->write(writer.buffer.get(), writer.written_amt());
 
     setp(otf_in.get(), otf_in.get(), otf_in.get() + CHUNK);
     return 0;
