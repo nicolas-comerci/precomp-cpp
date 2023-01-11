@@ -417,23 +417,23 @@ public:
   ZpaqIStreamBufReader reader;
   ZpaqIStreamBufWriter writer;
   std::queue<std::unique_ptr<ZpaqIStreamBlockManager>> block_managers;
-  int max_thread_count;
+  unsigned int max_thread_count;
 
-  ZpaqIStreamBuffer(std::istream& wrapped_istream, int max_thread_count = std::thread::hardware_concurrency())
+  ZpaqIStreamBuffer(std::istream& wrapped_istream, unsigned int max_thread_count)
       : wrapped_istream(&wrapped_istream), reader(&wrapped_istream), writer(&this->otf_dec), max_thread_count(max_thread_count) {
     init();
   }
 
-  ZpaqIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream, int max_thread_count = std::thread::hardware_concurrency())
+  ZpaqIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream, unsigned int max_thread_count)
     : reader(wrapped_istream.get()), writer(&this->otf_dec), max_thread_count(max_thread_count) {
     this->wrapped_istream = wrapped_istream.release();
     owns_wrapped_istream = true;
     init();
   }
 
-  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
+  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream, unsigned int max_thread_count) {
     auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
-    auto zpaq_streambuf = new ZpaqIStreamBuffer(std::move(istream));
+    auto zpaq_streambuf = new ZpaqIStreamBuffer(std::move(istream), max_thread_count);
     new_fin->rdbuf(zpaq_streambuf);
     return new_fin;
   }
@@ -497,7 +497,7 @@ public:
   }
 };
 
-std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
+std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, unsigned int max_thread_count);
 
 class CompressedOStreamBuffer : public std::streambuf
 {
@@ -820,12 +820,12 @@ class ZpaqOStreamBuffer : public CompressedOStreamBuffer
   };
 public:
   std::queue<std::unique_ptr<ZpaqOstreamBlockManager>> block_managers;
-  int max_thread_count;
+  unsigned int max_thread_count;
 
-  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream, int max_thread_count = std::thread::hardware_concurrency())
+  ZpaqOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream, unsigned int max_thread_count)
     : CompressedOStreamBuffer(std::move(wrapped_ostream)), max_thread_count(max_thread_count) { }
 
-  static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
+  static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream, unsigned int max_thread_count);
 
   void write_blocks_finished_compressing(bool final_byte)
   {

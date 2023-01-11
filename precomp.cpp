@@ -545,7 +545,10 @@ int init(int argc, char* argv[]) {
               if (lzma_thread_count_set) {
                 error(ERR_ONLY_SET_LZMA_THREAD_ONCE);
               }
-              g_precomp.switches.compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
+              g_precomp.switches.compression_otf_thread_count = std::min<unsigned int>(
+                parseIntUntilEnd(argv[i] + 3, "LZMA thread count"),
+                std::thread::hardware_concurrency()
+              );
               lzma_thread_count_set = true;
             } else if (toupper(argv[i][2]) == 'L') {
               if (toupper(argv[i][3]) == 'C') {
@@ -804,6 +807,9 @@ int init(int argc, char* argv[]) {
                 break;
               case 'L': // lzma2 multithreaded
                 conversion_to_method = OTF_XZ_MT;
+                break;
+              case 'Z': // Zpaq
+                conversion_to_method = OTF_ZPAQ;
                 break;
               default:
                 print_to_console("ERROR: Invalid conversion method %c\n", argv[i][2]);
@@ -4443,7 +4449,7 @@ void decompress_file() {
   long long fin_pos;
 
   g_precomp.ctx->comp_decomp_state = P_DECOMPRESS;
-  g_precomp.ctx->fin = wrap_istream_otf_compression(std::move(g_precomp.ctx->fin), g_precomp.ctx->compression_otf_method);
+  g_precomp.ctx->fin = wrap_istream_otf_compression(std::move(g_precomp.ctx->fin), g_precomp.ctx->compression_otf_method, g_precomp.switches.compression_otf_thread_count);
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile_base = tmp_tag + "_recomp_";
@@ -5178,7 +5184,7 @@ void convert_file() {
   int conv_bytes = -1;
 
   g_precomp.ctx->comp_decomp_state = P_CONVERT;
-  g_precomp.ctx->fin = wrap_istream_otf_compression(std::move(g_precomp.ctx->fin), conversion_from_method);
+  g_precomp.ctx->fin = wrap_istream_otf_compression(std::move(g_precomp.ctx->fin), conversion_from_method, g_precomp.switches.compression_otf_thread_count);
   g_precomp.ctx->fout = wrap_ostream_otf_compression(
     std::move(g_precomp.ctx->fout),
     conversion_to_method,

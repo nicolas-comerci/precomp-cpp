@@ -43,7 +43,7 @@ void XzOStreamBuffer::lzma_progress_update() {
   show_progress(percent, true, true, lzma_mib_total, lzma_mib_written);
 }
 
-std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method) {
+std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, unsigned int max_thread_count) {
   switch (otf_compression_method) {
     case OTF_NONE: {
       return std::move(istream);
@@ -55,7 +55,7 @@ std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::
       return XzIStreamBuffer::from_istream(std::move(istream));
     }
     case OTF_ZPAQ: {
-      return ZpaqIStreamBuffer::from_istream(std::move(istream));
+      return ZpaqIStreamBuffer::from_istream(std::move(istream), max_thread_count);
     }
   }
   print_to_console("Unknown compression method!");
@@ -89,9 +89,9 @@ void libzpaq::error(const char* msg) {  // print message and exit
   exit(1);
 }
 
-std::unique_ptr<std::ostream> ZpaqOStreamBuffer::from_ostream(std::unique_ptr<std::ostream>&& ostream) {
+std::unique_ptr<std::ostream> ZpaqOStreamBuffer::from_ostream(std::unique_ptr<std::ostream>&& ostream, unsigned int max_thread_count) {
   auto new_fout = new Precomp_OStream<std::ofstream>();
-  auto zpaq_streambuf = new ZpaqOStreamBuffer(std::move(ostream));
+  auto zpaq_streambuf = new ZpaqOStreamBuffer(std::move(ostream), max_thread_count);
   new_fout->otf_compression_streambuf = std::unique_ptr<ZpaqOStreamBuffer>(zpaq_streambuf);
   new_fout->rdbuf(zpaq_streambuf);
   return std::unique_ptr<std::ostream>(new_fout);
@@ -116,7 +116,7 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
       return XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count, silent);
     }
     case OTF_ZPAQ: {
-      return ZpaqOStreamBuffer::from_ostream(std::move(ostream));
+      return ZpaqOStreamBuffer::from_ostream(std::move(ostream), compression_otf_thread_count);
     }
   }
   print_to_console("Unknown compression method!");
