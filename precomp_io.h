@@ -11,6 +11,7 @@
 #include <functional>
 #include <queue>
 #include <thread>
+#include <utility>
 
 class PrecompTmpFile : public std::fstream {
 public:
@@ -22,7 +23,7 @@ public:
     std::remove(file_path.c_str());
   }
 
-  void open(std::string file_path, std::ios_base::openmode mode) {
+  void open(const std::string& file_path, std::ios_base::openmode mode) {
     this->file_path = file_path;
     this->mode = mode;
     std::fstream::open(file_path, mode);
@@ -288,37 +289,82 @@ class ZpaqIStreamBuffer : public std::streambuf
   class ZpaqIStreamBufReader : public libzpaq::Reader
   {
   public:
-    std::unique_ptr<char[]> otf_in;
+    std::vector<char> otf_in;
     std::istream* streambuf_wrapped_istream;
-    char* curr_read = nullptr;
-    char* eof_ptr = nullptr; // If eof has been reached on the istream, this points to the respective position of eof on otf_in
+    long long curr_read_slot = 0;
+    long long eof_slot = -1;
 
-    ZpaqIStreamBufReader(std::istream* wrapped_istream) : streambuf_wrapped_istream(wrapped_istream) {
-      otf_in = std::make_unique<char[]>(CHUNK);
+    ZpaqIStreamBufReader(std::istream* wrapped_istream) : streambuf_wrapped_istream(wrapped_istream) {}
+
+    ZpaqIStreamBufReader(std::vector<char>&& otf_in)
+      : otf_in(std::move(otf_in)), streambuf_wrapped_istream(nullptr), eof_slot(this->otf_in.size()) {}
+
+    // Using this indirect way of getting pointers to the vector using slot to ensure we don't have problems after memory reallocations
+    char* curr_read_ptr()
+    {
+      return otf_in.empty() ? nullptr : otf_in.data() + curr_read_slot;
+    }
+
+    char* eof_ptr()
+    {
+      return eof_slot < 0 ? nullptr : otf_in.data() + eof_slot;
     }
 
     int get() override {
-      if (curr_read != nullptr && curr_read == eof_ptr) return EOF;
-      if (curr_read == nullptr || curr_read == otf_in.get() + CHUNK) {
-        curr_read = otf_in.get();
-        streambuf_wrapped_istream->read(otf_in.get(), CHUNK);
+      if (curr_read_ptr() != nullptr && curr_read_ptr() == eof_ptr()) return EOF;
+      if (curr_read_ptr() == nullptr || curr_read_ptr() == otf_in.data() + otf_in.size()) {
+        otf_in.reserve(otf_in.capacity() + CHUNK);
+        if (curr_read_ptr() == nullptr) curr_read_slot = 0;
+
+        auto tmp_buf = std::make_unique<char[]>(CHUNK);
+        streambuf_wrapped_istream->read(tmp_buf.get(), CHUNK);
         const auto read_count = streambuf_wrapped_istream->gcount();
-        if (read_count < CHUNK) eof_ptr = otf_in.get() + read_count;
-        if (otf_in.get() == eof_ptr) return EOF;
+
+        if (read_count < CHUNK) eof_slot = curr_read_slot + read_count;
+        if (read_count == 0) return EOF;
+
+        for (char* curr = tmp_buf.get(); curr < tmp_buf.get() + read_count; curr++)
+        {
+          otf_in.push_back(*curr);
+        }
       }
-      const auto chr = static_cast<unsigned char>(*curr_read);
-      curr_read++;
+      const auto chr = static_cast<unsigned char>(*curr_read_ptr());
+      curr_read_slot++;
       return chr;
+    }
+
+    std::vector<char> buffer_discard_old_data() {
+      const char* data_end_ptr = eof_ptr() != nullptr ? eof_ptr() : otf_in.data() + otf_in.size();
+      // ZPAQ uses a 64Kb buffer, so the actual start of the next block might be as far as 64Kb before the current reading position
+      const char* data_start_ptr = curr_read_ptr() - (1 << 16) < otf_in.data() ? otf_in.data() : curr_read_ptr() - (1 << 16);
+      const long long remaining_data_size = data_end_ptr - data_start_ptr;
+      // copy the remaining data to a new vector
+      std::vector<char> new_otf_in{};
+      if (remaining_data_size > 0) new_otf_in.reserve(CHUNK);
+      for (const char* curr = data_start_ptr; curr < data_end_ptr; curr++)
+      {
+        new_otf_in.push_back(*curr);
+      }
+      new_otf_in.swap(otf_in); // replace the old vector and free/transfer its memory (as its going out of scope/getting returned next)
+      new_otf_in.resize(curr_read_slot);
+      new_otf_in.shrink_to_fit();
+
+      if (eof_ptr() != nullptr)  // adjust eof if necessary
+      {
+        eof_slot = eof_ptr() - data_start_ptr;  // remaining data before eof
+      }
+      curr_read_slot = 0;
+      return new_otf_in;
     }
   };
 
   class ZpaqIStreamBufWriter : public libzpaq::Writer
   {
   public:
-    std::unique_ptr<char[]>* streambuf_otf_dec;
+    std::unique_ptr<char[]>* dec_buf;
     char* curr_write = nullptr;
 
-    ZpaqIStreamBufWriter(std::unique_ptr<char[]>* otf_dec) : streambuf_otf_dec(otf_dec) {}
+    ZpaqIStreamBufWriter(std::unique_ptr<char[]>* otf_dec) : dec_buf(otf_dec) {}
 
     void put(int c) override {
       if (curr_write == nullptr) reset_write_ptr();
@@ -326,7 +372,43 @@ class ZpaqIStreamBuffer : public std::streambuf
       curr_write++;
     }
 
-    void reset_write_ptr() { curr_write = streambuf_otf_dec->get(); }
+    void reset_write_ptr() { curr_write = dec_buf->get(); }
+  };
+
+  class ZpaqIStreamBlockManager
+  {
+  public:
+    ZpaqIStreamBufReader reader;
+    std::unique_ptr<char[]> dec_buf;
+    ZpaqIStreamBufWriter writer;
+    std::thread decompression_thread;
+    bool decompression_finished = false;
+
+    ZpaqIStreamBlockManager(std::vector<char>&& otf_in)
+      : reader(std::move(otf_in)), dec_buf(std::make_unique<char[]>(CHUNK * 10)), writer(&this->dec_buf) {}
+
+    void decompress_on_thread()
+    {
+      decompression_thread = std::thread(&ZpaqIStreamBlockManager::decompress, this);
+    }
+
+    void decompress()
+    {
+      libzpaq::Decompresser decompresser;
+      decompresser.setInput(&reader);
+      decompresser.setOutput(&writer);
+      decompresser.findBlock();
+      decompresser.findFilename(); // This finds the segment
+      decompresser.readComment();
+      decompresser.decompress(-1);
+      decompresser.readSegmentEnd();
+      decompression_finished = true;
+    }
+
+    void write_to_ostream(std::ostream& ostream)
+    {
+      ostream.write(writer.dec_buf->get(), writer.curr_write - writer.dec_buf->get());
+    }
   };
 public:
   std::istream* wrapped_istream;
@@ -334,7 +416,6 @@ public:
   std::unique_ptr<char[]> otf_dec;
   ZpaqIStreamBufReader reader;
   ZpaqIStreamBufWriter writer;
-  libzpaq::Decompresser zpaq_decompresser;
   bool decompression_started = false;
 
   ZpaqIStreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream), reader(&wrapped_istream), writer(&this->otf_dec) {
@@ -356,8 +437,6 @@ public:
 
   void init() {
     otf_dec = std::make_unique<char[]>(CHUNK * 10);
-    zpaq_decompresser.setInput(&reader);
-    zpaq_decompresser.setOutput(&writer);
 
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
   }
@@ -366,7 +445,7 @@ public:
     if (owns_wrapped_istream) delete wrapped_istream;
   }
 
-  bool findBlock() {
+  bool findBlock(libzpaq::Decompresser& zpaq_decompresser) {
     bool found = true;
     double memory;                         // bytes required to decompress
     found &= zpaq_decompresser.findBlock(&memory);
@@ -381,21 +460,31 @@ public:
 
     print_work_sign(true);
 
+    libzpaq::Decompresser zpaq_decompresser;
+    zpaq_decompresser.setInput(&reader);
+    zpaq_decompresser.setOutput(&writer);
+
     if (!decompression_started) {
-      findBlock();
+      findBlock(zpaq_decompresser);
       decompression_started = true;
     }
     int amt_read;
     while (true) {
-      bool still_more_data = zpaq_decompresser.decompress(CHUNK);
-      amt_read = writer.curr_write - otf_dec.get();
-      if (still_more_data) break;
-
       zpaq_decompresser.readSegmentEnd();
       decompression_started = false;
+      auto full_compressed_block = reader.buffer_discard_old_data();
+      auto manager = ZpaqIStreamBlockManager(std::move(full_compressed_block));
+      manager.decompress_on_thread();
+      manager.decompression_thread.join();
+      amt_read = manager.writer.curr_write - manager.writer.dec_buf->get();
+      for (long long slot = 0; slot < amt_read; slot++)
+      {
+        *(otf_dec.get() + slot) = *(manager.writer.dec_buf->get() + slot);
+      }
+
       // If we didn't read anything, check that we are not at the end of a block and the start of another
       // If that is the case, we read again now that we have found the new block
-      if (amt_read != 0 || !findBlock()) break;
+      if (amt_read != 0 || !findBlock(zpaq_decompresser)) break;
     }
     
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
