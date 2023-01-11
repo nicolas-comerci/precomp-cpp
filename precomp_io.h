@@ -416,13 +416,16 @@ public:
   std::unique_ptr<char[]> otf_dec;
   ZpaqIStreamBufReader reader;
   ZpaqIStreamBufWriter writer;
-  bool decompression_started = false;
+  std::queue<std::unique_ptr<ZpaqIStreamBlockManager>> block_managers;
+  int max_thread_count;
 
-  ZpaqIStreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream), reader(&wrapped_istream), writer(&this->otf_dec) {
+  ZpaqIStreamBuffer(std::istream& wrapped_istream, int max_thread_count = std::thread::hardware_concurrency())
+      : wrapped_istream(&wrapped_istream), reader(&wrapped_istream), writer(&this->otf_dec), max_thread_count(max_thread_count) {
     init();
   }
 
-  ZpaqIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream): reader(wrapped_istream.get()), writer(&this->otf_dec) {
+  ZpaqIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream, int max_thread_count = std::thread::hardware_concurrency())
+    : reader(wrapped_istream.get()), writer(&this->otf_dec), max_thread_count(max_thread_count) {
     this->wrapped_istream = wrapped_istream.release();
     owns_wrapped_istream = true;
     init();
@@ -449,7 +452,9 @@ public:
     bool found = true;
     double memory;                         // bytes required to decompress
     found &= zpaq_decompresser.findBlock(&memory);
+    if (!found) return found;
     found &= zpaq_decompresser.findFilename(); // This finds the segment
+    if (!found) return found;
     zpaq_decompresser.readComment();
     return found;
   }
@@ -460,32 +465,30 @@ public:
 
     print_work_sign(true);
 
-    libzpaq::Decompresser zpaq_decompresser;
-    zpaq_decompresser.setInput(&reader);
-    zpaq_decompresser.setOutput(&writer);
-
-    if (!decompression_started) {
-      findBlock(zpaq_decompresser);
-      decompression_started = true;
-    }
-    int amt_read;
-    while (true) {
+    // Make sure we have max_thread_count threads launched at any time (unless EOF already reached)
+    while (block_managers.size() < max_thread_count)
+    {
+      libzpaq::Decompresser zpaq_decompresser;
+      zpaq_decompresser.setInput(&reader);
+      zpaq_decompresser.setOutput(&writer);
+      const bool found = findBlock(zpaq_decompresser);
+      if (!found) break; // This should only happen if we are at the original istream EOF so there are no more blocks to decompress
       zpaq_decompresser.readSegmentEnd();
-      decompression_started = false;
-      auto full_compressed_block = reader.buffer_discard_old_data();
-      auto manager = ZpaqIStreamBlockManager(std::move(full_compressed_block));
-      manager.decompress_on_thread();
-      manager.decompression_thread.join();
-      amt_read = manager.writer.curr_write - manager.writer.dec_buf->get();
-      for (long long slot = 0; slot < amt_read; slot++)
-      {
-        *(otf_dec.get() + slot) = *(manager.writer.dec_buf->get() + slot);
-      }
 
-      // If we didn't read anything, check that we are not at the end of a block and the start of another
-      // If that is the case, we read again now that we have found the new block
-      if (amt_read != 0 || !findBlock(zpaq_decompresser)) break;
+      auto full_compressed_block = reader.buffer_discard_old_data();
+      const auto& manager = block_managers.emplace(new ZpaqIStreamBlockManager(std::move(full_compressed_block)));
+      manager->decompress_on_thread();
     }
+
+    // As we need more data, we will need to wait for and get the data for the thread processing the next block
+    const auto& front_block_manager = block_managers.front();
+    front_block_manager->decompression_thread.join();
+    int amt_read = front_block_manager->writer.curr_write - front_block_manager->writer.dec_buf->get();
+    for (long long slot = 0; slot < amt_read; slot++)
+    {
+      *(otf_dec.get() + slot) = *(front_block_manager->writer.dec_buf->get() + slot);
+    }
+    block_managers.pop();
     
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
     if (amt_read == 0) return EOF;
