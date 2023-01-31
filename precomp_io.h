@@ -73,7 +73,7 @@ class memiostream: public std::iostream
   memiostream(membuf* buf): std::iostream(buf), buf(std::unique_ptr<membuf>(buf)) {}
 
 public:
-  static memiostream make(byte* begin, byte* end) {
+  static memiostream make(unsigned char* begin, unsigned char* end) {
     auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
     return {membuf_ptr};
   }

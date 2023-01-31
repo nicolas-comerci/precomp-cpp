@@ -50,8 +50,6 @@
 #ifdef _MSC_VER
 #include <io.h>
 #define ftruncate _chsize_s
-#else
-#include <unistd.h>
 #endif
 
 #ifndef __unix

@@ -7,6 +7,10 @@
 #include <time.h>
 #include <sys/time.h>
 #endif
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
