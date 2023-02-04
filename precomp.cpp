@@ -92,7 +92,6 @@ constexpr auto CHECKBUF_SIZE = 4096;
 constexpr auto COPY_BUF_SIZE = 512;
 constexpr auto FAST_COPY_WORK_SIGN_DIST = 64; // update work sign after (FAST_COPY_WORK_SIGN_DIST * COPY_BUF_SIZE) bytes
 constexpr auto COMP_CHUNK = 512;
-constexpr auto IN_BUF_SIZE = 65536; //input buffer
 constexpr auto PENALTY_BYTES_TOLERANCE = 160;
 constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;
 
