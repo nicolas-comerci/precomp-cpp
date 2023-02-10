@@ -215,7 +215,6 @@ void ctrl_c_handler(int sig) {
   error(ERR_CTRL_C);
 }
 
-#ifndef PRECOMPDLL
 int main(int argc, char* argv[])
 {
   Precomp precomp_mgr;
@@ -260,9 +259,7 @@ int main(int argc, char* argv[])
 
   return return_errorlevel;
   }
-#endif
 
-#ifndef PRECOMPDLL
 #ifndef COMFORT
 int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   int i, j;
@@ -2067,5 +2064,4 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   return operation;
 }
-#endif
 #endif

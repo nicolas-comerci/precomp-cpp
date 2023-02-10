@@ -136,8 +136,6 @@ Switches::Switches() {
   }
 }
 
-// Precomp DLL things
-#ifdef PRECOMPDLL
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP void get_copyright_msg(char* msg) {
@@ -259,15 +257,12 @@ LIBPRECOMP bool file_precompressable(char* in, char* msg) {
   return false;
 }
 
-#endif
-
 void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
   precomp_mgr.ctx->fout = nullptr;
   if ((precomp_mgr.recursion_depth == 0) && (!DEBUG_MODE) && precomp_mgr.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
-  #ifndef PRECOMPDLL
    long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
    if (precomp_mgr.recursion_depth == 0) {
      std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
@@ -279,17 +274,7 @@ void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
        print_to_console(result_print);
      }
    }
-  #else
-   if (precomp_mgr.recursion_depth == 0) {
-    if (!DEBUG_MODE) {
-    print_to_console(std::string(14,'\b').c_str());
-    print_to_console("100.00%% - ");
-    printf_time(get_time_ms() - precomp_mgr.start_time);
-    }
-   }
-  #endif
 
-  #ifndef PRECOMPDLL
    if (precomp_mgr.recursion_depth == 0) {
     print_to_console("\nDone.\n");
     printf_time(get_time_ms() - precomp_mgr.start_time);
@@ -329,14 +314,12 @@ void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
     if (!precomp_mgr.switches.level_switch_used) show_used_levels(precomp_mgr);
 
    }
-  #endif
 
   if (precomp_mgr.ctx->decomp_io_buf != NULL) delete[] precomp_mgr.ctx->decomp_io_buf;
   precomp_mgr.ctx->decomp_io_buf = NULL;
 }
 
 void denit_decompress(Precomp& precomp_mgr, std::string tmp_filename) {
-  #ifndef PRECOMPDLL
    if (precomp_mgr.recursion_depth == 0) {
     if (!DEBUG_MODE) {
     print_to_console("%s", std::string(14,'\b').c_str());
@@ -345,15 +328,6 @@ void denit_decompress(Precomp& precomp_mgr, std::string tmp_filename) {
     print_to_console("\nDone.\n");
     printf_time(get_time_ms() - precomp_mgr.start_time);
    }
-  #else
-   if (precomp_mgr.recursion_depth == 0) {
-    if (!DEBUG_MODE) {
-    print_to_console(std::string(14,'\b').c_str());
-    print_to_console("100.00%% - ");
-    printf_time(get_time_ms() - precomp_mgr.start_time);
-    }
-   }
-  #endif
 }
 
 void denit_convert(Precomp& precomp_mgr) {
@@ -363,7 +337,6 @@ void denit_convert(Precomp& precomp_mgr) {
 
   long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
   std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
-#ifndef PRECOMPDLL
   if (!DEBUG_MODE) {
     print_to_console("%s", std::string(14, '\b').c_str());
     print_to_console("100.00% - " + result_print);
@@ -373,13 +346,6 @@ void denit_convert(Precomp& precomp_mgr) {
   }
   print_to_console("\nDone.\n");
   printf_time(get_time_ms() - precomp_mgr.start_time);
-#else
-  if (!DEBUG_MODE) {
-    print_to_console(std::string(14, '\b').c_str());
-    print_to_console("100.00% - " + result_print);
-    printf_time(get_time_ms() - precomp_mgr.start_time);
-  }
-#endif
 }
 
 // Brute mode detects a bit less than intense mode to avoid false positives
