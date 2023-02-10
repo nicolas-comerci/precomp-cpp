@@ -55,12 +55,10 @@ char get_char_with_echo() {
 #endif
 }
 
-#ifdef COMFORT
 void wait_for_key() {
   print_to_console("\nPress any key to continue\n");
   get_char_with_echo();
 }
-#endif
 
 void error(int error_nr, std::string tmp_filename) {
   print_to_console("\nERROR %i: ", error_nr);

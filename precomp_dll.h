@@ -1,9 +1,13 @@
+#ifndef PRECOMP_DLL_H
+#define PRECOMP_DLL_H
+
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
 #include <thread>
 #endif
 
 #include "precomp_io.h"
+#include "precomp_utils.h"
 
 #include <cstdio>
 #include <array>
@@ -13,8 +17,22 @@
 #include <fstream>
 #include <memory>
 
+#ifdef _MSC_VER
+#define EXPORT __declspec(dllexport)
+#define IMPORT __declspec(dllimport)
+#else
+#define EXPORT __attribute__((visibility("default")))
+#define IMPORT
+#endif
+
+#ifdef PRECOMPDLL
+#define LIBPRECOMP EXPORT
+#else
+#define LIBPRECOMP IMPORT
+#endif
+
 // Switches class
-class Switches {
+class EXPORT Switches {
   public:
     Switches();
 
@@ -58,44 +76,15 @@ class Switches {
 
     bool level_switch_used;            //level switch used? (default: no)
     bool use_zlib_level[81];      //compression levels to use (default: all)
+    int otf_xz_filter_used_count = 0;
+
+    int intense_mode_depth_limit = -1;
+    int brute_mode_depth_limit = -1;
+
+    // preflate config
+    size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
+    bool preflate_verify = false;
 };
-
-//Switches constructor
-Switches::Switches() {
-  compression_method = 2;
-  compression_otf_max_memory = 2048;
-  compression_otf_thread_count = std::thread::hardware_concurrency();
-  if (compression_otf_thread_count == 0) {
-    compression_otf_thread_count = 2;
-  }
-
-  intense_mode = false;
-  fast_mode = false;
-  brute_mode = false;
-  pdf_bmp_mode = false;
-  prog_only = false;
-  use_mjpeg = true;
-  use_brunsli = true;
-  use_brotli = false;
-  use_packjpg_fallback = true;
-  DEBUG_MODE = false;
-  min_ident_size = 4;
-  
-  use_pdf = true;
-  use_zip = true;
-  use_gzip = true;
-  use_png = true;
-  use_gif = true;
-  use_jpg = true;
-  use_mp3 = true;
-  use_swf = true;
-  use_base64 = true;
-  use_bzip2 = true;
-  level_switch_used = false;
-  for (int i = 0; i < 81; i++) {
-    use_zlib_level[i] = true;
-  }
-}
 
 // Some variables I think are obsolete, not deleting them yet while other refactoring is in progress
 class ObsoleteData {
@@ -150,6 +139,14 @@ public:
 #define P_CONVERT 3
 
 constexpr auto IN_BUF_SIZE = 65536; //input buffer
+constexpr auto DIV3CHUNK = 262143; // DIV3CHUNK is a bit smaller/larger than CHUNK, so that DIV3CHUNK mod 3 = 0
+constexpr auto CHECKBUF_SIZE = 4096;
+constexpr auto COPY_BUF_SIZE = 512;
+constexpr auto FAST_COPY_WORK_SIGN_DIST = 64; // update work sign after (FAST_COPY_WORK_SIGN_DIST * COPY_BUF_SIZE) bytes
+constexpr auto COMP_CHUNK = 512;
+constexpr auto PENALTY_BYTES_TOLERANCE = 160;
+constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;
+constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
 class RecursionContext {
 public:
@@ -223,27 +220,154 @@ public:
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
   std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext());
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
+
+  unsigned char in[CHUNK];
+  unsigned char out[CHUNK];
+  unsigned char copybuf[COPY_BUF_SIZE];
+
+  long long start_time;
+  int conversion_from_method;
+  int conversion_to_method;
+
+  // recursion
+  int recursion_depth = 0;
+  int max_recursion_depth = 10;
+  int max_recursion_depth_used = 0;
+  bool max_recursion_depth_reached = false;
 };
-
-#ifdef _MSC_VER
-  #define EXPORT __declspec(dllexport)
-  #define IMPORT __declspec(dllimport)
-#else
-  #define EXPORT __attribute__((visibility("default")))
-  #define IMPORT
-#endif
-
-#ifdef PRECOMPDLL
-  #define LIBPRECOMP EXPORT
-#else
-  #define LIBPRECOMP IMPORT
-#endif
-
-
-#ifndef DLL
-#define DLL __declspec(dllexport)
-#endif
 
 LIBPRECOMP void get_copyright_msg(char* msg);
 LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
 LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+
+void packjpg_mp3_dll_msg();
+
+// All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
+
+int def(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel);
+long long def_compare(std::istream& compfile, int level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
+int def_part(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
+int def_part_skip(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
+void zerr(int ret);
+void denit_compress(Precomp& precomp_mgr, std::string tmp_filename);
+void denit_decompress(Precomp& precomp_mgr, std::string tmp_filename);
+bool intense_mode_is_active(Precomp& precomp_mgr);
+bool brute_mode_is_active(Precomp& precomp_mgr);
+int inf_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
+int def_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, int level);
+long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
+void write_decompressed_data(Precomp& precomp_mgr, std::ostream& ostream, long long byte_count, const char* decompressed_file_name);
+void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name);
+unsigned long long compare_files(std::istream& file1, std::istream& file2, unsigned int pos1, unsigned int pos2);
+long long compare_file_mem_penalty(RecursionContext& context, std::istream& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
+long long compare_files_penalty(RecursionContext& context, std::istream& file1, std::istream& file2, long long pos1, long long pos2);
+void start_uncompressed_data(RecursionContext& context);
+void end_uncompressed_data(Precomp& precomp_mgr);
+void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
+void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile);
+void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
+void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
+void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], PrecompTmpFile& tmpfile);
+void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile);
+void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTmpFile& tmpfile);
+void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
+void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
+void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
+void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
+void try_decompression_base64(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
+void try_decompression_png_multi(Precomp& precomp_mgr, std::istream& fpng, int windowbits, PrecompTmpFile& tmpfile);
+
+// helpers for try_decompression functions
+
+void init_decompression_variables(RecursionContext& context);
+
+bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection);
+inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
+void sort_comp_mem_levels();
+void show_used_levels(Precomp& precomp_mgr);
+bool compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
+void decompress_file(Precomp& precomp_mgr);
+void convert_file(Precomp& precomp_mgr);
+long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
+long long try_to_decompress_bzip2(Precomp& precomp_mgr, std::istream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
+void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
+void write_header(RecursionContext& context);
+void read_header(Precomp& precomp_mgr);
+void convert_header(Precomp& precomp_mgr);
+std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
+long long fileSize64(const char* filename);
+void print64(long long i64);
+std::string temp_files_tag();
+void printf_time(long long t);
+void print_debug_percent(RecursionContext& context);
+
+class zLibMTF {
+  struct MTFItem {
+    int Next, Previous;
+  };
+  alignas(16) MTFItem List[81];
+  int Root, Index;
+public:
+  zLibMTF() : Root(0), Index(0) {
+    for (int i = 0; i < 81; i++) {
+      List[i].Next = i + 1;
+      List[i].Previous = i - 1;
+    }
+    List[80].Next = -1;
+  }
+  inline int First() {
+    return Index = Root;
+  }
+  inline int Next() {
+    return (Index >= 0) ? Index = List[Index].Next : Index;
+  }
+  inline void Update() {
+    if (Index == Root) return;
+
+    List[List[Index].Previous].Next = List[Index].Next;
+    if (List[Index].Next >= 0)
+      List[List[Index].Next].Previous = List[Index].Previous;
+    List[Root].Previous = Index;
+    List[Index].Next = Root;
+    List[Root = Index].Previous = -1;
+  }
+};
+struct recompress_deflate_result;
+
+void write_ftempout_if_not_present(Precomp& precomp_mgr, long long byte_count, bool in_memory, PrecompTmpFile& tmpfile);
+
+int32_t fin_fget32_little_endian(std::istream& input);
+int32_t fin_fget32(std::istream& input);
+long long fin_fget_vlint(std::istream& input);
+void fin_fget_deflate_hdr(std::istream& input, std::ostream& output, recompress_deflate_result&, const unsigned char flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last);
+void fin_fget_recon_data(std::istream& input, recompress_deflate_result&);
+bool fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, PrecompTmpFile& tmpfile);
+void fin_fget_uncompressed(const recompress_deflate_result&);
+void fout_fput32_little_endian(std::ostream& output, int v);
+void fout_fput32(std::ostream& output, int v);
+void fout_fput32(std::ostream& output, unsigned int v);
+void fout_fput_vlint(std::ostream& output, unsigned long long v);
+void fout_fput_deflate_hdr(std::ostream& output, const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
+void fout_fput_recon_data(std::ostream& output, const recompress_deflate_result&);
+void fout_fput_uncompressed(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
+
+void fast_copy(Precomp& precomp_mgr, std::istream& file1, std::ostream& file2, long long bytecount, bool update_progress = false);
+
+unsigned char base64_char_decode(unsigned char c);
+void base64_reencode(Precomp& precomp_mgr, std::istream& file_in, std::ostream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
+
+void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2);
+//bool recompress_gif(RecursionContext& context, std::istream& srcfile, std::ostream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd);
+//bool decompress_gif(RecursionContext& context, std::istream& srcfile, std::ostream& dstfile, long long src_pos, int& gif_length, int& decomp_length, unsigned char& block_size, GifCodeStruct* g);
+
+struct recursion_result {
+  bool success;
+  std::string file_name;
+  long long file_length;
+  std::shared_ptr<std::ifstream> frecurse = std::shared_ptr<std::ifstream>(new std::ifstream());
+};
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
+recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, PrecompTmpFile& tmpfile);
+recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
+void fout_fput_deflate_rec(Precomp& precomp_mgr, const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
+#endif // PRECOMP_DLL_H

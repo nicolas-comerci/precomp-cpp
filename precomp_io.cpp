@@ -1,5 +1,22 @@
 #include "precomp_io.h"
 
+void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir origin) {
+  if (stream.bad()) {
+    print_to_console("Input stream went bad");
+    exit(1);
+  }
+  stream.clear();
+  stream.seekg(offset, origin);
+}
+
+int ostream_printf(std::ostream& out, std::string str) {
+  for (char character : str) {
+    out.put(character);
+    if (out.bad()) return 0;
+  }
+  return str.length();
+}
+
 template <typename T>
 class Precomp_OStream : public T
 {

@@ -9,6 +9,18 @@
 #include <fstream>
 #include <functional>
 
+#ifndef __unix
+#define PATH_DELIM '\\'
+#else
+#define PATH_DELIM '/'
+#endif
+
+// istreams don't allow seeking once eof/failbit is set, which happens if we read a file to the end.
+// This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
+void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir origin);
+
+int ostream_printf(std::ostream& out, std::string str);
+
 class PrecompTmpFile : public std::fstream {
 public:
   std::string file_path;

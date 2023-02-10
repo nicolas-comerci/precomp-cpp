@@ -26,9 +26,7 @@ void print_to_console(const char* format, Args... args) {
 
 char get_char_with_echo();
 
-#ifdef COMFORT
 void wait_for_key();
-#endif
 
 // batch error levels
 constexpr auto RETURN_NOTHING_DECOMPRESSED = 2;
