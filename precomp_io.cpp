@@ -2,8 +2,7 @@
 
 void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir origin) {
   if (stream.bad()) {
-    print_to_console("Input stream went bad");
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
   }
   stream.clear();
   stream.seekg(offset, origin);
@@ -72,8 +71,7 @@ std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::
       return XzIStreamBuffer::from_istream(std::move(istream));
     }
   }
-  print_to_console("Unknown compression method!");
-  exit(1);
+  throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));
 }
 
 std::unique_ptr<std::ostream> XzOStreamBuffer::from_ostream(
@@ -115,6 +113,5 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
     return XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count);
   }
   }
-  print_to_console("Unknown compression method!");
-  exit(1);
+  throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));
 }

@@ -12,7 +12,7 @@ int auto_detected_thread_count();
 void print_to_console(std::string format);
 
 template< typename... Args >
-void print_to_console(const char* format, Args... args) {
+std::string make_cstyle_format_string(const char* format, Args... args) {
   int length = std::snprintf(nullptr, 0, format, args...);
   assert(length >= 0);
 
@@ -21,7 +21,12 @@ void print_to_console(const char* format, Args... args) {
 
   std::string str(buf);
   delete[] buf;
-  print_to_console(str);
+  return str;
+}
+
+template< typename... Args >
+void print_to_console(const char* format, Args... args) {
+  print_to_console(make_cstyle_format_string(format, args...));
 }
 
 char get_char_with_echo();
@@ -29,6 +34,8 @@ char get_char_with_echo();
 void wait_for_key();
 
 // batch error levels
+constexpr auto RETURN_SUCCESS = 0;
+constexpr auto ERR_GENERIC_OR_UNKNOWN = 1;
 constexpr auto RETURN_NOTHING_DECOMPRESSED = 2;
 constexpr auto ERR_DISK_FULL = 3;
 constexpr auto ERR_TEMP_FILE_DISAPPEARED = 4;
@@ -46,8 +53,17 @@ constexpr auto ERR_BRUTE_MODE_LIMIT_TOO_BIG = 15;
 constexpr auto ERR_ONLY_SET_LZMA_MEMORY_ONCE = 16;
 constexpr auto ERR_ONLY_SET_LZMA_THREAD_ONCE = 17;
 constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
+constexpr auto ERR_DURING_RECOMPRESSION = 19;
 
-void error(int error_nr, std::string tmp_filename = "");
+class PrecompError: public std::exception
+{
+public:
+  int error_code;
+
+  PrecompError(int error_code) : error_code(error_code) {}
+};
+
+const char* error_msg(int error_nr);
 
 long long get_time_ms();
 

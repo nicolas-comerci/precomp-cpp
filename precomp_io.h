@@ -135,8 +135,7 @@ public:
     otf_bz2_stream_d->avail_in = 0;
     otf_bz2_stream_d->next_in = NULL;
     if (BZ2_bzDecompressInit(otf_bz2_stream_d.get(), 0, 0) != BZ_OK) {
-      print_to_console("ERROR: bZip2 init failed\n");
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 init failed\n"));
     }
 
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
@@ -170,8 +169,7 @@ public:
       ret = BZ2_bzDecompress(otf_bz2_stream_d.get());
       if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
         (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
-        print_to_console("ERROR: bZip2 stream corrupted - return value %i\n", ret);
-        exit(1);
+        throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 stream corrupted - return value %i\n", ret));
       }
 
       if (ret == BZ_STREAM_END) stream_eof = true;
@@ -216,8 +214,7 @@ public:
     otf_dec = std::make_unique<char[]>(CHUNK * 10);
     otf_xz_stream_d = std::unique_ptr<lzma_stream>(new lzma_stream());
     if (!init_decoder(otf_xz_stream_d.get())) {
-      print_to_console("ERROR: liblzma init failed\n");
-      exit(1);
+      throw std::runtime_error("ERROR: liblzma init failed\n");
     }
 
     setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
@@ -244,8 +241,7 @@ public:
         otf_xz_stream_d->avail_in = wrapped_istream->gcount();
 
         if (wrapped_istream->bad()) {
-          print_to_console("ERROR: Could not read input file\n");
-          exit(1);
+          throw std::runtime_error("ERROR: Could not read input file\n");
         }
       }
 
@@ -277,11 +273,7 @@ public:
           break;
         }
 
-        print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
-#ifdef COMFORT
-        wait_for_key();
-#endif // COMFORT
-        exit(1);
+        throw std::runtime_error(make_cstyle_format_string("ERROR: liblzma error: %s (error code %u)\n", msg, ret));
       }
     } while (otf_xz_stream_d->avail_out > 0);
 
@@ -361,8 +353,7 @@ public:
     otf_bz2_stream_c->bzfree = NULL;
     otf_bz2_stream_c->opaque = NULL;
     if (BZ2_bzCompressInit(otf_bz2_stream_c.get(), 9, 0, 0) != BZ_OK) {
-      print_to_console("ERROR: bZip2 init failed\n");
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 init failed\n"));
     }
 
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);
@@ -383,12 +374,11 @@ public:
       unsigned have = CHUNK - otf_bz2_stream_c->avail_out;
       this->wrapped_ostream->write(otf_out.get(), have);
       if (this->wrapped_ostream->bad()) {
-        error(ERR_DISK_FULL);
+        throw PrecompError(ERR_DISK_FULL);
       }
     } while (otf_bz2_stream_c->avail_out == 0);
     if (ret < 0) {
-      print_to_console("ERROR: bZip2 compression failed - return value %i\n", ret);
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 compression failed - return value %i\n", ret));
     }
 
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);
@@ -443,8 +433,7 @@ public:
     }
 
     if (!init_encoder_mt(otf_xz_stream_c.get(), threads, max_memory, memory_usage, block_size, *this->otf_xz_extra_params)) {
-      print_to_console("ERROR: xz Multi-Threaded init failed\n");
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: xz Multi-Threaded init failed\n"));
     }
 
     std::string plural = "";
@@ -474,7 +463,7 @@ public:
       unsigned have = CHUNK - otf_xz_stream_c->avail_out;
       this->wrapped_ostream->write(otf_out.get(), have);
       if (this->wrapped_ostream->bad()) {
-        error(ERR_DISK_FULL);
+        throw PrecompError(ERR_DISK_FULL);
       }
       if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
         const char* msg;
@@ -492,11 +481,7 @@ public:
           break;
         }
 
-        print_to_console("ERROR: liblzma error: %s (error code %u)\n", msg, ret);
-#ifdef COMFORT
-        wait_for_key();
-#endif // COMFORT
-        exit(1);
+        throw std::runtime_error(make_cstyle_format_string("ERROR: liblzma error: %s (error code %u)\n", msg, ret));
       }
       if (!DEBUG_MODE) lzma_progress_update();
     } while (otf_xz_stream_c->avail_in > 0 || otf_xz_stream_c->avail_out != CHUNK || final_byte && ret != LZMA_STREAM_END);

@@ -60,67 +60,43 @@ void wait_for_key() {
   get_char_with_echo();
 }
 
-void error(int error_nr, std::string tmp_filename) {
-  print_to_console("\nERROR %i: ", error_nr);
+const char* error_msg(int error_nr) {
   switch (error_nr) {
   case ERR_IGNORE_POS_TOO_BIG:
-    print_to_console("Ignore position too big");
-    break;
+    return "Ignore position too big";
   case ERR_IDENTICAL_BYTE_SIZE_TOO_BIG:
-    print_to_console("Identical bytes size bigger than 4 GB");
-    break;
+    return "Identical bytes size bigger than 4 GB";
   case ERR_ONLY_SET_MIN_SIZE_ONCE:
-    print_to_console("Minimal identical size can only be set once");
-    break;
+    return "Minimal identical size can only be set once";
   case ERR_MORE_THAN_ONE_OUTPUT_FILE:
-    print_to_console("More than one output file given");
-    break;
+    return "More than one output file given";
   case ERR_MORE_THAN_ONE_INPUT_FILE:
-    print_to_console("More than one input file given");
-    break;
+    return "More than one input file given";
   case ERR_DONT_USE_SPACE:
-    print_to_console("Please don't use a space between the -o switch and the output filename");
-    break;
+    return "Please don't use a space between the -o switch and the output filename";
   case ERR_TEMP_FILE_DISAPPEARED:
-    print_to_console("Temporary file %s disappeared", tmp_filename.c_str());
-    break;
+    return "Temporary file has disappeared";
   case ERR_DISK_FULL:
-    print_to_console("There is not enough space on disk");
-    // delete output file
-    //g_precomp.ctx->fout->close();
-    //remove(g_precomp.ctx->output_file_name.c_str());
-    break;
+    return "There is not enough space on disk";
   case ERR_RECURSION_DEPTH_TOO_BIG:
-    print_to_console("Recursion depth too big");
-    break;
+    return "Recursion depth too big";
   case ERR_ONLY_SET_RECURSION_DEPTH_ONCE:
-    print_to_console("Recursion depth can only be set once");
-    break;
+    return "Recursion depth can only be set once";
   case ERR_CTRL_C:
-    print_to_console("CTRL-C detected");
-    break;
+    return "CTRL-C detected";
   case ERR_INTENSE_MODE_LIMIT_TOO_BIG:
-    print_to_console("Intense mode level limit too big");
-    break;
+    return "Intense mode level limit too big";
   case ERR_BRUTE_MODE_LIMIT_TOO_BIG:
-    print_to_console("Brute mode level limit too big");
-    break;
+    return "Brute mode level limit too big";
   case ERR_ONLY_SET_LZMA_MEMORY_ONCE:
-    print_to_console("LZMA maximal memory can only be set once");
-    break;
+    return "LZMA maximal memory can only be set once";
   case ERR_ONLY_SET_LZMA_THREAD_ONCE:
-    print_to_console("LZMA thread count can only be set once");
-    break;
+    return "LZMA thread count can only be set once";
+  case ERR_DURING_RECOMPRESSION:
+    return "Error recompressing data!";
   default:
-    print_to_console("Unknown error");
+    return "Unknown error";
   }
-  print_to_console("\n");
-
-#ifdef COMFORT
-  wait_for_key();
-#endif
-
-  exit(error_nr);
 }
 
 // get current time in ms

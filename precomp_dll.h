@@ -285,9 +285,9 @@ bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsign
 inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
 void sort_comp_mem_levels();
 void show_used_levels(Precomp& precomp_mgr);
-bool compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
-void decompress_file(Precomp& precomp_mgr);
-void convert_file(Precomp& precomp_mgr);
+int compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
+int decompress_file(Precomp& precomp_mgr);
+int convert_file(Precomp& precomp_mgr);
 long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
 long long try_to_decompress_bzip2(Precomp& precomp_mgr, std::istream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);

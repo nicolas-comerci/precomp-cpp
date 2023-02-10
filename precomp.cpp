@@ -74,6 +74,11 @@
 # define SET_BINARY_MODE(handle) ((void)0)
 #endif
 
+std::string libprecomp_error_msg(int error_code)
+{
+  return make_cstyle_format_string("\nERROR %i: %s", error_code, error_msg(error_code));
+}
+
 bool parsePrefixText(const char* c, const char* ref) {
   while (*ref && tolower(*c) == *ref) {
     ++c;
@@ -93,24 +98,20 @@ bool parseSwitch(bool& val, const char* c, const char* ref) {
     val = false;
     return true;
   }
-  print_to_console("ERROR: Only + or - for this switch (%s) allowed\n", c);
-  exit(1);
-  return false;
+  throw std::runtime_error(make_cstyle_format_string("ERROR: Only + or - for this switch (%s) allowed\n", c));
 }
 
 int parseInt(const char*& c, const char* context, int too_big_error_code = 0) {
   if (*c < '0' || *c > '9') {
-    print_to_console("ERROR: Number needed to set %s\n", context);
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Number needed to set %s\n", context));
   }
   int val = *c++ - '0';
   while (*c >= '0' && *c <= '9') {
     if (val >= INT_MAX / 10 - 1) {
       if (too_big_error_code != 0) {
-        error(too_big_error_code);
+        throw std::runtime_error(libprecomp_error_msg(too_big_error_code));
       }
-      print_to_console("ERROR: Number too big for %s\n", context);
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Number too big for %s\n", context));
     }
     val = val * 10 + *c++ - '0';
   }
@@ -119,8 +120,7 @@ int parseInt(const char*& c, const char* context, int too_big_error_code = 0) {
 int parseIntUntilEnd(const char* c, const char* context, int too_big_error_code = 0) {
   for (int i = 0; c[i]; ++i) {
     if (c[i] < '0' || c[i] > '9') {
-      print_to_console("ERROR: Only numbers allowed for %s\n", context);
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Only numbers allowed for %s\n", context));
     }
   }
   const char* x = c;
@@ -128,17 +128,15 @@ int parseIntUntilEnd(const char* c, const char* context, int too_big_error_code 
 }
 int64_t parseInt64(const char*& c, const char* context, int too_big_error_code = 0) {
   if (*c < '0' || *c > '9') {
-    print_to_console("ERROR: Number needed to set %s\n", context);
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Number needed to set %s\n", context));
   }
   int64_t val = *c++ - '0';
   while (*c >= '0' && *c <= '9') {
     if (val >= INT64_MAX / 10 - 1) {
       if (too_big_error_code != 0) {
-        error(too_big_error_code);
+        throw std::runtime_error(libprecomp_error_msg(too_big_error_code));
       }
-      print_to_console("ERROR: Number too big for %s\n", context);
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Number too big for %s\n", context));
     }
     val = val * 10 + *c++ - '0';
   }
@@ -147,8 +145,7 @@ int64_t parseInt64(const char*& c, const char* context, int too_big_error_code =
 int64_t parseInt64UntilEnd(const char* c, const char* context, int too_big_error_code = 0) {
   for (int i = 0; c[i]; ++i) {
     if (c[i] < '0' || c[i] > '9') {
-      print_to_console("ERROR: Only numbers allowed for %s\n", context);
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Only numbers allowed for %s\n", context));
     }
   }
   const char* x = c;
@@ -168,9 +165,11 @@ bool check_for_pcf_file(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
   } else {
-    print_to_console("Input file %s was made with a different Precomp version\n", precomp_mgr.ctx->input_file_name.c_str());
-    print_to_console("PCF version info: %i.%i.%i\n", precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]);
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string(
+      "Input file %s was made with a different Precomp version\n"
+      "PCF version info: %i.%i.%i\n",
+      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
+    ));
   }
 
   // skip compression method
@@ -212,7 +211,7 @@ void ctrl_c_handler(int sig) {
   print_to_console("\n\nCTRL-C detected\n");
   (void) signal(SIGINT, SIG_DFL);
 
-  error(ERR_CTRL_C);
+  throw std::runtime_error(libprecomp_error_msg(ERR_CTRL_C));
 }
 
 int main(int argc, char* argv[])
@@ -223,34 +222,40 @@ int main(int argc, char* argv[])
   // register CTRL-C handler
   (void)signal(SIGINT, ctrl_c_handler);
 
+  try {
 #ifndef COMFORT
-  switch (init(precomp_mgr, argc, argv)) {
+  int op = init(precomp_mgr, argc, argv);
 #else
-  switch (init_comfort(precomp_mgr, argc, argv)) {
+  int op = init_comfort(precomp_mgr, argc, argv);
 #endif
-
+  precomp_mgr.start_time = get_time_ms();
+  switch (op) {
+  
   case P_COMPRESS:
-  {
-    precomp_mgr.start_time = get_time_ms();
-    if (!compress_file(precomp_mgr)) { // none of the streams could be decompressed
-      return_errorlevel = RETURN_NOTHING_DECOMPRESSED;
-    }
+  {    
+    return_errorlevel = compress_file(precomp_mgr);
     break;
   }
 
   case P_DECOMPRESS:
   {
-    precomp_mgr.start_time = get_time_ms();
-    decompress_file(precomp_mgr);
+    return_errorlevel = decompress_file(precomp_mgr);
     break;
   }
 
   case P_CONVERT:
   {
-    precomp_mgr.start_time = get_time_ms();
-    convert_file(precomp_mgr);
+    return_errorlevel = convert_file(precomp_mgr);
     break;
   }
+  }
+  if (return_errorlevel != 0) throw std::runtime_error(libprecomp_error_msg(return_errorlevel));
+  }
+  catch (const std::runtime_error& err)
+  {
+    print_to_console(err.what());
+    print_to_console("\n");
+    return_errorlevel = 1;
   }
 
 #ifdef COMFORT
@@ -258,7 +263,7 @@ int main(int argc, char* argv[])
 #endif
 
   return return_errorlevel;
-  }
+}
 
 #ifndef COMFORT
 int init(Precomp& precomp_mgr, int argc, char* argv[]) {
@@ -340,7 +345,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       case 'D':
       {
         if (recursion_depth_set) {
-          error(ERR_ONLY_SET_RECURSION_DEPTH_ONCE);
+          throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_RECURSION_DEPTH_ONCE));
         }
         precomp_mgr.max_recursion_depth = parseIntUntilEnd(argv[i] + 2, "maximal recursion depth", ERR_RECURSION_DEPTH_TOO_BIG);
         recursion_depth_set = true;
@@ -349,7 +354,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       case 'S':
       {
         if (min_ident_size_set) {
-          error(ERR_ONLY_SET_MIN_SIZE_ONCE);
+          throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_MIN_SIZE_ONCE));
         }
         precomp_mgr.switches.min_ident_size = parseIntUntilEnd(argv[i] + 2, "minimal identical byte size", ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
         min_ident_size_set = true;
@@ -365,8 +370,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         }
         else if (!parseSwitch(precomp_mgr.switches.use_brunsli, argv[i] + 1, "brunsli")
           && !parseSwitch(precomp_mgr.switches.use_brotli, argv[i] + 1, "brotli")) {
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -377,14 +381,14 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         }
         else if (toupper(argv[i][2]) == 'M') { // LZMA max. memory
           if (lzma_max_memory_set) {
-            error(ERR_ONLY_SET_LZMA_MEMORY_ONCE);
+            throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_MEMORY_ONCE));
           }
           precomp_mgr.switches.compression_otf_max_memory = parseIntUntilEnd(argv[i] + 3, "LZMA maximal memory");
           lzma_max_memory_set = true;
         }
         else if (toupper(argv[i][2]) == 'T') { // LZMA thread count
           if (lzma_thread_count_set) {
-            error(ERR_ONLY_SET_LZMA_THREAD_ONCE);
+            throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_THREAD_ONCE));
           }
           precomp_mgr.switches.compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
           lzma_thread_count_set = true;
@@ -395,9 +399,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             int lclp = (precomp_mgr.otf_xz_extra_params->lc != 0 ? precomp_mgr.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
               + (precomp_mgr.otf_xz_extra_params->lp != 0 ? precomp_mgr.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
             if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
-              print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
-                LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string(
+                "sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
+                LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX)
+              );
             }
           }
           else if (toupper(argv[i][3]) == 'P') {
@@ -405,14 +410,14 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             int lclp = (precomp_mgr.otf_xz_extra_params->lc != 0 ? precomp_mgr.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
               + (precomp_mgr.otf_xz_extra_params->lp != 0 ? precomp_mgr.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
             if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
-              print_to_console("sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
-                LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX);
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string(
+                "sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
+                LZMA_LC_DEFAULT, LZMA_LP_DEFAULT, LZMA_LCLP_MIN, LZMA_LCLP_MAX)
+              );
             }
           }
           else {
-            print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-            exit(1);
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
           }
         }
         else if (toupper(argv[i][2]) == 'P') {
@@ -420,34 +425,30 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             precomp_mgr.otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
             int pb = precomp_mgr.otf_xz_extra_params->pb != 0 ? precomp_mgr.otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
             if (pb < LZMA_PB_MIN || pb > LZMA_PB_MAX) {
-              print_to_console("LZMA pb (default %d) must be inside %d..%d\n",
-                LZMA_PB_DEFAULT, LZMA_PB_MIN, LZMA_PB_MAX);
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string(
+                "LZMA pb (default %d) must be inside %d..%d\n",
+                LZMA_PB_DEFAULT, LZMA_PB_MIN, LZMA_PB_MAX)
+              );
             }
           }
           else {
-            print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-            exit(1);
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
           }
         }
         else if (toupper(argv[i][2]) == 'F') { // LZMA filters
           if (lzma_filters_set) {
-            error(ERR_ONLY_SET_LZMA_FILTERS_ONCE);
+            throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_FILTERS_ONCE));
           }
           switch (argv[i][3]) {
           case '+':
             break;
           case '-':
             if (argv[i][4] != 0) {
-              print_to_console("ERROR: \"-lf-\" must not be followed by anything\n");
-              exit(1);
-              break;
+              throw std::runtime_error(make_cstyle_format_string("ERROR: \"-lf-\" must not be followed by anything\n"));
             }
             break;
           default:
-            print_to_console("ERROR: Only + or - after \"-lf\" allowed\n");
-            exit(1);
-            break;
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Only + or - after \"-lf\" allowed\n"));
           }
 
           int argindex = 4;
@@ -476,9 +477,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
               argindex++;
               char nextchar = argv[i][argindex];
               if ((nextchar < '0') || (nextchar > '9')) {
-                print_to_console("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
-                  LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string(
+                  "ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
+                  LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
+                );
               }
               precomp_mgr.otf_xz_extra_params->enable_filter_delta = true;
               while ((argv[i][argindex] > '0') && (argv[i][argindex] < '9')) {
@@ -488,23 +490,20 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
               }
               if (precomp_mgr.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
                 || precomp_mgr.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
-                print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
-                  LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string(
+                  "ERROR: LZMA delta filter distance must be in range %d..%d\n",
+                  LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
+                );
               }
               argindex--;
             }
             break;
             default:
-              print_to_console("ERROR: Unknown LZMA filter type \"%c\"\n", argv[i][argindex]);
-              exit(1);
-              break;
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown LZMA filter type \"%c\"\n", argv[i][argindex]));
             }
             precomp_mgr.switches.otf_xz_filter_used_count++;
             if (precomp_mgr.switches.otf_xz_filter_used_count > LZMA_FILTERS_MAX - 1) {
-              print_to_console("ERROR: Only up to %d LZMA filters can be used at the same time\n",
-                LZMA_FILTERS_MAX - 1);
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Only up to %d LZMA filters can be used at the same time\n", LZMA_FILTERS_MAX - 1));
             }
             argindex++;
           }
@@ -512,8 +511,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           break;
         }
         else {
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -526,14 +524,12 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (parsePrefixText(argv[i] + 1, "pfmeta")) {
             int mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
             if (mbsize >= INT_MAX / 1024) {
-              print_to_console("preflate meta block size set too big\n");
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("preflate meta block size set too big\n"));
             }
             precomp_mgr.switches.preflate_meta_block_size = mbsize * 1024;
           }
           else {
-            print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-            exit(1);
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
           }
         }
         break;
@@ -569,9 +565,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           set_to = false;
           break;
         default:
-          print_to_console("ERROR: Only + or - for type switch allowed\n");
-          exit(1);
-          break;
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Only + or - for type switch allowed\n"));
         }
         for (j = 3; j < (int)strlen(argv[i]); j++) {
           switch (toupper(argv[i][j])) {
@@ -606,9 +600,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             precomp_mgr.switches.use_bzip2 = set_to;
             break;
           default:
-            print_to_console("ERROR: Invalid compression type %c\n", argv[i][j]);
-            exit(1);
-            break;
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", argv[i][j]));
           }
         }
         break;
@@ -626,13 +618,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           precomp_mgr.ctx->compression_otf_method = OTF_XZ_MT;
           break;
         default:
-          print_to_console("ERROR: Invalid compression method %c\n", argv[i][2]);
-          exit(1);
-          break;
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression method %c\n", argv[i][2]));
         }
         if (argv[i][3] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -649,13 +638,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           precomp_mgr.conversion_to_method = OTF_XZ_MT;
           break;
         default:
-          print_to_console("ERROR: Invalid conversion method %c\n", argv[i][2]);
-          exit(1);
-          break;
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid conversion method %c\n", argv[i][2]));
         }
         if (argv[i][3] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         operation = P_CONVERT;
         break;
@@ -664,8 +650,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       {
         DEBUG_MODE = true;
         if (argv[i][2] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -673,8 +658,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       {
         operation = P_DECOMPRESS;
         if (argv[i][2] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -690,13 +674,11 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           for (j = 0; j < ((int)strlen(argv[i]) - 3); j += 3) {
             if ((j + 5) < (int)strlen(argv[i])) {
               if (argv[i][j + 5] != ',') {
-                print_to_console("ERROR: zLib levels have to be separated with commas\n");
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string("ERROR: zLib levels have to be separated with commas\n"));
               }
             }
             if ((j + 4) >= (int)strlen(argv[i])) {
-              print_to_console("ERROR: Last zLib level is incomplete\n");
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Last zLib level is incomplete\n"));
             }
             int comp_level_to_use = (char(argv[i][j + 3]) - '1');
             int mem_level_to_use = (char(argv[i][j + 4]) - '1');
@@ -705,25 +687,23 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
               use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
             }
             else {
-              print_to_console("ERROR: Invalid zlib level %c%c\n", argv[i][j + 3], argv[i][j + 4]);
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid zlib level %c%c\n", argv[i][j + 3], argv[i][j + 4]));
             }
           }
           break;
         }
         else {
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
       }
       case 'O':
       {
         if (output_file_given) {
-          error(ERR_MORE_THAN_ONE_OUTPUT_FILE);
+          throw std::runtime_error(libprecomp_error_msg(ERR_MORE_THAN_ONE_OUTPUT_FILE));
         }
 
         if (strlen(argv[i]) == 2) {
-          error(ERR_DONT_USE_SPACE);
+          throw std::runtime_error(libprecomp_error_msg(ERR_DONT_USE_SPACE));
         }
 
         output_file_given = true;
@@ -745,8 +725,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       case 'M':
       {
         if (!parseSwitch(precomp_mgr.switches.use_mjpeg, argv[i] + 1, "mjpeg")) {
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -755,8 +734,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       {
         precomp_mgr.switches.fast_mode = true;
         if (argv[i][2] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
@@ -764,21 +742,19 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       {
         preserve_extension = true;
         if (argv[i][2] != 0) { // Extra Parameters?
-          print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
       }
       default:
       {
-        print_to_console("ERROR: Unknown switch \"%s\"\n", argv[i]);
-        exit(1);
+        throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
       }
       }
     }
     else { // no switch
       if (input_file_given) {
-        error(ERR_MORE_THAN_ONE_INPUT_FILE);
+        throw std::runtime_error(libprecomp_error_msg(ERR_MORE_THAN_ONE_INPUT_FILE));
       }
 
       input_file_given = true;
@@ -786,8 +762,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
 
       if (precomp_mgr.ctx->input_file_name.compare("stdin") == 0) {
         if (operation != P_DECOMPRESS) {
-          print_to_console("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n");
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
         // Read binary from stdin
         SET_BINARY_MODE(STDIN);
@@ -799,9 +774,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
         fin->open(argv[i], std::ios_base::in | std::ios_base::binary);
         if (!fin->is_open()) {
-          print_to_console("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str());
-
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
         }
         precomp_mgr.ctx->fin = std::move(fin);
       }
@@ -835,8 +808,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         output_file_given = true;
       }
       else if ((!output_file_given) && (operation == P_CONVERT)) {
-        print_to_console("ERROR: Please specify an output file for conversion\n");
-        exit(1);
+        throw std::runtime_error(make_cstyle_format_string("ERROR: Please specify an output file for conversion\n"));
       }
 
       valid_syntax = true;
@@ -948,8 +920,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
     auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
     fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!fout->is_open()) {
-      print_to_console("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str());
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
     }
     precomp_mgr.ctx->fout = std::move(fout);
   }
@@ -1035,14 +1006,14 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   // parse parameters (should be input file only)
   if (argc == 1) {
-    print_to_console("Usage:\n");
-    print_to_console("Drag and drop a file on the executable to precompress/restore it.\n");
-    print_to_console("Edit INI file for parameters.\n");
-    wait_for_key();
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string(
+      "Usage:\n"
+      "Drag and drop a file on the executable to precompress/restore it.\n"
+      "Edit INI file for parameters.\n"
+    ));
   }
   if (argc > 2) {
-    error(ERR_MORE_THAN_ONE_INPUT_FILE);
+    throw std::runtime_error(libprecomp_error_msg(ERR_MORE_THAN_ONE_INPUT_FILE));
   }
   else {
     precomp_mgr.ctx->input_file_name = argv[1];
@@ -1052,9 +1023,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
     auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
     fin->open(precomp_mgr.ctx->input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
     if (!fin->is_open()) {
-      print_to_console("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str());
-      wait_for_key();
-      exit(1);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
     }
     precomp_mgr.ctx->fin = std::move(fin);
 
@@ -1075,7 +1044,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
     print_to_console("\n");
     if ((ch != 'Y') && (ch != 'y')) {
       wait_for_key();
-      exit(1);
+      exit(0);
     }
     else {
       std::fstream fnewini;
@@ -1223,14 +1192,14 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           if (strcmp(param, "minimal_size") == 0) {
             if (min_ident_size_set) {
-              error(ERR_ONLY_SET_MIN_SIZE_ONCE);
+              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_MIN_SIZE_ONCE));
             }
             unsigned int ident_size = 0;
             unsigned int multiplicator = 1;
             for (j = (strlen(value) - 1); j >= 0; j--) {
               ident_size += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
-                error(ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
+                throw std::runtime_error(libprecomp_error_msg(ERR_IDENTICAL_BYTE_SIZE_TOO_BIG));
               }
               multiplicator *= 10;
             }
@@ -1255,9 +1224,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid verbose value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid verbose value: %s\n", value));
             }
           }
 
@@ -1281,21 +1248,19 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid compression method value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression method value: %s\n", value));
             }
           }
 
           if (strcmp(param, "lzma_maximal_memory") == 0) {
             if (lzma_max_memory_set) {
-              error(ERR_ONLY_SET_LZMA_MEMORY_ONCE);
+              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_MEMORY_ONCE));
             }
             unsigned int multiplicator = 1;
             for (j = (strlen(value) - 1); j >= 0; j--) {
               precomp_mgr.switches.compression_otf_max_memory += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
-                exit(1);
+                throw std::runtime_error("Somehow the OTF max memory amount set caused an overflow during parsing");
               }
               multiplicator *= 10;
             }
@@ -1310,13 +1275,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           if (strcmp(param, "lzma_thread_count") == 0) {
             if (lzma_thread_count_set) {
-              error(ERR_ONLY_SET_LZMA_THREAD_ONCE);
+              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_THREAD_ONCE));
             }
             unsigned int multiplicator = 1;
             for (j = (strlen(value) - 1); j >= 0; j--) {
               precomp_mgr.switches.compression_otf_thread_count += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
-                exit(1);
+                throw std::runtime_error("Somehow the OTF thread count set caused an overflow during parsing");
               }
               multiplicator *= 10;
             }
@@ -1331,7 +1296,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           if (strcmp(param, "lzma_filters") == 0) {
             if (lzma_filters_set) {
-              error(ERR_ONLY_SET_LZMA_FILTERS_ONCE);
+              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_FILTERS_ONCE));
             }
 
             for (j = 0; j < (int)strlen(value); j++) {
@@ -1359,10 +1324,10 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 j++;
                 char nextchar = value[j];
                 if ((nextchar < '0') || (nextchar > '9')) {
-                  print_to_console("ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
-                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
-                  wait_for_key();
-                  exit(1);
+                  throw std::runtime_error(make_cstyle_format_string(
+                    "ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
+                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
+                  );
                 }
                 precomp_mgr.otf_xz_extra_params->enable_filter_delta = true;
                 while ((value[j] > '0') && (value[j] < '9')) {
@@ -1372,25 +1337,20 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 }
                 if (precomp_mgr.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
                   || precomp_mgr.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
-                  print_to_console("ERROR: LZMA delta filter distance must be in range %d..%d\n",
-                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX);
-                  wait_for_key();
-                  exit(1);
+                  throw std::runtime_error(make_cstyle_format_string(
+                    "ERROR: LZMA delta filter distance must be in range %d..%d\n",
+                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
+                  );
                 }
                 j--;
                 break;
               }
               default:
-                print_to_console("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]);
-                wait_for_key();
-                exit(1);
-                break;
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]));
               }
               precomp_mgr.switches.otf_xz_filter_used_count++;
               if (precomp_mgr.switches.otf_xz_filter_used_count > 3) {
-                print_to_console("ERROR: Only up to 3 LZMA filters can be used at the same time\n");
-                wait_for_key();
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Only up to 3 LZMA filters can be used at the same time\n"));
               }
             }
 
@@ -1411,9 +1371,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid fast mode value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid fast mode value: %s\n", value));
             }
           }
           // future note: params should be in lowercase for comparisons here only
@@ -1427,9 +1385,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               preserve_extension = true;
             }
             else {
-              print_to_console("ERROR: Invalid Preserve extension mode: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid Preserve extension mode: %s\n", value));
             }
             valid_param = true;
           }
@@ -1447,9 +1403,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid intense mode value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid intense mode value: %s\n", value));
             }
           }
 
@@ -1466,9 +1420,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid brute mode value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brute mode value: %s\n", value));
             }
           }
 
@@ -1486,9 +1438,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid PDF BMP mode value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid PDF BMP mode value: %s\n", value));
             }
           }
 
@@ -1506,9 +1456,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid progressive only JPG mode value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid progressive only JPG mode value: %s\n", value));
             }
           }
 
@@ -1526,9 +1474,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid MJPEG recompression value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid MJPEG recompression value: %s\n", value));
             }
           }
 
@@ -1546,9 +1492,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid brunsli compression value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brunsli compression value: %s\n", value));
             }
           }
 
@@ -1566,9 +1510,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid brotli for metadata compression value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brotli for metadata compression value: %s\n", value));
             }
           }
 
@@ -1586,17 +1528,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
 
             if (!valid_param) {
-              print_to_console("ERROR: Invalid packJPG for JPG compression value: %s\n", value);
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid packJPG for JPG compression value: %s\n", value));
             }
           }
 
           if (strcmp(param, "compression_types_enable") == 0) {
             if (compression_type_line_used) {
-              print_to_console("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Both Compression_types_enable and Compression_types_disable used.\n"));
             }
             compression_type_line_used = true;
 
@@ -1644,9 +1582,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 precomp_mgr.switches.use_bzip2 = true;
                 break;
               default:
-                print_to_console("ERROR: Invalid compression type %c\n", value[j]);
-                exit(1);
-                break;
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
               }
             }
 
@@ -1725,9 +1661,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           if (strcmp(param, "compression_types_disable") == 0) {
             if (compression_type_line_used) {
-              print_to_console("ERROR: Both Compression_types_enable and Compression_types_disable used.\n");
-              wait_for_key();
-              exit(1);
+              throw std::runtime_error(make_cstyle_format_string("ERROR: Both Compression_types_enable and Compression_types_disable used.\n"));
             }
             compression_type_line_used = true;
 
@@ -1775,9 +1709,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 precomp_mgr.switches.use_bzip2 = false;
                 break;
               default:
-                print_to_console("ERROR: Invalid compression type %c\n", value[j]);
-                exit(1);
-                break;
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
               }
             }
 
@@ -1865,13 +1797,11 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             for (j = 0; j < ((int)strlen(value)); j += 3) {
               if ((j + 2) < (int)strlen(value)) {
                 if (value[j + 2] != ',') {
-                  print_to_console("ERROR: zLib levels have to be separated with commas\n");
-                  exit(1);
+                  throw std::runtime_error("ERROR: zLib levels have to be separated with commas\n");
                 }
               }
               if ((j + 1) >= (int)strlen(value)) {
-                print_to_console("ERROR: Last zLib level is incomplete\n");
-                exit(1);
+                throw std::runtime_error("ERROR: Last zLib level is incomplete\n");
               }
               int comp_level_to_use = (char(value[j]) - '1');
               int mem_level_to_use = (char(value[j + 1]) - '1');
@@ -1880,9 +1810,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
               }
               else {
-                print_to_console("ERROR: Invalid zlib level %c%c\n", value[j], value[j + 1]);
-                wait_for_key();
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid zlib level %c%c\n", value[j], value[j + 1]));
               }
             }
 
@@ -1893,7 +1821,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           if (strcmp(param, "maximal_recursion_depth") == 0) {
             if (recursion_depth_set) {
-              error(ERR_ONLY_SET_RECURSION_DEPTH_ONCE);
+              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_RECURSION_DEPTH_ONCE));
             }
 
             unsigned int max_recursion_d = 0;
@@ -1901,7 +1829,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             for (j = (strlen(value) - 1); j >= 0; j--) {
               max_recursion_d += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
-                error(ERR_RECURSION_DEPTH_TOO_BIG);
+                throw std::runtime_error(libprecomp_error_msg(ERR_RECURSION_DEPTH_TOO_BIG));
               }
               multiplicator *= 10;
             }
@@ -1934,7 +1862,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 }
                 else {
                   if ((act_ignore_pos * 10) < act_ignore_pos) {
-                    error(ERR_IGNORE_POS_TOO_BIG);
+                    throw std::runtime_error(libprecomp_error_msg(ERR_IGNORE_POS_TOO_BIG));
                   }
                   act_ignore_pos = (act_ignore_pos * 10) + (value[j] - '0');
                 }
@@ -1948,9 +1876,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               case ' ':
                 break;
               default:
-                print_to_console("ERROR: Invalid char in ignore_positions: %c\n", value[j]);
-                wait_for_key();
-                exit(1);
+                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid char in ignore_positions: %c\n", value[j]));
               }
             }
             if (act_ignore_pos != -1) {
@@ -1966,9 +1892,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           }
 
           if (!valid_param) {
-            print_to_console("ERROR: Invalid INI parameter: %s\n", param);
-            wait_for_key();
-            exit(1);
+            throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid INI parameter: %s\n", param));
           }
         }
       }
@@ -2022,9 +1946,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
   fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
-    print_to_console("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str());
-    wait_for_key();
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
   }
   precomp_mgr.ctx->fout = std::move(fout);
 

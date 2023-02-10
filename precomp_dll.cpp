@@ -263,8 +263,8 @@ void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
     print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
   }
 
-   long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
    if (precomp_mgr.recursion_depth == 0) {
+     long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
      std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
      if (!DEBUG_MODE) {
        print_to_console("%s", std::string(14, '\b').c_str());
@@ -273,9 +273,7 @@ void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
      else {
        print_to_console(result_print);
      }
-   }
 
-   if (precomp_mgr.recursion_depth == 0) {
     print_to_console("\nDone.\n");
     printf_time(get_time_ms() - precomp_mgr.start_time);
 
@@ -748,7 +746,7 @@ long long file_recompress_bzip2(Precomp& precomp_mgr, std::istream& origfile, in
   force_seekg(tmpfile, 0, std::ios_base::end);
   decompressed_bytes_total = tmpfile.tellg();
   if (!tmpfile.is_open()) {
-    error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
+    throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
   }
 
   force_seekg(tmpfile, 0, std::ios_base::beg);
@@ -763,7 +761,7 @@ long long file_recompress_bzip2(Precomp& precomp_mgr, std::istream& origfile, in
 void write_decompressed_data(Precomp& precomp_mgr, std::ostream& ostream, long long byte_count, const char* decompressed_file_name) {
   std::ifstream ftempout;
   ftempout.open(decompressed_file_name, std::ios_base::in | std::ios_base::binary);
-  if (!ftempout.is_open()) error(ERR_TEMP_FILE_DISAPPEARED, decompressed_file_name);
+  if (!ftempout.is_open()) throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
 
   force_seekg(ftempout, 0, std::ios_base::beg);
 
@@ -1309,7 +1307,7 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
         if (!rdres.uncompressed_in_memory) {
           ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
           if (!ftempout.is_open()) {
-            error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
+            throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
           }
 
           force_seekg(ftempout, 0, std::ios_base::beg);
@@ -1517,7 +1515,7 @@ void show_used_levels(Precomp& precomp_mgr) {
   print_to_console("\n");
 }
 
-bool compress_file(Precomp& precomp_mgr, float min_percent, float max_percent) {
+int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
 
   precomp_mgr.ctx->comp_decomp_state = P_COMPRESS;
   if (precomp_mgr.recursion_depth == 0) write_header(*precomp_mgr.ctx);
@@ -2452,7 +2450,29 @@ bool compress_file(Precomp& precomp_mgr, float min_percent, float max_percent) {
 
   denit_compress(precomp_mgr, tempfile);
 
-  return (precomp_mgr.ctx->anything_was_used || precomp_mgr.ctx->non_zlib_was_used);
+  return (precomp_mgr.ctx->anything_was_used || precomp_mgr.ctx->non_zlib_was_used) ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
+}
+
+int wrap_with_exception_catch(std::function<int()> func)
+{
+  // Didn't want to wrap those big functions on a try catch, and also didn't want to leak out our exceptions to the outside, because we want to mantain a C API
+  try
+  {
+    return func();
+  }
+  catch (const PrecompError& exc)
+  {
+    return exc.error_code;
+  }
+  catch (const std::exception& exc)
+  {
+    return ERR_GENERIC_OR_UNKNOWN;
+  }
+}
+
+int compress_file(Precomp& precomp_mgr, float min_percent, float max_percent)
+{
+  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, min_percent, max_percent); });
 }
 
 int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
@@ -2461,7 +2481,7 @@ int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
 	return count;
 }
 
-void decompress_file(Precomp& precomp_mgr) {
+int decompress_file_impl(Precomp& precomp_mgr) {
 
   long long fin_pos;
 
@@ -2550,8 +2570,7 @@ while (precomp_mgr.ctx->fin->good()) {
         skip_part = (-bmp_width) & 3;
       }
       if (!try_reconstructing_deflate_skip(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, read_part, skip_part)) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }     
@@ -2571,8 +2590,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
 
       if (!ok) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }
@@ -2590,8 +2608,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
 
       if (!ok) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }
@@ -2609,8 +2626,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "PNG", hdr_length, 0);
 
       if (!try_reconstructing_deflate(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres)) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       debug_pos();
       break;
@@ -2645,8 +2661,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
 
       if (!try_reconstructing_deflate_multipng(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, idat_count, idat_crcs, idat_lengths)) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       debug_pos();
       free(idat_lengths);
@@ -2733,8 +2748,7 @@ while (precomp_mgr.ctx->fin->good()) {
 
       if (!recompress_success) {
         if (DEBUG_MODE) print_to_console("packJPG error: %s\n", recompress_msg);
-        print_to_console("Error recompressing data!");
-        exit(1);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
 
       PrecompTmpFile frecomp;
@@ -2776,8 +2790,7 @@ while (precomp_mgr.ctx->fin->good()) {
         }
 
         if ((!found_ffda) || ((ffda_pos - 1 - MJPGDHT_LEN) < 0)) {
-          print_to_console("ERROR: Motion JPG stream corrupted\n");
-          exit(1);
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Motion JPG stream corrupted\n"));
         }
 
         // remove motion JPG huffman table
@@ -2829,8 +2842,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
 
       if (!ok) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }
@@ -2956,9 +2968,8 @@ while (precomp_mgr.ctx->fin->good()) {
       }
 
       if (precomp_mgr.ctx->retval != BZ_OK) {
-        print_to_console("Error recompressing data!");
-        std::cout << "retval = " << precomp_mgr.ctx->retval << std::endl;
-        exit(0);
+        std::cout << "BZIP2 retval = " << precomp_mgr.ctx->retval << std::endl;
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
 
       if (penalty_bytes_stored) {
@@ -3027,8 +3038,7 @@ while (precomp_mgr.ctx->fin->good()) {
 
       if (!recompress_success) {
         if (DEBUG_MODE) print_to_console("packMP3 error: %s\n", recompress_msg);
-        print_to_console("Error recompressing data!");
-        exit(1);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
 
       if (in_memory) {
@@ -3061,8 +3071,7 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "brute mode", hdr_length, recursion_data_length);
 
       if (!ok) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }
@@ -3078,14 +3087,12 @@ while (precomp_mgr.ctx->fin->good()) {
       debug_deflate_reconstruct(rdres, "raw zLib", hdr_length, recursion_data_length);
 
       if (!ok) {
-        print_to_console("Error recompressing data!");
-        exit(0);
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
       }
       break;
     }
     default:
-      print_to_console("ERROR: Unsupported stream type %i\n", headertype);
-      exit(0);
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Unsupported stream type %i\n", headertype));
     }
 
   }
@@ -3098,9 +3105,15 @@ while (precomp_mgr.ctx->fin->good()) {
 }
 
   denit_decompress(precomp_mgr, tempfile);
+  return RETURN_SUCCESS;
 }
 
-void convert_file(Precomp& precomp_mgr) {
+int decompress_file(Precomp& precomp_mgr)
+{
+  return wrap_with_exception_catch([&]() { return decompress_file_impl(precomp_mgr); });
+}
+
+int convert_file_impl(Precomp& precomp_mgr) {
   int bytes_read;
   unsigned char convbuf[COPY_BUF_SIZE];
   int conv_bytes = -1;
@@ -3147,6 +3160,12 @@ void convert_file(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
 
   denit_convert(precomp_mgr);
+  return RETURN_SUCCESS;
+}
+
+int convert_file(Precomp& precomp_mgr)
+{
+  return wrap_with_exception_catch([&]() { return convert_file_impl(precomp_mgr); });
 }
 
 long long try_to_decompress_bzip2(Precomp& precomp_mgr, std::istream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
@@ -3243,16 +3262,17 @@ void read_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
   } else {
-    print_to_console("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str());
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str()));
   }
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
   } else {
-    print_to_console("Input file %s was made with a different Precomp version\n", precomp_mgr.ctx->input_file_name.c_str());
-    print_to_console("PCF version info: %i.%i.%i\n", precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]);
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string(
+      "Input file %s was made with a different Precomp version\n"
+      "PCF version info: %i.%i.%i\n",
+      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
+    ));
   }
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
@@ -3276,25 +3296,25 @@ void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
   } else {
-    print_to_console("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str());
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str()));
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
   } else {
-    print_to_console("Input file %s was made with a different Precomp version\n", precomp_mgr.ctx->input_file_name.c_str());
-    print_to_console("PCF version info: %i.%i.%i\n", precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]);
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string(
+      "Input file %s was made with a different Precomp version\n"
+      "PCF version info: %i.%i.%i\n",
+      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
+    ));
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
   precomp_mgr.conversion_from_method = precomp_mgr.in[0];
   if (precomp_mgr.conversion_from_method == precomp_mgr.conversion_to_method) {
-    print_to_console("Input file doesn't need to be converted\n");
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("Input file doesn't need to be converted\n"));
   }
   precomp_mgr.in[0] = precomp_mgr.conversion_to_method;
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 1);
@@ -4136,9 +4156,8 @@ void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::st
 
   if (recompress_success_needed) {
     if (!recompress_success) {
-      print_to_console("Error recompressing data!");
       GifDiffFree(&gDiff);
-      exit(0);
+      throw PrecompError(ERR_DURING_RECOMPRESSION);
     }
   }
 
@@ -5100,7 +5119,7 @@ void try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, Pr
       std::ifstream ftempout;
       ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
       if (!ftempout.is_open()) {
-        error(ERR_TEMP_FILE_DISAPPEARED, tmpfile.file_path);
+        throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
       }
 
       std::string frecomp_filename = tmpfile.file_path + "_rec";
@@ -5198,9 +5217,7 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
     fptr.open(filename,mode);
   }
   if (!fptr.is_open()) {
-    print_to_console("ERROR: Access denied for %s\n", filename);
-
-    exit(1);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Access denied for %s\n", filename));
   }
   if (DEBUG_MODE) {
     print_to_console("Access problem for %s\n", filename);
@@ -5292,9 +5309,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
   fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!fin->is_open()) {
-    print_to_console("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
-
-    exit(0);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
   }
   precomp_mgr.ctx->fin = std::move(fin);
 
@@ -5327,7 +5342,9 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   if (DEBUG_MODE) {
     print_to_console("Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
   }
-  tmp_r.success = compress_file(precomp_mgr, recursion_min_percent, recursion_max_percent);
+  const auto ret_code = compress_file(precomp_mgr, recursion_min_percent, recursion_max_percent);
+  if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
+  tmp_r.success = ret_code == RETURN_SUCCESS;
 
   delete precomp_mgr.ctx->intense_ignore_offsets;
   delete precomp_mgr.ctx->brute_ignore_offsets;
@@ -5386,9 +5403,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
   fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!fin->is_open()) {
-    print_to_console("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str());
-
-    exit(0);
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
   }
   precomp_mgr.ctx->fin = std::move(fin);
 
@@ -5407,7 +5422,8 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   if (DEBUG_MODE) {
     print_to_console("Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
   }
-  decompress_file(precomp_mgr);
+  const auto ret_code = decompress_file(precomp_mgr);
+  if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
 
   // TODO CHECK: Delete ctx?
 
