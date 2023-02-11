@@ -102,8 +102,7 @@ int lzma_max_memory_default();
 class Bz2IStreamBuffer : public std::streambuf
 {
 public:
-  std::istream* wrapped_istream;
-  bool owns_wrapped_istream = false;
+  std::unique_ptr<std::istream> wrapped_istream;
   std::unique_ptr<bz_stream> otf_bz2_stream_d;
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
@@ -112,9 +111,7 @@ public:
     init();
   }
 
-  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
-    this->wrapped_istream = wrapped_istream.release();
-    owns_wrapped_istream = true;
+  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream): wrapped_istream(std::move(wrapped_istream)){
     init();
   }
 
@@ -143,7 +140,6 @@ public:
 
   ~Bz2IStreamBuffer() override {
     (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
-    if (owns_wrapped_istream) delete wrapped_istream;
   }
 
   int underflow() override {
@@ -186,19 +182,12 @@ public:
 class XzIStreamBuffer: public std::streambuf
 {
 public:
-  std::istream* wrapped_istream;
-  bool owns_wrapped_istream = false;
+  std::unique_ptr<std::istream> wrapped_istream;
   std::unique_ptr<lzma_stream> otf_xz_stream_d;
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
 
-  XzIStreamBuffer(std::istream& wrapped_istream): wrapped_istream(&wrapped_istream) {
-    init();
-  }
-
-  XzIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream) {
-    this->wrapped_istream = wrapped_istream.release();
-    owns_wrapped_istream = true;
+  XzIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream): wrapped_istream(std::move(wrapped_istream)) {
     init();
   }
 
@@ -222,7 +211,6 @@ public:
 
   ~XzIStreamBuffer() override {
     lzma_end(otf_xz_stream_d.get());
-    if (owns_wrapped_istream) delete wrapped_istream;
   }
 
   int underflow() override {
