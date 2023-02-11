@@ -158,7 +158,7 @@ public:
   std::set<long long>* brute_ignore_offsets = new std::set<long long>();
   int compression_otf_method = OTF_XZ_MT;
   bool is_show_lzma_progress() { return compression_otf_method == OTF_XZ_MT; }
-  unsigned char* decomp_io_buf = NULL;
+  std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
   std::unique_ptr<std::istream> fin = std::unique_ptr<std::istream>(new std::ifstream());
   std::unique_ptr<std::ostream> fout = std::unique_ptr<std::ostream>(new std::ofstream());
@@ -249,8 +249,6 @@ long long def_compare(std::istream& compfile, int level, int windowbits, int mem
 int def_part(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
 int def_part_skip(std::istream& source, std::ostream& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
 void zerr(int ret);
-void denit_compress(Precomp& precomp_mgr, std::string tmp_filename);
-void denit_decompress(Precomp& precomp_mgr, std::string tmp_filename);
 bool intense_mode_is_active(Precomp& precomp_mgr);
 bool brute_mode_is_active(Precomp& precomp_mgr);
 int inf_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
@@ -298,7 +296,6 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
 long long fileSize64(const char* filename);
 void print64(long long i64);
 std::string temp_files_tag();
-void printf_time(long long t);
 void print_debug_percent(RecursionContext& context);
 
 class zLibMTF {

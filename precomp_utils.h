@@ -69,6 +69,6 @@ long long get_time_ms();
 
 void print_work_sign(bool with_backspace);
 
-extern int old_lzma_progress_text_length;
-void show_progress(float percent, bool use_backspaces, bool check_time, std::optional<int> lzma_mib_total = std::nullopt, std::optional<int> lzma_mib_written = std::nullopt);
+void delete_current_progress_text();
+void show_progress(float percent, bool use_backspaces, bool check_time, std::optional<int> lzma_mib_total_in = std::nullopt, std::optional<int> lzma_mib_total_processed = std::nullopt);
 #endif // PRECOMP_UTILS_H

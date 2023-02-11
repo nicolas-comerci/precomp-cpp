@@ -257,95 +257,6 @@ LIBPRECOMP bool file_precompressable(char* in, char* msg) {
   return false;
 }
 
-void denit_compress(Precomp& precomp_mgr, std::string tmp_filename) {
-  precomp_mgr.ctx->fout = nullptr;
-  if ((precomp_mgr.recursion_depth == 0) && (!DEBUG_MODE) && precomp_mgr.ctx->is_show_lzma_progress() && (old_lzma_progress_text_length > -1)) {
-    print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
-  }
-
-   if (precomp_mgr.recursion_depth == 0) {
-     long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
-     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
-     if (!DEBUG_MODE) {
-       print_to_console("%s", std::string(14, '\b').c_str());
-       print_to_console("100.00% - " + result_print);
-     }
-     else {
-       print_to_console(result_print);
-     }
-
-    print_to_console("\nDone.\n");
-    printf_time(get_time_ms() - precomp_mgr.start_time);
-
-    // statistics
-    print_to_console("\nRecompressed streams: %i/%i\n", precomp_mgr.statistics.recompressed_streams_count, precomp_mgr.statistics.decompressed_streams_count);
-
-    if ((precomp_mgr.statistics.recompressed_streams_count > 0) || (precomp_mgr.statistics.decompressed_streams_count > 0)) {
-      std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{{
-        {precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count, precomp_mgr.statistics.recompressed_pdf_count, "PDF"},
-        {precomp_mgr.switches.pdf_bmp_mode && precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_8_bit, precomp_mgr.statistics.recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
-        {precomp_mgr.switches.pdf_bmp_mode && precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_24_bit, precomp_mgr.statistics.recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
-        {precomp_mgr.switches.use_zip, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count, "ZIP"},
-        {precomp_mgr.switches.use_gzip, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count, "GZip"},
-        {precomp_mgr.switches.use_png, precomp_mgr.statistics.decompressed_png_count, precomp_mgr.statistics.recompressed_png_count, "PNG"},
-        {precomp_mgr.switches.use_png, precomp_mgr.statistics.decompressed_png_multi_count, precomp_mgr.statistics.recompressed_png_multi_count, "PNG (multi)"},
-        {precomp_mgr.switches.use_gif, precomp_mgr.statistics.decompressed_gif_count, precomp_mgr.statistics.recompressed_gif_count, "GIF"},
-        {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_count, precomp_mgr.statistics.recompressed_jpg_count, "JPG"},
-        {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_prog_count, precomp_mgr.statistics.recompressed_jpg_prog_count, "JPG (progressive)"},
-        {precomp_mgr.switches.use_mp3, precomp_mgr.statistics.decompressed_mp3_count, precomp_mgr.statistics.recompressed_mp3_count, "MP3"},
-        {precomp_mgr.switches.use_swf, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count, "SWF"},
-        {precomp_mgr.switches.use_base64, precomp_mgr.statistics.decompressed_base64_count, precomp_mgr.statistics.recompressed_base64_count, "Base64"},
-        {precomp_mgr.switches.use_bzip2, precomp_mgr.statistics.decompressed_bzip2_count, precomp_mgr.statistics.recompressed_bzip2_count, "bZip2"},
-        {precomp_mgr.switches.intense_mode, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count, "zLib (intense mode)"},
-        {precomp_mgr.switches.brute_mode, precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count, "Brute mode"},
-      }};
-      for (auto format_stats : format_statistics) {
-        bool condition = std::get<0>(format_stats);
-        unsigned int decompressed_count = std::get<1>(format_stats);
-        unsigned int recompressed_count = std::get<2>(format_stats);
-        std::string format_tag = std::get<3>(format_stats);
-        if (condition && ((recompressed_count > 0) || (decompressed_count > 0)))
-          print_to_console(format_tag + " streams: " + std::to_string(recompressed_count) + "/" + std::to_string(decompressed_count) + "\n");
-      }
-    }
-
-    if (!precomp_mgr.switches.level_switch_used) show_used_levels(precomp_mgr);
-
-   }
-
-  if (precomp_mgr.ctx->decomp_io_buf != NULL) delete[] precomp_mgr.ctx->decomp_io_buf;
-  precomp_mgr.ctx->decomp_io_buf = NULL;
-}
-
-void denit_decompress(Precomp& precomp_mgr, std::string tmp_filename) {
-   if (precomp_mgr.recursion_depth == 0) {
-    if (!DEBUG_MODE) {
-    print_to_console("%s", std::string(14,'\b').c_str());
-    print_to_console("100.00%%\n");
-    }
-    print_to_console("\nDone.\n");
-    printf_time(get_time_ms() - precomp_mgr.start_time);
-   }
-}
-
-void denit_convert(Precomp& precomp_mgr) {
-  if ((!DEBUG_MODE) && precomp_mgr.ctx->is_show_lzma_progress() && (precomp_mgr.conversion_to_method == OTF_XZ_MT) && (old_lzma_progress_text_length > -1)) {
-    print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
-  }
-
-  long long fout_length = fileSize64(precomp_mgr.ctx->output_file_name.c_str());
-  std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
-  if (!DEBUG_MODE) {
-    print_to_console("%s", std::string(14, '\b').c_str());
-    print_to_console("100.00% - " + result_print);
-  }
-  else {
-    print_to_console(result_print);
-  }
-  print_to_console("\nDone.\n");
-  printf_time(get_time_ms() - precomp_mgr.start_time);
-}
-
 // Brute mode detects a bit less than intense mode to avoid false positives
 // and slowdowns, so both can be active. Also, both of them can have a level
 // limit, so two helper functions make things easier to handle.
@@ -771,7 +682,8 @@ void write_decompressed_data(Precomp& precomp_mgr, std::ostream& ostream, long l
 
 void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name) {
     if (in_memory) {
-      memiostream memstream = memiostream::make(precomp_mgr.ctx->decomp_io_buf, precomp_mgr.ctx->decomp_io_buf + byte_count);
+      auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
+      memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + byte_count);
       fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, byte_count);
     } else {
       write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, byte_count, decompressed_file_name);
@@ -972,13 +884,14 @@ public:
   virtual size_t write(const unsigned char* buffer, const size_t size) {
     print_work_sign(true);
     if (_in_memory) {
+      auto decomp_io_buf_ptr = precomp_mgr->ctx->decomp_io_buf.data();
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
-        memiostream memstream = memiostream::make(precomp_mgr->ctx->decomp_io_buf, precomp_mgr->ctx->decomp_io_buf + _written);
+        memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
         fast_copy(*precomp_mgr, memstream, *ftempout, _written);
       }
       else {
-        memcpy(precomp_mgr->ctx->decomp_io_buf + _written, buffer, size);
+        memcpy(decomp_io_buf_ptr + _written, buffer, size);
         _written += size;
         return size;
       }
@@ -1023,7 +936,8 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, std::i
       is2.read(orgdata.data(), orgdata.size());
 
       MemStream reencoded_deflate;
-      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(precomp_mgr.ctx->decomp_io_buf, precomp_mgr.ctx->decomp_io_buf + result.uncompressed_stream_size) : std::vector<uint8_t>());
+      auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
+      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(decomp_io_buf_ptr, decomp_io_buf_ptr + result.uncompressed_stream_size) : std::vector<uint8_t>());
       OwnIStream uncompressed_file(result.uncompressed_in_memory ? NULL : &tmpfile);
       if (!preflate_reencode(reencoded_deflate, result.recon_data, 
                              result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file, 
@@ -1316,7 +1230,7 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
 
         std::ifstream ftempout2;
         ftempout2.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-        unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf;
+        unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
         for (int y = 0; y < img_height; y++) {
 
           if (rdres.uncompressed_in_memory) {
@@ -1526,8 +1440,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     precomp_mgr.switches.compression_otf_max_memory,
     precomp_mgr.switches.compression_otf_thread_count
   );
-
-  precomp_mgr.ctx->decomp_io_buf = new unsigned char[MAX_IO_BUFFER_SIZE];
 
   precomp_mgr.ctx->global_min_percent = min_percent;
   precomp_mgr.ctx->global_max_percent = max_percent;
@@ -2448,7 +2360,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
   end_uncompressed_data(precomp_mgr);
 
-  denit_compress(precomp_mgr, tempfile);
+  precomp_mgr.ctx->fout = nullptr; // To close the outfile TODO: maybe we should just make sure the whole last context gets destroid if at recursion_depth == 0?
 
   return (precomp_mgr.ctx->anything_was_used || precomp_mgr.ctx->non_zlib_was_used) ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
 }
@@ -3104,7 +3016,6 @@ while (precomp_mgr.ctx->fin->good()) {
   }
 }
 
-  denit_decompress(precomp_mgr, tempfile);
   return RETURN_SUCCESS;
 }
 
@@ -3159,7 +3070,6 @@ int convert_file_impl(Precomp& precomp_mgr) {
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
 
-  denit_convert(precomp_mgr);
   return RETURN_SUCCESS;
 }
 
@@ -5272,7 +5182,8 @@ void write_ftempout_if_not_present(Precomp& precomp_mgr, long long byte_count, b
   if (in_memory) {
     std::ofstream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-    memiostream memstream = memiostream::make(precomp_mgr.ctx->decomp_io_buf, precomp_mgr.ctx->decomp_io_buf + byte_count);
+    auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
+    memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + byte_count);
     fast_copy(precomp_mgr, memstream, ftempout, byte_count);
     ftempout.close();
   }
@@ -5598,23 +5509,6 @@ long long fin_fget_vlint(std::istream& input) {
     o = (o + 1) << 7;
   }
   return v + o + (((long long)c) << s);
-}
-
-// nice time output, input t in ms
-// 2^32 ms maximum, so will display incorrect negative values after about 49 days
-void printf_time(long long t) {
-  print_to_console("Time: ");
-  if (t < 1000) { // several milliseconds
-    print_to_console("%li millisecond(s)\n", (long)t);
-  } else if (t < 1000*60) { // several seconds
-    print_to_console("%li second(s), %li millisecond(s)\n", (long)(t / 1000), (long)(t % 1000));
-  } else if (t < 1000*60*60) { // several minutes
-    print_to_console("%li minute(s), %li second(s)\n", (long)(t / (1000*60)), (long)((t / 1000) % 60));
-  } else if (t < 1000*60*60*24) { // several hours
-    print_to_console("%li hour(s), %li minute(s), %li second(s)\n", (long)(t / (1000*60*60)), (long)((t / (1000*60)) % 60), (long)((t / 1000) % 60));
-  } else {
-    print_to_console("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000*60*60*24)), (long)((t / (1000*60*60)) % 24), (long)((t / (1000*60)) % 60));
-  }
 }
 
 void print_debug_percent(RecursionContext& context) {

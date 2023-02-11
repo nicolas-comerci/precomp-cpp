@@ -113,49 +113,60 @@ long long get_time_ms() {
 long long work_sign_start_time = get_time_ms();
 int work_sign_var = 0;
 static char work_signs[5] = "|/-\\";
+std::string next_work_sign() {
+  work_sign_var = (work_sign_var + 1) % 4;
+  work_sign_start_time = get_time_ms();
+  return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
+}
+
 void print_work_sign(bool with_backspace) {
   if (DEBUG_MODE) return;
   if ((get_time_ms() - work_sign_start_time) >= 250) {
-    work_sign_var = (work_sign_var + 1) % 4;
-    work_sign_start_time = get_time_ms();
+    const auto new_work_sign = next_work_sign();
     if (with_backspace) print_to_console("\b\b\b\b\b\b");
-    print_to_console("%c     ", work_signs[work_sign_var]);
+    print_to_console("%c     ", new_work_sign.c_str());
   }
   else if (!with_backspace) {
     print_to_console("%c     ", work_signs[work_sign_var]);
   }
 }
 
-int old_lzma_progress_text_length = -1;
 long long sec_time;
-void show_progress(float percent, bool use_backspaces, bool check_time, std::optional<int> lzma_mib_total, std::optional<int> lzma_mib_written) {
-  if (check_time && ((get_time_ms() - sec_time) < 250)) return;
-  char lzma_progress_text[70];
-  if (use_backspaces) {
-    print_to_console("%s", std::string(6, '\b').c_str()); // backspace to remove work sign and 5 extra spaces
+std::string current_percent_progress_txt;
+std::string current_lzma_progress_txt;
+void delete_current_progress_text() {
+  const auto old_text_length = current_lzma_progress_txt.length() + current_percent_progress_txt.length() + 6;  // we know the work sign is always 6 chars
+  print_to_console(std::string(old_text_length, '\b'));
+}
+
+void show_progress(float percent, bool clean_prior_progress, bool check_time, std::optional<int> lzma_mib_total_in, std::optional<int> lzma_mib_total_processed) {
+  if (check_time && ((get_time_ms() - sec_time) < 250)) return;  // not enough time passed since last progress update, quit to not spam
+
+  std::string new_percent_progress_txt = make_cstyle_format_string("%6.2f%% ", percent);
+
+  std::string new_lzma_progress_txt = current_lzma_progress_txt;
+  if (lzma_mib_total_in.has_value() && lzma_mib_total_processed.has_value()) {
+    new_lzma_progress_txt = make_cstyle_format_string(
+      "lzma total/written/left: %i/%i/%i MiB ",
+      lzma_mib_total_in.value(), lzma_mib_total_processed.value(), lzma_mib_total_in.value() - lzma_mib_total_processed.value()
+    );
   }
 
-  bool new_lzma_text = false;
-  if (lzma_mib_total.has_value() && lzma_mib_written.has_value()) {
-    int snprintf_ret = snprintf(lzma_progress_text, 70, "lzma total/written/left: %i/%i/%i MiB ", lzma_mib_total.value(), lzma_mib_written.value(), lzma_mib_total.value() - lzma_mib_written.value());
-    if ((snprintf_ret > -1) && (snprintf_ret < 70)) {
-      new_lzma_text = true;
-      if ((old_lzma_progress_text_length > -1) && (use_backspaces)) {
-        print_to_console("%s", std::string(old_lzma_progress_text_length, '\b').c_str()); // backspaces to remove old lzma progress text
-      }
-      old_lzma_progress_text_length = snprintf_ret;
-    }
+  std::string new_work_sign = next_work_sign();
+
+  if (clean_prior_progress) {
+    delete_current_progress_text();
+  }
+  else {
+    print_to_console("\n");  // print on next line so progress is legible on a separate line than the prior one
   }
 
-  if (use_backspaces) {
-    print_to_console("%s", std::string(8, '\b').c_str()); // backspaces to remove output from %6.2f%
-  }
-  print_to_console("%6.2f%% ", percent);
+  current_percent_progress_txt = new_percent_progress_txt;
+  // Doing it this way prevents LZMA progress from being deleted if we are called without the LZMA optionals but we are in the middle of LZMA compression
+  current_lzma_progress_txt = new_lzma_progress_txt.empty() ? current_lzma_progress_txt : new_lzma_progress_txt;
+  print_to_console(current_percent_progress_txt);
+  print_to_console(current_lzma_progress_txt.c_str());
+  print_to_console(new_work_sign.c_str());
 
-  if (new_lzma_text) {
-    print_to_console("%s", lzma_progress_text);
-  }
-
-  print_work_sign(false);
   sec_time = get_time_ms();
 }
