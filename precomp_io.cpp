@@ -1,6 +1,8 @@
 #include "precomp_io.h"
 
-void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir origin) {
+#include <filesystem>
+
+void force_seekg(WrappedIStream& stream, long long offset, std::ios_base::seekdir origin) {
   if (stream.bad()) {
     throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
   }
@@ -8,12 +10,30 @@ void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir 
   stream.seekg(offset, origin);
 }
 
-int ostream_printf(std::ostream& out, std::string str) {
+int ostream_printf(WrappedOStream& out, std::string str) {
   for (char character : str) {
     out.put(character);
     if (out.bad()) return 0;
   }
   return str.length();
+}
+
+int ostream_printf(std::ostream& out, std::string str) {
+  WrappedOStream wrapped_out = WrappedOStream(&out, false);
+  return ostream_printf(wrapped_out, str);
+}
+
+long long WrappedFStream::filesize() {
+  if (wrapped_iostream->is_open()) wrapped_iostream->close();
+  long long size = std::filesystem::file_size(file_path.c_str());
+  reopen();
+  return size;
+}
+
+void WrappedFStream::resize(long long size) {
+  if (wrapped_iostream->is_open()) wrapped_iostream->close();
+  std::filesystem::resize_file(file_path, size);
+  reopen();
 }
 
 template <typename T>
@@ -59,16 +79,16 @@ void XzOStreamBuffer::lzma_progress_update() {
   show_progress(percent, true, true, lzma_mib_total, lzma_mib_written);
 }
 
-std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method) {
+WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method) {
   switch (otf_compression_method) {
-    case OTF_NONE: {
-      return std::move(istream);
+  case OTF_NONE: {
+    return { istream.release(), true };
     }
     case OTF_BZIP2: {
-      return Bz2IStreamBuffer::from_istream(std::move(istream));
+      return { Bz2IStreamBuffer::from_istream(std::move(istream)).release(), true };
     }
     case OTF_XZ_MT: {
-      return XzIStreamBuffer::from_istream(std::move(istream));
+      return { XzIStreamBuffer::from_istream(std::move(istream)).release(), true };
     }
   }
   throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));
@@ -95,7 +115,7 @@ std::unique_ptr<std::ostream> Bz2OStreamBuffer::from_ostream(std::unique_ptr<std
   return std::unique_ptr<std::ostream>(new_fout);
 }
 
-std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
+WrappedOStream wrap_ostream_otf_compression(
   std::unique_ptr<std::ostream>&& ostream,
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
@@ -104,13 +124,13 @@ std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
 ) {
   switch (otf_compression_method) {
   case OTF_NONE: {
-    return std::move(ostream);
+    return { ostream.release(), true };
   }
   case OTF_BZIP2: {
-    return Bz2OStreamBuffer::from_ostream(std::move(ostream));
+    return { Bz2OStreamBuffer::from_ostream(std::move(ostream)).release(), true };
   }
   case OTF_XZ_MT: {
-    return XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count);
+    return { XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count).release(), true };
   }
   }
   throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));

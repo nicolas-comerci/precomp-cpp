@@ -861,12 +861,12 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       else {
         precomp_mgr.ctx->fin_length = std::filesystem::file_size(argv[i]);
 
-        auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
+        auto fin = new std::ifstream();
         fin->open(argv[i], std::ios_base::in | std::ios_base::binary);
         if (!fin->is_open()) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
         }
-        precomp_mgr.ctx->fin = std::move(fin);
+        precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
       }
 
       // output file given? If not, use input filename with .pcf extension
@@ -1007,12 +1007,12 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       }
     }
 
-    auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
+    auto fout = new std::ofstream();
     fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!fout->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
     }
-    precomp_mgr.ctx->fout = std::move(fout);
+    precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
   }
 
   print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
@@ -1110,12 +1110,12 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
     precomp_mgr.ctx->fin_length = std::filesystem::file_size(precomp_mgr.ctx->input_file_name.c_str());
 
-    auto fin = std::unique_ptr<std::ifstream>(new std::ifstream());
+    auto fin = new std::ifstream();
     fin->open(precomp_mgr.ctx->input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
     if (!fin->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
     }
-    precomp_mgr.ctx->fin = std::move(fin);
+    precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
 
     if (check_for_pcf_file(precomp_mgr)) {
       operation = P_DECOMPRESS;
@@ -2033,12 +2033,12 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
     print_to_console("\n");
   }
 
-  auto fout = std::unique_ptr<std::ofstream>(new std::ofstream());
+  auto fout = new std::ofstream();
   fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
     throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
   }
-  precomp_mgr.ctx->fout = std::move(fout);
+  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
 
   print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", precomp_mgr.ctx->output_file_name.c_str());

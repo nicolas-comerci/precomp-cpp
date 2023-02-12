@@ -15,38 +15,176 @@
 #define PATH_DELIM '/'
 #endif
 
+/*
+ This template and classes derived from it are so we can more easily customize behavior compared to regular istreams/ostreams, because most of their methods are not virtual,
+ and dealing with streambufers is a nuisance.
+ In this class hierarchy all delegations to the wrapped streams should be virtual, so we can much more easily just override those and be assured that whatever extra logic we
+ add is always executed and is not skipped if the ptr/ref is downcasted.
+ TODO: Refactor compressed streambufs to instead be derived from here
+ TODO: Finish the derived Observables
+ */
+template <typename T>
+class WrappedStream {
+protected:
+  T* wrapped_stream;
+  bool owns_wrapped_stream;
+
+  // Protected constructor to make the class "abstract" (done this way because there is no method we can make pure virtual as destructor needs to handle ptr ownership)
+  WrappedStream(T* stream, bool owns_wrapped_stream) {
+    wrapped_stream = stream;
+    this->owns_wrapped_stream = owns_wrapped_stream;
+  }
+
+public:
+  virtual ~WrappedStream() {
+    if (!owns_wrapped_stream) return;
+    delete wrapped_stream;
+  }
+
+  // No copies allowed, would cause problems with the pointer ownership
+  WrappedStream(WrappedStream& o) = delete;
+  WrappedStream& operator=(WrappedStream const&) = delete;
+
+  // Careful! I am not writting safeguards for this, if you attempt to use this after release you will get a nullptr dereference and you get to keep the pieces!
+  T* release() {
+    owns_wrapped_stream = false;
+    auto ptr_copy = wrapped_stream;
+    wrapped_stream = nullptr;
+    return ptr_copy;
+  }
+
+  virtual std::streambuf* rdbuf(std::streambuf* sbuff) { return wrapped_stream->rdbuf(sbuff); }
+
+  virtual bool eof() { return wrapped_stream->eof(); }
+  virtual bool good() { return wrapped_stream->good(); }
+  virtual bool bad() { return wrapped_stream->bad(); }
+  virtual void clear() { wrapped_stream->clear(); }
+};
+
+class WrappedOStream : public WrappedStream<std::ostream> {
+public:
+  WrappedOStream(std::ostream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
+
+  ~WrappedOStream() override {}
+
+  virtual WrappedOStream& write(const char* buf, std::streamsize count) {
+    wrapped_stream->write(buf, count);
+    return *this;
+  }
+
+  virtual WrappedOStream& put(char chr) {
+    wrapped_stream->put(chr);
+    return *this;
+  }
+
+  virtual void flush() { wrapped_stream->flush(); }
+
+  virtual std::istream::pos_type tellp() { return wrapped_stream->tellp(); }
+
+  virtual WrappedOStream& seekp(std::istream::off_type offset, std::ios_base::seekdir dir) {
+    wrapped_stream->seekp(offset, dir);
+    return *this;
+  }
+};
+
+class WrappedIStream : public WrappedStream<std::istream> {
+public:
+  WrappedIStream(std::istream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
+
+  virtual WrappedIStream& read(char* buff, std::streamsize count) {
+    wrapped_stream->read(buff, count);
+    return *this;
+  }
+
+  virtual std::istream::int_type get() { return wrapped_stream->get(); }
+
+  virtual std::streamsize gcount() { return wrapped_stream->gcount(); }
+
+  virtual WrappedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+    wrapped_stream->seekg(offset, dir);
+    return *this;
+  }
+
+  virtual std::istream::pos_type tellg() { return wrapped_stream->tellg(); }
+};
+
+// With this we can get notified whenever we write to the ostream, useful for registering callbacks to update progress without littering our code with calls for it
+class ObservableOStream: public WrappedOStream {
+public:
+  ObservableOStream(std::ostream* stream, bool take_ownership): WrappedOStream(stream, take_ownership) { }
+};
+
+class ObservableIStream : public WrappedIStream {
+public:
+  ObservableIStream(std::istream* stream, bool take_ownership): WrappedIStream(stream, take_ownership) { }
+};
+
 // istreams don't allow seeking once eof/failbit is set, which happens if we read a file to the end.
 // This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
-void force_seekg(std::istream& stream, long long offset, std::ios_base::seekdir origin);
+void force_seekg(WrappedIStream& stream, long long offset, std::ios_base::seekdir origin);
 
+int ostream_printf(WrappedOStream& out, std::string str);
 int ostream_printf(std::ostream& out, std::string str);
 
-class PrecompTmpFile : public std::fstream {
+template <typename T>
+class WrappedIOStream: public WrappedOStream, public WrappedIStream {
+protected:
+  std::unique_ptr<T> wrapped_iostream;
+
+public:
+  WrappedIOStream(T* stream):
+    WrappedOStream(stream, false), WrappedIStream(stream, false), wrapped_iostream(stream) { }
+
+  WrappedIOStream(): WrappedIOStream(new T()) { }
+
+  WrappedIOStream(std::streambuf* sbuff): WrappedIOStream(new T(sbuff)) { }
+
+  ~WrappedIOStream() override = default;
+
+  //virtual typename T::pos_type tellg() { return wrapped_iostream->tellg(); }
+};
+
+class WrappedFStream: public WrappedIOStream<std::fstream> {
 public:
   std::string file_path;
   std::ios_base::openmode mode;
 
-  ~PrecompTmpFile() {
-    close();
-    std::remove(file_path.c_str());
-  }
+  WrappedFStream(): WrappedIOStream() { }
 
-  void open(std::string file_path, std::ios_base::openmode mode) {
+  WrappedFStream(std::fstream* stream): WrappedIOStream(stream) {}
+
+  ~WrappedFStream() override = default;
+
+  virtual void open(std::string file_path, std::ios_base::openmode mode) {
     this->file_path = file_path;
     this->mode = mode;
-    std::fstream::open(file_path, mode);
+    wrapped_iostream->open(file_path, mode);
   }
 
+  virtual bool is_open() { return wrapped_iostream->is_open(); }
+
+  virtual void close() { wrapped_iostream->close(); }
+
+  // Some extra members that are not wrapped from the fstream
   void reopen() {
-    if (is_open()) close();
+    if (wrapped_iostream->is_open()) wrapped_iostream->close();
     open(file_path, mode);
   }
-
   long long filesize();
   void resize(long long size);
 };
 
-class memiostream: public std::iostream
+class PrecompTmpFile: public WrappedFStream {
+public:
+  PrecompTmpFile() : WrappedFStream() {}
+
+  ~PrecompTmpFile() override {
+    WrappedFStream::close();
+    std::remove(file_path.c_str());
+  }
+};
+
+class memiostream: public WrappedIOStream<std::iostream>
 {
   class membuf : public std::streambuf
   {
@@ -81,8 +219,8 @@ class memiostream: public std::iostream
     }
   };
 
-  std::unique_ptr<membuf> buf;
-  memiostream(membuf* buf): std::iostream(buf), buf(std::unique_ptr<membuf>(buf)) {}
+  std::unique_ptr<membuf> m_buf;
+  memiostream(membuf* buf): WrappedIOStream(buf), m_buf(std::unique_ptr<membuf>(buf)) {}
 
 public:
   static memiostream make(unsigned char* begin, unsigned char* end) {
@@ -272,7 +410,7 @@ public:
   }
 };
 
-std::unique_ptr<std::istream> wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
+WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
 
 class CompressedOStreamBuffer : public std::streambuf
 {
@@ -479,7 +617,7 @@ public:
   }
 };
 
-std::unique_ptr<std::ostream> wrap_ostream_otf_compression(
+WrappedOStream wrap_ostream_otf_compression(
   std::unique_ptr<std::ostream>&& ostream,
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
