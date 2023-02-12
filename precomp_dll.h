@@ -148,8 +148,13 @@ constexpr auto PENALTY_BYTES_TOLERANCE = 160;
 constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;
 constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
+class Precomp;
 class RecursionContext {
 public:
+  RecursionContext(Precomp& instance): precomp_owner(instance) {}
+
+  Precomp& precomp_owner; // The precomp instance that owns this context
+
   long long fin_length;
   std::string input_file_name;
   std::string output_file_name;
@@ -161,6 +166,7 @@ public:
   std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
   std::unique_ptr<WrappedIStream> fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
+  void set_input_stream(std::istream* istream, bool take_ownership = true);
   std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(new std::ofstream(), true));
 
   float global_min_percent = 0;
@@ -218,8 +224,14 @@ public:
   Switches switches;
   ResultStatistics statistics;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
-  std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext());
+  std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext(*this));
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
+
+  // Useful so we can easily get (for example) info on the original input/output streams at any time
+  std::unique_ptr<RecursionContext>& get_original_context();
+  void set_input_stream(std::istream* istream, bool take_ownership = true);
+  // Input stream OTF decompression method has to be set AFTER the Precomp header has been read, as the compressed stream starts just after it
+  void enable_input_stream_otf_decompression();
 
   unsigned char in[CHUNK];
   unsigned char out[CHUNK];

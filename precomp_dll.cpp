@@ -136,6 +136,25 @@ Switches::Switches() {
   }
 }
 
+void RecursionContext::set_input_stream(std::istream* istream, bool take_ownership) {
+  this->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(istream, take_ownership));
+}
+
+std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
+  if (recursion_contexts_stack.empty()) return ctx;
+  return recursion_contexts_stack[0];
+}
+
+void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
+  this->get_original_context()->set_input_stream(istream, take_ownership);
+}
+
+void Precomp::enable_input_stream_otf_decompression() {
+  const auto& orig_context = this->get_original_context();
+  if (orig_context->compression_otf_method == OTF_NONE) return;
+  set_input_stream(wrap_istream_otf_compression(std::unique_ptr<std::istream>(orig_context->fin->release()), orig_context->compression_otf_method).release());
+}
+
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP void get_copyright_msg(char* msg) {
@@ -184,7 +203,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
 
     return false;
   }
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+  precomp_mgr.set_input_stream(fin);
 
   auto fout = new std::ofstream();
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
@@ -228,7 +247,7 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
 
     return false;
   }
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+  precomp_mgr.set_input_stream(fin);
 
   auto fout = new std::ofstream();
   fout->open(out_file, std::ios_base::out | std::ios_base::binary);
@@ -2401,10 +2420,7 @@ int decompress_file_impl(Precomp& precomp_mgr) {
   long long fin_pos;
 
   precomp_mgr.ctx->comp_decomp_state = P_DECOMPRESS;
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(
-    wrap_istream_otf_compression(std::unique_ptr<std::istream>(precomp_mgr.ctx->fin->release()), precomp_mgr.ctx->compression_otf_method).release(),
-    true)
-  );
+  precomp_mgr.enable_input_stream_otf_decompression();
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile_base = tmp_tag + "_recomp_";
@@ -3038,10 +3054,7 @@ int convert_file_impl(Precomp& precomp_mgr) {
   int conv_bytes = -1;
 
   precomp_mgr.ctx->comp_decomp_state = P_CONVERT;
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(
-    wrap_istream_otf_compression(std::unique_ptr<std::istream>(precomp_mgr.ctx->fin->release()), precomp_mgr.conversion_from_method).release(),
-    true
-  ));
+  precomp_mgr.enable_input_stream_otf_decompression();
   precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(
     wrap_ostream_otf_compression(
       std::unique_ptr<std::ostream>(precomp_mgr.ctx->fout->release()),
@@ -5171,7 +5184,7 @@ std::string temp_files_tag() {
 
 void recursion_push(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
-  precomp_mgr.ctx = std::unique_ptr<RecursionContext>(new RecursionContext());
+  precomp_mgr.ctx = std::unique_ptr<RecursionContext>(new RecursionContext(precomp_mgr));
 }
 
 void recursion_pop(Precomp& precomp_mgr) {
@@ -5214,7 +5227,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   if (!fin->is_open()) {
     throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
   }
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+  precomp_mgr.ctx->set_input_stream(fin);
 
   precomp_mgr.ctx->input_file_name = tmpfile.file_path;
   precomp_mgr.ctx->output_file_name = tmpfile.file_path;
@@ -5308,7 +5321,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   if (!fin->is_open()) {
     throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
   }
-  precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+  precomp_mgr.ctx->set_input_stream(fin);
 
   precomp_mgr.ctx->input_file_name = tmpfile.file_path;
   precomp_mgr.ctx->output_file_name = tmpfile.file_path;

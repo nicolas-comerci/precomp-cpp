@@ -866,7 +866,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         if (!fin->is_open()) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
         }
-        precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+        precomp_mgr.set_input_stream(fin);
       }
 
       // output file given? If not, use input filename with .pcf extension
@@ -1115,7 +1115,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
     if (!fin->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
     }
-    precomp_mgr.ctx->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(fin, true));
+    precomp_mgr.set_input_stream(fin);
 
     if (check_for_pcf_file(precomp_mgr)) {
       operation = P_DECOMPRESS;
