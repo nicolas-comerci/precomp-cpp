@@ -66,19 +66,6 @@ int lzma_max_memory_default() {
   return max_memory;
 }
 
-void XzOStreamBuffer::lzma_progress_update() {
-  //float percent = ((g_precomp.ctx->input_file_pos + g_precomp.ctx->uncompressed_bytes_written) / ((float)g_precomp.ctx->fin_length + g_precomp.ctx->uncompressed_bytes_total)) * (g_precomp.ctx->global_max_percent - g_precomp.ctx->global_min_percent) + g_precomp.ctx->global_min_percent;
-  float percent = -1;
-
-  uint64_t progress_in = 0, progress_out = 0;
-
-  lzma_get_progress(this->otf_xz_stream_c.get(), &progress_in, &progress_out);
-
-  int lzma_mib_total = this->otf_xz_stream_c->total_in / (1024 * 1024);
-  int lzma_mib_written = progress_in / (1024 * 1024);
-  show_progress(percent, true, true, lzma_mib_total, lzma_mib_written);
-}
-
 WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method) {
   switch (otf_compression_method) {
   case OTF_NONE: {

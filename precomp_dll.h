@@ -311,7 +311,6 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
 long long fileSize64(const char* filename);
 void print64(long long i64);
 std::string temp_files_tag();
-void print_debug_percent(RecursionContext& context);
 
 class zLibMTF {
   struct MTFItem {

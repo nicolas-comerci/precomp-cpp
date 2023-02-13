@@ -8,6 +8,7 @@
 #include <memory>
 #include <fstream>
 #include <functional>
+#include <map>
 
 #ifndef __unix
 #define PATH_DELIM '\\'
@@ -111,7 +112,28 @@ public:
 // With this we can get notified whenever we write to the ostream, useful for registering callbacks to update progress without littering our code with calls for it
 class ObservableOStream: public WrappedOStream {
 public:
+  enum observable_methods {
+    write_method,
+  };
+private:
+  std::map<observable_methods, std::optional<std::function<void()>>> method_observers = { {write_method, std::nullopt}};
+
+  void notify_observer(observable_methods method) {
+    auto observer_callback = method_observers[method];
+    if (observer_callback.has_value()) observer_callback.value()();
+  }
+public:
   ObservableOStream(std::ostream* stream, bool take_ownership): WrappedOStream(stream, take_ownership) { }
+
+  void register_observer(observable_methods method, std::function<void()> callback) {
+    method_observers[method] = callback;
+  }
+
+  ObservableOStream& write(const char* buf, std::streamsize count) override {
+    WrappedOStream::write(buf, count);
+    notify_observer(write_method);
+    return *this;
+  }
 };
 
 class ObservableIStream : public WrappedIStream {
@@ -237,19 +259,31 @@ enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzm
 
 int lzma_max_memory_default();
 
-class Bz2IStreamBuffer : public std::streambuf
+class CompressedIStreamBuffer: public std::streambuf
 {
 public:
   std::unique_ptr<std::istream> wrapped_istream;
-  std::unique_ptr<bz_stream> otf_bz2_stream_d;
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
 
-  Bz2IStreamBuffer(std::istream& wrapped_istream) : wrapped_istream(&wrapped_istream) {
+  CompressedIStreamBuffer(std::istream& istream): wrapped_istream(&istream) { }
+  CompressedIStreamBuffer(std::unique_ptr<std::istream>&& istream): wrapped_istream(std::move(istream)) { }
+
+  pos_type seekoff(off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override {
+    return wrapped_istream->rdbuf()->pubseekoff(offset, dir, mode);
+  }
+};
+
+class Bz2IStreamBuffer: public CompressedIStreamBuffer
+{
+public:
+  std::unique_ptr<bz_stream> otf_bz2_stream_d;
+
+  Bz2IStreamBuffer(std::istream& istream): CompressedIStreamBuffer(istream) {
     init();
   }
 
-  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream): wrapped_istream(std::move(wrapped_istream)){
+  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& istream): CompressedIStreamBuffer(std::move(istream)){
     init();
   }
 
@@ -285,7 +319,7 @@ public:
       return *gptr();
 
     int ret;
-    print_work_sign(true);
+    show_progress();
 
     this->otf_bz2_stream_d->avail_out = CHUNK*10;
     this->otf_bz2_stream_d->next_out = otf_dec.get();
@@ -317,15 +351,12 @@ public:
   }
 };
 
-class XzIStreamBuffer: public std::streambuf
+class XzIStreamBuffer: public CompressedIStreamBuffer
 {
 public:
-  std::unique_ptr<std::istream> wrapped_istream;
   std::unique_ptr<lzma_stream> otf_xz_stream_d;
-  std::unique_ptr<char[]> otf_in;
-  std::unique_ptr<char[]> otf_dec;
 
-  XzIStreamBuffer(std::unique_ptr<std::istream>&& wrapped_istream): wrapped_istream(std::move(wrapped_istream)) {
+  XzIStreamBuffer(std::unique_ptr<std::istream>&& istream): CompressedIStreamBuffer(std::move(istream)) {
     init();
   }
 
@@ -360,7 +391,7 @@ public:
 
     bool stream_eof = false;
     do {
-      print_work_sign(true);
+      show_progress();
       if ((otf_xz_stream_d->avail_in == 0) && !wrapped_istream->eof()) {
         otf_xz_stream_d->next_in = (uint8_t*)otf_in.get();
         wrapped_istream->read(otf_in.get(), CHUNK);
@@ -426,6 +457,10 @@ public:
     otf_out = std::make_unique<char[]>(CHUNK);
   }
 
+  pos_type seekoff(off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override {
+    return wrapped_ostream->rdbuf()->pubseekoff(offset, dir, mode);
+  }
+
   virtual int sync(bool final_byte) = 0;
   int sync() override { return sync(false); }
 
@@ -487,7 +522,7 @@ public:
 
   int sync(bool final_byte) override {
     int flush, ret;
-    print_work_sign(true);
+    show_progress();
 
     flush = final_byte ? BZ_FINISH : BZ_RUN;
 
@@ -573,8 +608,6 @@ public:
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }
 
-  void lzma_progress_update();
-
   int sync(bool final_byte) override {
     lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
     lzma_ret ret;
@@ -582,7 +615,7 @@ public:
     otf_xz_stream_c->avail_in = pptr() - pbase();
     otf_xz_stream_c->next_in = (uint8_t*)otf_in.get();
     do {
-      print_work_sign(true);
+      show_progress();
       otf_xz_stream_c->avail_out = CHUNK;
       otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
       ret = lzma_code(otf_xz_stream_c.get(), action);
@@ -609,7 +642,6 @@ public:
 
         throw std::runtime_error(make_cstyle_format_string("ERROR: liblzma error: %s (error code %u)\n", msg, ret));
       }
-      if (!DEBUG_MODE) lzma_progress_update();
     } while (otf_xz_stream_c->avail_in > 0 || otf_xz_stream_c->avail_out != CHUNK || final_byte && ret != LZMA_STREAM_END);
 
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);

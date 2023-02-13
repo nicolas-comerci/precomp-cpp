@@ -154,7 +154,14 @@ void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
 }
 
 void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
-  this->get_original_context()->set_output_stream(ostream, take_ownership);
+  auto& orig_context = this->get_original_context();
+  orig_context->set_output_stream(ostream, take_ownership);
+
+  // Set write observer to update progress when writing to output file, based on how much of the input file we have read
+  orig_context->fout->register_observer(ObservableOStream::observable_methods::write_method, [&orig_context]()
+  {
+    show_progress((orig_context->fin->tellg() / static_cast<float>(orig_context->fin_length)) * 100);
+  });
 }
 
 void Precomp::enable_input_stream_otf_decompression() {
@@ -354,7 +361,7 @@ long long def_compare_bzip2(Precomp& precomp_mgr, WrappedIStream& source, Wrappe
 
   /* compress until end of file */
   do {
-    print_work_sign(true);
+    show_progress();
 
     source.read(reinterpret_cast<char*>(precomp_mgr.in), DEF_COMPARE_CHUNK);
     strm.avail_in = source.gcount();
@@ -420,7 +427,7 @@ int def_part_bzip2(Precomp& precomp_mgr, WrappedIStream& source, WrappedOStream&
   /* compress until end of file */
   do {
     if ((stream_size_in - pos_in) > CHUNK) {
-      print_work_sign(true);
+      show_progress();
 
       source.read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
       strm.avail_in = source.gcount();
@@ -540,7 +547,7 @@ bool check_inf_result(unsigned char* in_buf, unsigned char* out_buf, int cb_pos,
   if (ret != Z_OK)
     return false;
 
-  print_work_sign(true);
+  show_progress();
 
   strm.avail_in = 2048;
   strm.next_in = in_buf + cb_pos;
@@ -598,7 +605,7 @@ int inf_bzip2(Precomp& precomp_mgr, WrappedIStream& source, WrappedOStream& dest
   int avail_in_before;
   
   do {
-    print_work_sign(true);
+    show_progress();
 
     source.read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
     strm.avail_in = source.gcount();
@@ -661,7 +668,7 @@ int def_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, in
 
   /* compress until end of file */
   do {
-    print_work_sign(true);
+    show_progress();
 
     source.read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
     strm.avail_in = source.gcount();
@@ -744,7 +751,7 @@ unsigned long long compare_files(WrappedIStream& file1, WrappedIStream& file2, u
   force_seekg(file2, pos2, std::ios_base::beg);
 
   do {
-    print_work_sign(true);
+    show_progress();
 
     file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
     size1 = file1.gcount();
@@ -863,7 +870,6 @@ struct recompress_deflate_result {
 
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type) {
   if (DEBUG_MODE) {
-    print_debug_percent(context);
     std::cout << "Possible zLib-Stream " << type << " found at position " << context.saved_input_file_pos << std::endl;
     std::cout << "Compressed size: " << rdres.compressed_stream_size << std::endl;
     std::cout << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
@@ -924,7 +930,7 @@ public:
   ~UncompressedOutStream() {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
-    print_work_sign(true);
+    show_progress();
     if (_in_memory) {
       auto decomp_io_buf_ptr = precomp_mgr->ctx->decomp_io_buf.data();
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
@@ -965,7 +971,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, Wrappe
     UncompressedOutStream uos(result.uncompressed_in_memory, tmpfile, &precomp_mgr);
     uint64_t compressed_stream_size = 0;
     result.accepted = preflate_decode(uos, result.recon_data,
-                                      compressed_stream_size, is, []() { print_work_sign(true); },
+                                      compressed_stream_size, is, []() { show_progress(); },
                                       0,
                                       precomp_mgr.switches.preflate_meta_block_size); // you can set a minimum deflate stream size here
     result.compressed_stream_size = compressed_stream_size;
@@ -1021,7 +1027,7 @@ private:
 bool try_reconstructing_deflate(WrappedIStream& fin, WrappedOStream& fout, const recompress_deflate_result& rdres) {
   OwnOStream os(&fout);
   OwnIStream is(&fin);
-  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, []() { print_work_sign(true); });
+  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, []() { show_progress(); });
   return result;
 }
 bool try_reconstructing_deflate_skip(WrappedIStream& fin, WrappedOStream& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
@@ -1034,7 +1040,7 @@ bool try_reconstructing_deflate_skip(WrappedIStream& fin, WrappedOStream& fout, 
     return false;
   }
   OwnOStream os(&fout);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { print_work_sign(true); });
+  return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { show_progress(); });
 }
 class OwnOStreamMultiPNG : public OutputStream {
 public:
@@ -1090,7 +1096,7 @@ bool try_reconstructing_deflate_multipng(WrappedIStream& fin, WrappedOStream& fo
     return false;
   }
   OwnOStreamMultiPNG os(&fout, idat_count, idat_crcs, idat_lengths);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { print_work_sign(true); });
+  return preflate_reencode(os, rdres.recon_data, unpacked_output, []() { show_progress(); });
 }
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
@@ -1484,8 +1490,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
   precomp_mgr.ctx->uncompressed_bytes_written = 0;
 
-  if (!DEBUG_MODE) show_progress(min_percent, (precomp_mgr.recursion_depth > 0), false);
-
   force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
@@ -1508,11 +1512,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
     in_buf_pos = precomp_mgr.ctx->input_file_pos;
     precomp_mgr.ctx->cb = 0;
-
-    if (!DEBUG_MODE) {
-      float percent = ((precomp_mgr.ctx->input_file_pos + precomp_mgr.ctx->uncompressed_bytes_written) / ((float)precomp_mgr.ctx->fin_length + precomp_mgr.ctx->uncompressed_bytes_total)) * (max_percent - min_percent) + min_percent;
-      show_progress(percent, true, true);
-    }
   } else {
     precomp_mgr.ctx->cb++;
   }
@@ -1532,7 +1531,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] == 3) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 4)) {
         if (DEBUG_MODE) {
         print_to_console("ZIP header detected\n");
-        print_debug_percent(*precomp_mgr.ctx);
         std::cout << "ZIP header detected at position " << precomp_mgr.ctx->input_file_pos << std::endl;
         }
         unsigned int compressed_size = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 21] << 24) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 20] << 16) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 19] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 18];
@@ -2177,7 +2175,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           } else if (type > 0) {
             precomp_mgr.ctx->suppress_mp3_type_until[type] = position_length_sum;
             if (DEBUG_MODE) {
-              print_debug_percent(*precomp_mgr.ctx);
               std::cout << "Unsupported MP3 type found at position " << precomp_mgr.ctx->saved_input_file_pos << ", length " << mp3_length << std::endl;
               print_to_console("Type: %s\n", filetype_description[type]);
             }
@@ -2441,21 +2438,12 @@ int decompress_file_impl(Precomp& precomp_mgr) {
   std::string tempfile2_base = tmp_tag + "_recomp2_";
   std::string tempfile;
   std::string tempfile2;
-  
-  if (precomp_mgr.recursion_depth == 0) {
-    if (!DEBUG_MODE) show_progress(0, false, false);
-  }
 
   fin_pos = precomp_mgr.ctx->fin->tellg();
 
 while (precomp_mgr.ctx->fin->good()) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
-
-  if ((precomp_mgr.recursion_depth == 0) && (!DEBUG_MODE)) {
-    float percent = (fin_pos / (float)precomp_mgr.ctx->fin_length) * 100;
-    show_progress(percent, true, true);
-  }
 
   unsigned char header1 = precomp_mgr.ctx->fin->get();
   if (!precomp_mgr.ctx->fin->good()) break;
@@ -3071,8 +3059,6 @@ int convert_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.enable_input_stream_otf_decompression();
   precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.conversion_to_method);
 
-  if (!DEBUG_MODE) show_progress(0, false, false);
-
   for (;;) {
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.copybuf), COPY_BUF_SIZE);
     bytes_read = precomp_mgr.ctx->fin->gcount();
@@ -3094,11 +3080,7 @@ int convert_file_impl(Precomp& precomp_mgr) {
     }
 
     precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->fin->tellg();
-    print_work_sign(true);
-    if (!DEBUG_MODE) {
-      float percent = (precomp_mgr.ctx->input_file_pos / (float)precomp_mgr.ctx->fin_length) * 100;
-      show_progress(percent, true, true);
-    }
+    show_progress();
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
 
@@ -3113,7 +3095,7 @@ int convert_file(Precomp& precomp_mgr)
 long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
   long long r, decompressed_stream_size;
 
-  print_work_sign(true);
+  show_progress();
 
   remove(tmpfile.file_path.c_str());
   WrappedFStream ftempout;
@@ -3129,7 +3111,7 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, in
 }
 
 void try_recompress_bzip2(Precomp& precomp_mgr, WrappedIStream& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
-            print_work_sign(true);
+            show_progress();
 
             long long decomp_bytes_total;
             precomp_mgr.ctx->identical_bytes = file_recompress_bzip2(precomp_mgr, origfile, level, precomp_mgr.ctx->identical_bytes_decomp, decomp_bytes_total, tmpfile);
@@ -3271,11 +3253,6 @@ void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fout->put(0);
 }
 
-void progress_update(RecursionContext& context, long long bytes_written) {
-  float percent = ((context.input_file_pos + context.uncompressed_bytes_written + bytes_written) / ((float)context.fin_length + context.uncompressed_bytes_total)) * (context.global_max_percent - context.global_min_percent) + context.global_min_percent;
-  show_progress(percent, true, true);
-}
-
 void fast_copy(Precomp& precomp_mgr, WrappedIStream& file1, WrappedOStream& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
@@ -3288,8 +3265,7 @@ void fast_copy(Precomp& precomp_mgr, WrappedIStream& file1, WrappedOStream& file
     file2.write(reinterpret_cast<char*>(precomp_mgr.copybuf), COPY_BUF_SIZE);
 
     if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) {
-      print_work_sign(true);
-      if ((update_progress) && (!DEBUG_MODE)) progress_update(*precomp_mgr.ctx, i * COPY_BUF_SIZE);
+      show_progress();
     }
   }
   if (remaining_bytes != 0) {
@@ -3330,7 +3306,7 @@ long long compare_files_penalty(RecursionContext& context, WrappedIStream& file1
   force_seekg(file2, pos2, std::ios_base::beg);
 
   do {
-    print_work_sign(true);
+    show_progress();
 
     file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
     size1 = file1.gcount();
@@ -3901,7 +3877,6 @@ void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], Preco
   bool recompress_success_needed = true;
 
   if (DEBUG_MODE) {
-  print_debug_percent(*precomp_mgr.ctx);
   std::cout << "Possible GIF found at position " << precomp_mgr.ctx->input_file_pos << std::endl;;
   }
 
@@ -4150,7 +4125,6 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
   tmpfile.close();
 
         if (DEBUG_MODE) {
-          print_debug_percent(*precomp_mgr.ctx);
           if (progressive_jpg) {
             print_to_console("Possible JPG (progressive) found at position ");
           } else {
@@ -4451,7 +4425,6 @@ void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTm
   tmpfile.close();
 
         if (DEBUG_MODE) {
-          print_debug_percent(*precomp_mgr.ctx);
           std::cout << "Possible MP3 found at position " << precomp_mgr.ctx->saved_input_file_pos << ", length " << mp3_length << std::endl;
         }
 
@@ -4719,7 +4692,6 @@ void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, Precom
           precomp_mgr.statistics.decompressed_bzip2_count++;
 
           if (DEBUG_MODE) {
-          print_debug_percent(*precomp_mgr.ctx);
           std::cout << "Possible bZip2-Stream found at position " << precomp_mgr.ctx->saved_input_file_pos << ", compression level = " << compression_level << std::endl;
           std::cout << "Compressed size: " << compressed_stream_size << std::endl;
 
@@ -5051,7 +5023,6 @@ void try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, Pr
     }
 
     if (DEBUG_MODE) {
-      print_debug_percent(*precomp_mgr.ctx);
       std::cout << "Possible Base64-Stream (line_case " << line_case << ", line_count " << line_count << ") found at position " << precomp_mgr.ctx->saved_input_file_pos << std::endl;
       std::cout << "Can be decoded to " << precomp_mgr.ctx->identical_bytes << " bytes" << std::endl;
     }
@@ -5520,8 +5491,4 @@ long long fin_fget_vlint(WrappedIStream& input) {
     o = (o + 1) << 7;
   }
   return v + o + (((long long)c) << s);
-}
-
-void print_debug_percent(RecursionContext& context) {
-  print_to_console("(%.2f%%) ", (context.input_file_pos / (float)context.fin_length) * (context.global_max_percent - context.global_min_percent) + context.global_min_percent);
 }

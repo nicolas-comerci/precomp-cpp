@@ -119,39 +119,17 @@ std::string next_work_sign() {
   return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
 }
 
-void print_work_sign(bool with_backspace) {
-  if (DEBUG_MODE) return;
-  if ((get_time_ms() - work_sign_start_time) >= 250) {
-    const auto new_work_sign = next_work_sign();
-    if (with_backspace) print_to_console("\b\b\b\b\b\b");
-    print_to_console("%c     ", new_work_sign.c_str());
-  }
-  else if (!with_backspace) {
-    print_to_console("%c     ", work_signs[work_sign_var]);
-  }
-}
-
 long long sec_time;
-std::string current_percent_progress_txt;
-std::string current_lzma_progress_txt;
+std::string current_percent_progress_txt = "  0.00% ";
 void delete_current_progress_text() {
-  const auto old_text_length = current_lzma_progress_txt.length() + current_percent_progress_txt.length() + 6;  // we know the work sign is always 6 chars
+  const auto old_text_length = current_percent_progress_txt.length() + 6;  // we know the work sign is always 6 chars
   print_to_console(std::string(old_text_length, '\b'));
 }
 
-void show_progress(float percent, bool clean_prior_progress, bool check_time, std::optional<int> lzma_mib_total_in, std::optional<int> lzma_mib_total_processed) {
+void show_progress(std::optional<float> percent, bool clean_prior_progress, bool check_time) {
   if (check_time && ((get_time_ms() - sec_time) < 250)) return;  // not enough time passed since last progress update, quit to not spam
 
-  std::string new_percent_progress_txt = make_cstyle_format_string("%6.2f%% ", percent);
-
-  std::string new_lzma_progress_txt = current_lzma_progress_txt;
-  if (lzma_mib_total_in.has_value() && lzma_mib_total_processed.has_value()) {
-    new_lzma_progress_txt = make_cstyle_format_string(
-      "lzma total/written/left: %i/%i/%i MiB ",
-      lzma_mib_total_in.value(), lzma_mib_total_processed.value(), lzma_mib_total_in.value() - lzma_mib_total_processed.value()
-    );
-  }
-
+  std::string new_percent_progress_txt = percent.has_value() ? make_cstyle_format_string("%6.2f%% ", percent.value()) : current_percent_progress_txt;
   std::string new_work_sign = next_work_sign();
 
   if (clean_prior_progress) {
@@ -162,10 +140,7 @@ void show_progress(float percent, bool clean_prior_progress, bool check_time, st
   }
 
   current_percent_progress_txt = new_percent_progress_txt;
-  // Doing it this way prevents LZMA progress from being deleted if we are called without the LZMA optionals but we are in the middle of LZMA compression
-  current_lzma_progress_txt = new_lzma_progress_txt.empty() ? current_lzma_progress_txt : new_lzma_progress_txt;
   print_to_console(current_percent_progress_txt);
-  print_to_console(current_lzma_progress_txt.c_str());
   print_to_console(new_work_sign.c_str());
 
   sec_time = get_time_ms();
