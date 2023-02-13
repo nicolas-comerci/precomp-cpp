@@ -22,8 +22,6 @@
 #endif // _GLIBCXX_HAS_GTHREADS
 #endif
 
-bool DEBUG_MODE = false;
-
 int auto_detected_thread_count() {
   int threads = std::thread::hardware_concurrency();
   if (threads == 0) threads = 2;
@@ -53,11 +51,6 @@ char get_char_with_echo() {
 #else
   return fgetc(stdin);
 #endif
-}
-
-void wait_for_key() {
-  print_to_console("\nPress any key to continue\n");
-  get_char_with_echo();
 }
 
 std::string precomp_error_msg(int error_nr, const char* extra_info) {

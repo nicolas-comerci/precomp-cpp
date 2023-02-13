@@ -31,6 +31,16 @@
 #define LIBPRECOMP IMPORT
 #endif
 
+enum PrecompLoggingLevels
+{
+  PRECOMP_NORMAL_LOG,
+  PRECOMP_DEBUG_LOG
+};
+
+extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL_LOG)
+
+void PrecompSetLoggingCallback(std::function<void(PrecompLoggingLevels, std::string)> callback);
+
 // Switches class
 class EXPORT Switches {
   public:
@@ -301,7 +311,6 @@ void init_decompression_variables(RecursionContext& context);
 bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection);
 inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
 void sort_comp_mem_levels();
-void show_used_levels(Precomp& precomp_mgr);
 int compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
 int decompress_file(Precomp& precomp_mgr);
 int convert_file(Precomp& precomp_mgr);

@@ -600,9 +600,6 @@ public:
     if (threads > 1) {
       plural = "s";
     }
-    print_to_console(
-      "Compressing with LZMA, " + std::to_string(threads) + " thread" + plural + ", memory usage: " + std::to_string(memory_usage / (1024 * 1024)) + " MiB, block size: " + std::to_string(block_size / (1024 * 1024)) + " MiB\n\n"
-    );
 
     setp(otf_in.get(), otf_in.get() + CHUNK - 1);
   }

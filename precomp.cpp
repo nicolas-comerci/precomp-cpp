@@ -191,26 +191,24 @@ std::string next_work_sign() {
   return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
 }
 
-std::string current_percent_progress_txt = "  0.00% ";
+float current_progress_percent = 0;
+std::string current_progress_txt;
 void delete_current_progress_text() {
-  const auto old_text_length = current_percent_progress_txt.length() + 6;  // we know the work sign + spacing is always 6 chars
-  print_to_console(std::string(old_text_length, '\b'));
+  print_to_console(std::string(current_progress_txt.length(), '\b'));
 }
 
 long long sec_time;
-void show_progress(float percent) {
-  if ((get_time_ms() - sec_time) < 250) return;  // not enough time passed since last progress update, quit to not spam
+bool get_progress_txt(float percent) {
+  if ((get_time_ms() - sec_time) < 250) return false;  // not enough time passed since last progress update, quit to not spam
 
+  current_progress_percent = percent;
   std::string new_percent_progress_txt = make_cstyle_format_string("%6.2f%% ", percent);
   std::string new_work_sign = next_work_sign();
 
   delete_current_progress_text();
-
-  current_percent_progress_txt = new_percent_progress_txt;
-  print_to_console(current_percent_progress_txt);
-  print_to_console(new_work_sign.c_str());
-
   sec_time = get_time_ms();
+  current_progress_txt = new_percent_progress_txt + new_work_sign;
+  return true;
 }
 
 void print_results(Precomp& precomp_mgr, bool print_new_size) {
@@ -225,6 +223,97 @@ void print_results(Precomp& precomp_mgr, bool print_new_size) {
   }
   print_to_console("\nDone.\n");
   printf_time(get_time_ms() - precomp_mgr.start_time);
+}
+
+void show_used_levels(Precomp& precomp_mgr) {
+    if (!precomp_mgr.ctx->anything_was_used) {
+        if (!precomp_mgr.ctx->non_zlib_was_used) {
+            if (precomp_mgr.ctx->compression_otf_method == OTF_NONE) {
+                print_to_console("\nNone of the given compression and memory levels could be used.\n");
+                print_to_console("There will be no gain compressing the output file.\n");
+            }
+        } else {
+            if ((!precomp_mgr.max_recursion_depth_reached) && (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth)) {
+#ifdef COMFORT
+                print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
+          print_to_console("Maximal_Recursion_Depth=");
+#else
+                print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+                print_to_console("-d");
+#endif
+                print_to_console("%i\n", precomp_mgr.max_recursion_depth_used);
+            }
+        }
+        if (precomp_mgr.max_recursion_depth_reached) {
+            print_to_console("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth);
+        }
+        return;
+    }
+
+    int i, i_sort;
+    int level_count = 0;
+#ifdef COMFORT
+    print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
+    print_to_console("zLib_Levels=");
+#else
+    print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+    print_to_console("-zl");
+#endif
+
+    bool first_one = true;
+    for (i = 0; i < 81; i++) {
+        i_sort = (i % 9) * 9 + (i / 9); // to get the displayed levels sorted
+        if (precomp_mgr.obsolete.zlib_level_was_used[i_sort]) {
+            if (!first_one) {
+                print_to_console(",");
+            } else {
+                first_one = false;
+            }
+            print_to_console("%i%i", (i_sort%9) + 1, (i_sort/9) + 1);
+            level_count++;
+        }
+    }
+
+    std::string disable_methods("");
+    std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
+            {precomp_mgr.switches.use_pdf, precomp_mgr.statistics.recompressed_pdf_count, precomp_mgr.statistics.decompressed_pdf_count, "p"},
+            {precomp_mgr.switches.use_zip, precomp_mgr.statistics.recompressed_zip_count, precomp_mgr.statistics.decompressed_zip_count, "z"},
+            {precomp_mgr.switches.use_gzip, precomp_mgr.statistics.recompressed_gzip_count, precomp_mgr.statistics.decompressed_gzip_count, "g"},
+            {precomp_mgr.switches.use_png, precomp_mgr.statistics.recompressed_png_count + precomp_mgr.statistics.recompressed_png_multi_count, precomp_mgr.statistics.decompressed_png_count + precomp_mgr.statistics.decompressed_png_multi_count, "n"},
+            {precomp_mgr.switches.use_gif, precomp_mgr.statistics.recompressed_gif_count, precomp_mgr.statistics.decompressed_gif_count, "f"},
+            {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.recompressed_jpg_count + precomp_mgr.statistics.recompressed_jpg_prog_count, precomp_mgr.statistics.decompressed_jpg_count + precomp_mgr.statistics.decompressed_jpg_prog_count, "j"},
+            {precomp_mgr.switches.use_swf, precomp_mgr.statistics.recompressed_swf_count, precomp_mgr.statistics.decompressed_swf_count, "s"},
+            {precomp_mgr.switches.use_base64, precomp_mgr.statistics.recompressed_base64_count, precomp_mgr.statistics.decompressed_base64_count, "m"},
+            {precomp_mgr.switches.use_bzip2, precomp_mgr.statistics.recompressed_bzip2_count, precomp_mgr.statistics.decompressed_bzip2_count, "b"},
+            {precomp_mgr.switches.use_mp3, precomp_mgr.statistics.recompressed_mp3_count, precomp_mgr.statistics.decompressed_mp3_count, "3"},
+    }};
+    for (auto disable_format : disable_formats) {
+        if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
+    }
+    if ( disable_methods.length() > 0 ) {
+#ifdef COMFORT
+        print_to_console("\nCompression_Types_Disable=%s",disable_methods.c_str());
+#else
+        print_to_console(" -t-%s",disable_methods.c_str());
+#endif
+    }
+
+    if (precomp_mgr.max_recursion_depth_reached) {
+        print_to_console("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth);
+    } else if (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth) {
+#ifdef COMFORT
+        print_to_console("\nMaximal_Recursion_Depth=");
+#else
+        print_to_console(" -d");
+#endif
+        print_to_console("%i", precomp_mgr.max_recursion_depth_used);
+    }
+
+    if ((level_count == 1) && (!precomp_mgr.switches.fast_mode)) {
+        print_to_console("\n\nFast mode does exactly the same for this file, only faster.\n");
+    }
+
+    print_to_console("\n");
 }
 
 void print_statistics(Precomp& precomp_mgr) {
@@ -262,10 +351,29 @@ void print_statistics(Precomp& precomp_mgr) {
   if (!precomp_mgr.switches.level_switch_used) show_used_levels(precomp_mgr);
 }
 
+void wait_for_key() {
+    print_to_console("\nPress any key to continue\n");
+    get_char_with_echo();
+}
+
+void log_handler(PrecompLoggingLevels level, std::string msg) {
+  if (level >= PRECOMP_DEBUG_LOG) {
+    // This way even with debug logging we keep the progress percent with work sign at the end
+    print_to_console("\n" + msg + "\n" + current_progress_txt);
+  } else {
+    print_to_console(msg);
+  }
+}
+
 int main(int argc, char* argv[])
 {
   Precomp precomp_mgr;
-  precomp_mgr.set_progress_callback([](float percent) { show_progress(percent); });
+  precomp_mgr.set_progress_callback([](float percent) {
+    auto new_progress_txt = get_progress_txt(percent);
+    if (!new_progress_txt) return;
+    print_to_console(current_progress_txt);
+  });
+  PrecompSetLoggingCallback(&log_handler);
   int return_errorlevel = 0;
 
   // register CTRL-C handler
@@ -717,7 +825,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       }
       case 'V':
       {
-        DEBUG_MODE = true;
+        PRECOMP_VERBOSITY_LEVEL = PRECOMP_DEBUG_LOG;
         if (argv[i][2] != 0) { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
@@ -961,10 +1069,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
     }
     read_header(precomp_mgr);
-    output_file_name = precomp_mgr.output_file_name;
+    if (output_file_name.empty()) output_file_name = precomp_mgr.output_file_name;
   }
 
-  if (output_file_given && output_file_name.compare("stdout") == 0) {
+  if (output_file_given && output_file_name == "stdout") {
     precomp_mgr.set_output_stream(&std::cout, false);
   }
   else {
@@ -994,7 +1102,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   print_to_console("Input file: %s\n", input_file_name.c_str());
   print_to_console("Output file: %s\n\n", output_file_name.c_str());
-  if (DEBUG_MODE) {
+  if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
     if (min_ident_size_set) {
       print_to_console("\n");
       print_to_console("Minimal ident size set to %i bytes\n", precomp_mgr.switches.min_ident_size);
@@ -1297,7 +1405,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled verbose mode\n");
-              DEBUG_MODE = true;
+              PRECOMP_VERBOSITY_LEVEL = PRECOMP_DEBUG_LOG;
               valid_param = true;
             }
 
@@ -2030,7 +2138,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   print_to_console("Input file: %s\n", input_file_name.c_str());
   print_to_console("Output file: %s\n\n", output_file_name.c_str());
-  if (DEBUG_MODE) {
+  if (PRECOMP_VERBOSITY_LEVEL >= PRECOMP_DEBUG_LOG) {
     if (min_ident_size_set) {
       print_to_console("\n");
       print_to_console("Minimal ident size set to %i bytes\n", precomp_mgr.switches.min_ident_size);

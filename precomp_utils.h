@@ -4,8 +4,6 @@
 #include <optional>
 #include <string>
 
-extern bool DEBUG_MODE; //debug mode (default: off)
-
 int auto_detected_thread_count();
 
 // This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
@@ -30,8 +28,6 @@ void print_to_console(const char* format, Args... args) {
 }
 
 char get_char_with_echo();
-
-void wait_for_key();
 
 // batch error levels
 constexpr auto RETURN_SUCCESS = 0;
