@@ -168,6 +168,7 @@ public:
   std::unique_ptr<WrappedIStream> fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
   void set_input_stream(std::istream* istream, bool take_ownership = true);
   std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(new std::ofstream(), true));
+  void set_output_stream(std::ostream* ostream, bool take_ownership = true);
 
   float global_min_percent = 0;
   float global_max_percent = 100;
@@ -230,8 +231,10 @@ public:
   // Useful so we can easily get (for example) info on the original input/output streams at any time
   std::unique_ptr<RecursionContext>& get_original_context();
   void set_input_stream(std::istream* istream, bool take_ownership = true);
+  void set_output_stream(std::ostream* ostream, bool take_ownership = true);
   // Input stream OTF decompression method has to be set AFTER the Precomp header has been read, as the compressed stream starts just after it
   void enable_input_stream_otf_decompression();
+  void enable_output_stream_otf_compression(int otf_compression_method);
 
   unsigned char in[CHUNK];
   unsigned char out[CHUNK];

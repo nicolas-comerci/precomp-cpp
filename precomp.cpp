@@ -237,7 +237,7 @@ void printf_time(long long t) {
 
 void print_results(Precomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
-  if (print_new_size) {
+  if (print_new_size && precomp_mgr.ctx->output_file_name != "stdout") {
     long long fout_length = std::filesystem::file_size(precomp_mgr.ctx->output_file_name.c_str());
     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
     print_to_console("100.00% - " + result_print);
@@ -1012,7 +1012,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
     if (!fout->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
     }
-    precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+    precomp_mgr.set_output_stream(fout, true);
   }
 
   print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
@@ -2038,7 +2038,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   if (!fout->is_open()) {
     throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
   }
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+  precomp_mgr.set_output_stream(fout, true);
 
   print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
   print_to_console("Output file: %s\n\n", precomp_mgr.ctx->output_file_name.c_str());

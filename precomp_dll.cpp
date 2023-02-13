@@ -140,6 +140,10 @@ void RecursionContext::set_input_stream(std::istream* istream, bool take_ownersh
   this->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(istream, take_ownership));
 }
 
+void RecursionContext::set_output_stream(std::ostream* ostream, bool take_ownership) {
+  this->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(ostream, take_ownership));
+}
+
 std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
   if (recursion_contexts_stack.empty()) return ctx;
   return recursion_contexts_stack[0];
@@ -149,10 +153,29 @@ void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
   this->get_original_context()->set_input_stream(istream, take_ownership);
 }
 
+void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
+  this->get_original_context()->set_output_stream(ostream, take_ownership);
+}
+
 void Precomp::enable_input_stream_otf_decompression() {
   const auto& orig_context = this->get_original_context();
-  if (orig_context->compression_otf_method == OTF_NONE) return;
+  if (&orig_context != &ctx || orig_context->compression_otf_method == OTF_NONE) return;
   set_input_stream(wrap_istream_otf_compression(std::unique_ptr<std::istream>(orig_context->fin->release()), orig_context->compression_otf_method).release());
+}
+
+void Precomp::enable_output_stream_otf_compression(int otf_compression_method) {
+  const auto& orig_context = this->get_original_context();
+  if (&orig_context != &ctx || otf_compression_method == OTF_NONE) return;
+  set_output_stream(
+    wrap_ostream_otf_compression(
+      std::unique_ptr<std::ostream>(orig_context->fout->release()),
+      otf_compression_method,
+      std::move(this->otf_xz_extra_params),
+      this->switches.compression_otf_max_memory,
+      this->switches.compression_otf_thread_count
+    ).release(),
+    true
+  );
 }
 
 // get copyright message
@@ -211,7 +234,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
     sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
     return false;
   }
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+  precomp_mgr.set_output_stream(fout, true);
 
   setSwitches(precomp_mgr, switches);
 
@@ -256,7 +279,7 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
 
     return false;
   }
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+  precomp_mgr.set_output_stream(fout, true);
 
   setSwitches(precomp_mgr, switches);
 
@@ -1452,16 +1475,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
   precomp_mgr.ctx->comp_decomp_state = P_COMPRESS;
   if (precomp_mgr.recursion_depth == 0) write_header(*precomp_mgr.ctx);
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(
-    wrap_ostream_otf_compression(
-      std::unique_ptr<std::ostream>(precomp_mgr.ctx->fout->release()),
-      precomp_mgr.ctx->compression_otf_method,
-      std::move(precomp_mgr.otf_xz_extra_params),
-      precomp_mgr.switches.compression_otf_max_memory,
-      precomp_mgr.switches.compression_otf_thread_count
-    ).release(),
-    true
-  ));
+  precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.ctx->compression_otf_method);
 
   precomp_mgr.ctx->global_min_percent = min_percent;
   precomp_mgr.ctx->global_max_percent = max_percent;
@@ -3055,16 +3069,7 @@ int convert_file_impl(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->comp_decomp_state = P_CONVERT;
   precomp_mgr.enable_input_stream_otf_decompression();
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(
-    wrap_ostream_otf_compression(
-      std::unique_ptr<std::ostream>(precomp_mgr.ctx->fout->release()),
-      precomp_mgr.conversion_to_method,
-      std::move(precomp_mgr.otf_xz_extra_params),
-      precomp_mgr.switches.compression_otf_max_memory,
-      precomp_mgr.switches.compression_otf_thread_count
-    ).release(),
-    true
-  ));
+  precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.conversion_to_method);
 
   if (!DEBUG_MODE) show_progress(0, false, false);
 
@@ -5235,7 +5240,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   tmp_r.file_name = precomp_mgr.ctx->output_file_name;
   auto fout = new std::ofstream();
   fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+  precomp_mgr.ctx->set_output_stream(fout, true);
 
   precomp_mgr.ctx->intense_ignore_offsets = new std::set<long long>();
   precomp_mgr.ctx->brute_ignore_offsets = new std::set<long long>();
@@ -5329,7 +5334,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   tmp_r.file_name = precomp_mgr.ctx->output_file_name;
   auto fout = new std::ofstream();
   fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-  precomp_mgr.ctx->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(fout, true));
+  precomp_mgr.ctx->set_output_stream(fout, true);
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
   precomp_mgr.ctx->compression_otf_method = OTF_NONE;
