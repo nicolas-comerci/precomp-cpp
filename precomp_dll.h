@@ -156,13 +156,10 @@ public:
   Precomp& precomp_owner; // The precomp instance that owns this context
 
   long long fin_length;
-  std::string input_file_name;
-  std::string output_file_name;
 
   std::set<long long>* intense_ignore_offsets = new std::set<long long>();
   std::set<long long>* brute_ignore_offsets = new std::set<long long>();
   int compression_otf_method = OTF_XZ_MT;
-  bool is_show_lzma_progress() { return compression_otf_method == OTF_XZ_MT; }
   std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
   std::unique_ptr<WrappedIStream> fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
@@ -230,6 +227,8 @@ public:
   std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext(*this));
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
+  std::string input_file_name;
+  std::string output_file_name;
   // Useful so we can easily get (for example) info on the original input/output streams at any time
   std::unique_ptr<RecursionContext>& get_original_context();
   void set_input_stream(std::istream* istream, bool take_ownership = true);
@@ -309,7 +308,7 @@ int convert_file(Precomp& precomp_mgr);
 long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
 long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
-void write_header(RecursionContext& context);
+void write_header(Precomp& precomp_mgr);
 void read_header(Precomp& precomp_mgr);
 void convert_header(Precomp& precomp_mgr);
 std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);

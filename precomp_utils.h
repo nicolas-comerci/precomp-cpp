@@ -54,16 +54,19 @@ constexpr auto ERR_ONLY_SET_LZMA_MEMORY_ONCE = 16;
 constexpr auto ERR_ONLY_SET_LZMA_THREAD_ONCE = 17;
 constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 constexpr auto ERR_DURING_RECOMPRESSION = 19;
+constexpr auto ERR_NO_PCF_HEADER = 20;
+constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = 21;
 
 class PrecompError: public std::exception
 {
 public:
   int error_code;
+  std::string extra_info;
 
-  PrecompError(int error_code) : error_code(error_code) {}
+  PrecompError(int error_code, std::string extra_info = "") : error_code(error_code), extra_info(extra_info) {}
 };
 
-const char* precomp_error_msg(int error_nr);
+std::string precomp_error_msg(int error_nr, const char* extra_info = nullptr);
 
 long long get_time_ms();
 #endif // PRECOMP_UTILS_H

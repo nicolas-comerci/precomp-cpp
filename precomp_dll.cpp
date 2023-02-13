@@ -289,8 +289,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
 
   setSwitches(precomp_mgr, switches);
 
-  precomp_mgr.ctx->input_file_name = in_file;
-  precomp_mgr.ctx->output_file_name = out_file;
+  precomp_mgr.input_file_name = in_file;
 
   precomp_mgr.start_time = get_time_ms();
 
@@ -334,8 +333,7 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
 
   setSwitches(precomp_mgr, switches);
 
-  precomp_mgr.ctx->input_file_name = in_file;
-  precomp_mgr.ctx->output_file_name = out_file;
+  precomp_mgr.input_file_name = in_file;
 
   precomp_mgr.start_time = get_time_ms();
 
@@ -1524,7 +1522,7 @@ void show_used_levels(Precomp& precomp_mgr) {
 int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
 
   precomp_mgr.ctx->comp_decomp_state = P_COMPRESS;
-  if (precomp_mgr.recursion_depth == 0) write_header(*precomp_mgr.ctx);
+  if (precomp_mgr.recursion_depth == 0) write_header(precomp_mgr);
   precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.ctx->compression_otf_method);
 
   precomp_mgr.ctx->global_min_percent = min_percent;
@@ -3198,30 +3196,30 @@ void try_recompress_bzip2(Precomp& precomp_mgr, WrappedIStream& origfile, int le
 }
 
 
-void write_header(RecursionContext& context) {
+void write_header(Precomp& precomp_mgr) {
   // write the PCF file header, beware that this needs to be done before wrapping the output file with a CompressedOStreamBuffer
-  char* input_file_name_without_path = new char[context.input_file_name.length() + 1];
+  char* input_file_name_without_path = new char[precomp_mgr.input_file_name.length() + 1];
 
-  ostream_printf(*context.fout, "PCF");
+  ostream_printf(*precomp_mgr.ctx->fout, "PCF");
 
   // version number
-  context.fout->put(V_MAJOR);
-  context.fout->put(V_MINOR);
-  context.fout->put(V_MINOR2);
+  precomp_mgr.ctx->fout->put(V_MAJOR);
+  precomp_mgr.ctx->fout->put(V_MINOR);
+  precomp_mgr.ctx->fout->put(V_MINOR2);
 
   // compression-on-the-fly method used
-  context.fout->put(context.compression_otf_method);
+  precomp_mgr.ctx->fout->put(precomp_mgr.ctx->compression_otf_method);
 
   // write input file name without path
-  const char* last_backslash = strrchr(context.input_file_name.c_str(), PATH_DELIM);
+  const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
   if (last_backslash != NULL) {
     strcpy(input_file_name_without_path, last_backslash + 1);
   } else {
-    strcpy(input_file_name_without_path, context.input_file_name.c_str());
+    strcpy(input_file_name_without_path, precomp_mgr.input_file_name.c_str());
   }
 
-  ostream_printf(*context.fout, input_file_name_without_path);
-  context.fout->put(0);
+  ostream_printf(*precomp_mgr.ctx->fout, input_file_name_without_path);
+  precomp_mgr.ctx->fout->put(0);
 
   delete[] input_file_name_without_path;
 }
@@ -3230,31 +3228,30 @@ void read_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
   } else {
-    throw std::runtime_error(make_cstyle_format_string("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str()));
+    throw PrecompError(ERR_NO_PCF_HEADER);
   }
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
   } else {
-    throw std::runtime_error(make_cstyle_format_string(
-      "Input file %s was made with a different Precomp version\n"
-      "PCF version info: %i.%i.%i\n",
-      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
-    ));
+    throw PrecompError(
+      ERR_PCF_HEADER_INCOMPATIBLE_VERSION,
+      make_cstyle_format_string("PCF version info: %i.%i.%i\n", precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2])
+    );
   }
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
   precomp_mgr.ctx->compression_otf_method = precomp_mgr.in[0];
 
-  std::string header_filename = "";
+  std::string header_filename;
   char c;
   do {
     c = precomp_mgr.ctx->fin->get();
     if (c != 0) header_filename += c;
   } while (c != 0);
 
-  if (precomp_mgr.ctx->output_file_name.empty()) {
-    precomp_mgr.ctx->output_file_name = header_filename;
+  if (precomp_mgr.output_file_name.empty()) {
+    precomp_mgr.output_file_name = header_filename;
   }
 }
 
@@ -3264,7 +3261,7 @@ void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
   } else {
-    throw std::runtime_error(make_cstyle_format_string("Input file %s has no valid PCF header\n", precomp_mgr.ctx->input_file_name.c_str()));
+    throw std::runtime_error(make_cstyle_format_string("Input stream has no valid PCF header\n"));
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
 
@@ -3272,9 +3269,9 @@ void convert_header(Precomp& precomp_mgr) {
   if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
   } else {
     throw std::runtime_error(make_cstyle_format_string(
-      "Input file %s was made with a different Precomp version\n"
+      "Input stream was made with a different Precomp version\n"
       "PCF version info: %i.%i.%i\n",
-      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
+      precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
     ));
   }
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
@@ -5249,12 +5246,10 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   }
   precomp_mgr.ctx->set_input_stream(fin);
 
-  precomp_mgr.ctx->input_file_name = tmpfile.file_path;
-  precomp_mgr.ctx->output_file_name = tmpfile.file_path;
-  precomp_mgr.ctx->output_file_name += '_';
-  tmp_r.file_name = precomp_mgr.ctx->output_file_name;
+  tmp_r.file_name = tmpfile.file_path;
+  tmp_r.file_name += '_';
   auto fout = new std::ofstream();
-  fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
+  fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
 
   precomp_mgr.ctx->intense_ignore_offsets = new std::set<long long>();
@@ -5343,12 +5338,10 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   }
   precomp_mgr.ctx->set_input_stream(fin);
 
-  precomp_mgr.ctx->input_file_name = tmpfile.file_path;
-  precomp_mgr.ctx->output_file_name = tmpfile.file_path;
-  precomp_mgr.ctx->output_file_name += '_';
-  tmp_r.file_name = precomp_mgr.ctx->output_file_name;
+  tmp_r.file_name = tmpfile.file_path;
+  tmp_r.file_name += '_';
   auto fout = new std::ofstream();
-  fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
+  fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams

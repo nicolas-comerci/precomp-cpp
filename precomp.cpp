@@ -62,6 +62,9 @@
 #include <unistd.h>
 #endif
 
+std::string input_file_name;
+std::string output_file_name;
+
 std::string libprecomp_error_msg(int error_code)
 {
   return make_cstyle_format_string("\nERROR %i: %s", error_code, precomp_error_msg(error_code));
@@ -140,50 +143,6 @@ int64_t parseInt64UntilEnd(const char* c, const char* context, int too_big_error
   return parseInt64(x, context, too_big_error_code);
 }
 
-#ifdef COMFORT
-bool check_for_pcf_file(Precomp& precomp_mgr) {
-  force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
-
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
-  } else {
-    return false;
-  }
-
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
-  } else {
-    throw std::runtime_error(make_cstyle_format_string(
-      "Input file %s was made with a different Precomp version\n"
-      "PCF version info: %i.%i.%i\n",
-      precomp_mgr.ctx->input_file_name.c_str(), precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
-    ));
-  }
-
-  // skip compression method
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
-
-  std::string header_filename = "";
-  char c;
-  do {
-    c = precomp_mgr.ctx->fin->get();
-    if (c != 0) header_filename += c;
-  } while (c != 0);
-
-  // append output filename to the executable directory
-  std::string exec_dir = std::filesystem::current_path().string();
-  std::string header_path = exec_dir;
-  header_path += PATH_DELIM;
-  header_path += header_filename;
-
-  if (precomp_mgr.ctx->output_file_name.empty()) {
-    precomp_mgr.ctx->output_file_name = header_path;
-  }
-
-  return true;
-}
-#endif
-
 bool file_exists(const char* filename) {
   std::fstream fin;
   bool retval = false;
@@ -256,8 +215,8 @@ void show_progress(float percent) {
 
 void print_results(Precomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
-  if (print_new_size && precomp_mgr.ctx->output_file_name != "stdout") {
-    long long fout_length = std::filesystem::file_size(precomp_mgr.ctx->output_file_name.c_str());
+  if (print_new_size && output_file_name != "stdout") {
+    long long fout_length = std::filesystem::file_size(output_file_name.c_str());
     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
     print_to_console("100.00% - " + result_print);
   }
@@ -817,15 +776,15 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         }
 
         output_file_given = true;
-        precomp_mgr.ctx->output_file_name = argv[i] + 2;
+        output_file_name = argv[i] + 2;
 
         // check for backslash in file name
-        const char* backslash_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), PATH_DELIM);
+        const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
 
         // dot in output file name? If not, use .pcf extension
-        const char* dot_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), '.');
-        if (precomp_mgr.ctx->output_file_name.compare("stdout") != 0 && (dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
-          precomp_mgr.ctx->output_file_name += ".pcf";
+        const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
+        if (output_file_name.compare("stdout") != 0 && (dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
+          output_file_name += ".pcf";
           appended_pcf = true;
         }
 
@@ -868,9 +827,10 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       }
 
       input_file_given = true;
-      precomp_mgr.ctx->input_file_name = argv[i];
+      input_file_name = argv[i];
+      precomp_mgr.input_file_name = input_file_name;
 
-      if (precomp_mgr.ctx->input_file_name.compare("stdin") == 0) {
+      if (input_file_name.compare("stdin") == 0) {
         if (operation != P_DECOMPRESS) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
@@ -882,7 +842,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         auto fin = new std::ifstream();
         fin->open(argv[i], std::ios_base::in | std::ios_base::binary);
         if (!fin->is_open()) {
-          throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", input_file_name.c_str()));
         }
         precomp_mgr.set_input_stream(fin);
       }
@@ -890,28 +850,28 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       // output file given? If not, use input filename with .pcf extension
       if ((!output_file_given) && (operation == P_COMPRESS)) {
         if (!preserve_extension) {
-          precomp_mgr.ctx->output_file_name = precomp_mgr.ctx->input_file_name;
-          const char* backslash_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), PATH_DELIM);
-          const char* dot_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), '.');
+          output_file_name = input_file_name;
+          const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
+          const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
           if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-            precomp_mgr.ctx->output_file_name += ".pcf";
+            output_file_name += ".pcf";
           }
           else {
-            precomp_mgr.ctx->output_file_name = std::string(
-              precomp_mgr.ctx->output_file_name.c_str(),
-              dot_at_pos - precomp_mgr.ctx->output_file_name.c_str()
+            output_file_name = std::string(
+              output_file_name.c_str(),
+              dot_at_pos - output_file_name.c_str()
             );
             // same as output file because input file had .pcf extension?
-            if (precomp_mgr.ctx->input_file_name.compare(precomp_mgr.ctx->output_file_name + ".pcf") == 0) {
-              precomp_mgr.ctx->output_file_name += "_pcf.pcf";
+            if (input_file_name.compare(output_file_name + ".pcf") == 0) {
+              output_file_name += "_pcf.pcf";
             }
             else {
-              precomp_mgr.ctx->output_file_name += ".pcf";
+              output_file_name += ".pcf";
             }
           }
         }
         else {
-          precomp_mgr.ctx->output_file_name = precomp_mgr.ctx->input_file_name + ".pcf";
+          output_file_name = input_file_name + ".pcf";
         }
         output_file_given = true;
       }
@@ -998,17 +958,18 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   if (operation == P_DECOMPRESS) {
     // if .pcf was appended, remove it
     if (appended_pcf) {
-      precomp_mgr.ctx->output_file_name = precomp_mgr.ctx->output_file_name.substr(0, precomp_mgr.ctx->output_file_name.length() - 4);
+      output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
     }
     read_header(precomp_mgr);
+    output_file_name = precomp_mgr.output_file_name;
   }
 
-  if (output_file_given && precomp_mgr.ctx->output_file_name.compare("stdout") == 0) {
+  if (output_file_given && output_file_name.compare("stdout") == 0) {
     precomp_mgr.set_output_stream(&std::cout, false);
   }
   else {
-    if (file_exists(precomp_mgr.ctx->output_file_name.c_str())) {
-      print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", precomp_mgr.ctx->output_file_name.c_str());
+    if (file_exists(output_file_name.c_str())) {
+      print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name.c_str());
       char ch = get_char_with_echo();
       if ((ch != 'Y') && (ch != 'y')) {
         print_to_console("\n");
@@ -1024,15 +985,15 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
     }
 
     auto fout = new std::ofstream();
-    fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
+    fout->open(output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
     if (!fout->is_open()) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
     }
     precomp_mgr.set_output_stream(fout, true);
   }
 
-  print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
-  print_to_console("Output file: %s\n\n", precomp_mgr.ctx->output_file_name.c_str());
+  print_to_console("Input file: %s\n", input_file_name.c_str());
+  print_to_console("Output file: %s\n\n", output_file_name.c_str());
   if (DEBUG_MODE) {
     if (min_ident_size_set) {
       print_to_console("\n");
@@ -1122,19 +1083,30 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
     throw std::runtime_error(libprecomp_error_msg(ERR_MORE_THAN_ONE_INPUT_FILE));
   }
   else {
-    precomp_mgr.ctx->input_file_name = argv[1];
+    input_file_name = argv[1];
+    precomp_mgr.input_file_name = input_file_name;
 
-    precomp_mgr.ctx->fin_length = std::filesystem::file_size(precomp_mgr.ctx->input_file_name.c_str());
+    precomp_mgr.ctx->fin_length = std::filesystem::file_size(input_file_name.c_str());
 
     auto fin = new std::ifstream();
-    fin->open(precomp_mgr.ctx->input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
+    fin->open(input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
     if (!fin->is_open()) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", precomp_mgr.ctx->input_file_name.c_str()));
+      throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", input_file_name.c_str()));
     }
     precomp_mgr.set_input_stream(fin);
 
-    if (check_for_pcf_file(precomp_mgr)) {
+    force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
+    try {
+      read_header(precomp_mgr);
       operation = P_DECOMPRESS;
+      // append output filename to the executable directory
+      std::string exec_dir = std::filesystem::current_path().string();
+      output_file_name = exec_dir;
+      output_file_name += PATH_DELIM;
+      output_file_name += precomp_mgr.output_file_name;
+      precomp_mgr.output_file_name = output_file_name;
+    } catch (const PrecompError& err) {
+      if (!(err.error_code == ERR_NO_PCF_HEADER || err.error_code == ERR_PCF_HEADER_INCOMPATIBLE_VERSION)) throw;
     }
   }
 
@@ -2008,33 +1980,33 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   if (operation == P_COMPRESS) {
     if (!preserve_extension) {
-      precomp_mgr.ctx->output_file_name = precomp_mgr.ctx->input_file_name;
-      const char* backslash_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), PATH_DELIM);
-      const char* dot_at_pos = strrchr(precomp_mgr.ctx->output_file_name.c_str(), '.');
+      output_file_name = input_file_name;
+      const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
+      const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
       if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-        precomp_mgr.ctx->output_file_name += ".pcf";
+        output_file_name += ".pcf";
       }
       else {
-        precomp_mgr.ctx->output_file_name = std::string(
-          precomp_mgr.ctx->output_file_name.c_str(),
-          dot_at_pos - precomp_mgr.ctx->output_file_name.c_str()
+        output_file_name = std::string(
+          output_file_name.c_str(),
+          dot_at_pos - output_file_name.c_str()
         );
         // same as output file because input file had .pcf extension?
-        if (precomp_mgr.ctx->input_file_name.compare(precomp_mgr.ctx->output_file_name + ".pcf") == 0) {
-          precomp_mgr.ctx->output_file_name += "_pcf.pcf";
+        if (input_file_name.compare(output_file_name + ".pcf") == 0) {
+          output_file_name += "_pcf.pcf";
         }
         else {
-          precomp_mgr.ctx->output_file_name += ".pcf";
+          output_file_name += ".pcf";
         }
       }
     }
     else {
-      precomp_mgr.ctx->output_file_name = precomp_mgr.ctx->input_file_name + ".pcf";
+      output_file_name = input_file_name + ".pcf";
     }
   }
 
-  if (file_exists(precomp_mgr.ctx->output_file_name.c_str())) {
-    print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", precomp_mgr.ctx->output_file_name.c_str());
+  if (file_exists(output_file_name.c_str())) {
+    print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name.c_str());
     char ch = get_char_with_echo();
     if ((ch != 'Y') && (ch != 'y')) {
       print_to_console("\n");
@@ -2050,14 +2022,14 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   }
 
   auto fout = new std::ofstream();
-  fout->open(precomp_mgr.ctx->output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
+  fout->open(output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   if (!fout->is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", precomp_mgr.ctx->output_file_name.c_str()));
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
   }
   precomp_mgr.set_output_stream(fout, true);
 
-  print_to_console("Input file: %s\n", precomp_mgr.ctx->input_file_name.c_str());
-  print_to_console("Output file: %s\n\n", precomp_mgr.ctx->output_file_name.c_str());
+  print_to_console("Input file: %s\n", input_file_name.c_str());
+  print_to_console("Output file: %s\n\n", output_file_name.c_str());
   if (DEBUG_MODE) {
     if (min_ident_size_set) {
       print_to_console("\n");

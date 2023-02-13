@@ -60,7 +60,7 @@ void wait_for_key() {
   get_char_with_echo();
 }
 
-const char* precomp_error_msg(int error_nr) {
+std::string precomp_error_msg(int error_nr, const char* extra_info) {
   switch (error_nr) {
   case ERR_IGNORE_POS_TOO_BIG:
     return "Ignore position too big";
@@ -94,6 +94,13 @@ const char* precomp_error_msg(int error_nr) {
     return "LZMA thread count can only be set once";
   case ERR_DURING_RECOMPRESSION:
     return "Error recompressing data!";
+  case ERR_NO_PCF_HEADER:
+    return "Input stream has no valid PCF header";
+  case ERR_PCF_HEADER_INCOMPATIBLE_VERSION: {
+    std::string txt = "Input stream was made with an incompatible Precomp version";
+    if (extra_info != nullptr) txt += "\n" + std::string(extra_info);
+    return txt;
+  }
   default:
     return "Unknown error";
   }
