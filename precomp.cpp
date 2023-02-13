@@ -62,21 +62,9 @@
 #include <unistd.h>
 #endif
 
-// This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
-// (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
-// It allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary
-#define STDIN  0
-#define STDOUT 1
-#define STDERR 2
-#ifndef __unix
-# define SET_BINARY_MODE(handle) setmode(handle, O_BINARY)
-#else
-# define SET_BINARY_MODE(handle) ((void)0)
-#endif
-
 std::string libprecomp_error_msg(int error_code)
 {
-  return make_cstyle_format_string("\nERROR %i: %s", error_code, error_msg(error_code));
+  return make_cstyle_format_string("\nERROR %i: %s", error_code, precomp_error_msg(error_code));
 }
 
 bool parsePrefixText(const char* c, const char* ref) {
@@ -235,6 +223,37 @@ void printf_time(long long t) {
   }
 }
 
+long long work_sign_start_time = get_time_ms();
+int work_sign_var = 0;
+static char work_signs[5] = "|/-\\";
+std::string next_work_sign() {
+  work_sign_var = (work_sign_var + 1) % 4;
+  work_sign_start_time = get_time_ms();
+  return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
+}
+
+std::string current_percent_progress_txt = "  0.00% ";
+void delete_current_progress_text() {
+  const auto old_text_length = current_percent_progress_txt.length() + 6;  // we know the work sign + spacing is always 6 chars
+  print_to_console(std::string(old_text_length, '\b'));
+}
+
+long long sec_time;
+void show_progress(float percent) {
+  if ((get_time_ms() - sec_time) < 250) return;  // not enough time passed since last progress update, quit to not spam
+
+  std::string new_percent_progress_txt = make_cstyle_format_string("%6.2f%% ", percent);
+  std::string new_work_sign = next_work_sign();
+
+  delete_current_progress_text();
+
+  current_percent_progress_txt = new_percent_progress_txt;
+  print_to_console(current_percent_progress_txt);
+  print_to_console(new_work_sign.c_str());
+
+  sec_time = get_time_ms();
+}
+
 void print_results(Precomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
   if (print_new_size && precomp_mgr.ctx->output_file_name != "stdout") {
@@ -287,6 +306,7 @@ void print_statistics(Precomp& precomp_mgr) {
 int main(int argc, char* argv[])
 {
   Precomp precomp_mgr;
+  precomp_mgr.set_progress_callback([](float percent) { show_progress(percent); });
   int return_errorlevel = 0;
 
   // register CTRL-C handler
@@ -854,9 +874,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         if (operation != P_DECOMPRESS) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
-        // Read binary from stdin
-        SET_BINARY_MODE(STDIN);
-        precomp_mgr.ctx->fin->rdbuf(std::cin.rdbuf());
+        precomp_mgr.set_input_stream(&std::cin, false);
       }
       else {
         precomp_mgr.ctx->fin_length = std::filesystem::file_size(argv[i]);
@@ -986,9 +1004,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   }
 
   if (output_file_given && precomp_mgr.ctx->output_file_name.compare("stdout") == 0) {
-    // Write binary to stdout
-    SET_BINARY_MODE(STDOUT);
-    precomp_mgr.ctx->fout->rdbuf(std::cout.rdbuf());
+    precomp_mgr.set_output_stream(&std::cout, false);
   }
   else {
     if (file_exists(precomp_mgr.ctx->output_file_name.c_str())) {

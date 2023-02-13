@@ -66,16 +66,16 @@ int lzma_max_memory_default() {
   return max_memory;
 }
 
-WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method) {
+WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, bool take_ownership) {
   switch (otf_compression_method) {
   case OTF_NONE: {
-    return { istream.release(), true };
+    return { istream.release(), take_ownership };
     }
     case OTF_BZIP2: {
-      return { Bz2IStreamBuffer::from_istream(std::move(istream)).release(), true };
+      return { Bz2IStreamBuffer::from_istream(std::move(istream)).release(), take_ownership };
     }
     case OTF_XZ_MT: {
-      return { XzIStreamBuffer::from_istream(std::move(istream)).release(), true };
+      return { XzIStreamBuffer::from_istream(std::move(istream)).release(), take_ownership };
     }
   }
   throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));
@@ -107,17 +107,18 @@ WrappedOStream wrap_ostream_otf_compression(
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
   uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count
+  unsigned int compression_otf_thread_count,
+  bool take_ownership
 ) {
   switch (otf_compression_method) {
   case OTF_NONE: {
-    return { ostream.release(), true };
+    return { ostream.release(), take_ownership };
   }
   case OTF_BZIP2: {
-    return { Bz2OStreamBuffer::from_ostream(std::move(ostream)).release(), true };
+    return { Bz2OStreamBuffer::from_ostream(std::move(ostream)).release(), take_ownership };
   }
   case OTF_XZ_MT: {
-    return { XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count).release(), true };
+    return { XzOStreamBuffer::from_ostream(std::move(ostream), std::move(otf_xz_extra_params), compression_otf_max_memory, compression_otf_thread_count).release(), take_ownership };
   }
   }
   throw std::runtime_error(make_cstyle_format_string("Unknown compression method!"));

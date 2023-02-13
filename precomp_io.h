@@ -46,6 +46,8 @@ public:
   WrappedStream(WrappedStream& o) = delete;
   WrappedStream& operator=(WrappedStream const&) = delete;
 
+  bool is_owns_wrapped_stream() { return owns_wrapped_stream; }
+
   // Careful! I am not writting safeguards for this, if you attempt to use this after release you will get a nullptr dereference and you get to keep the pieces!
   T* release() {
     owns_wrapped_stream = false;
@@ -116,11 +118,11 @@ public:
     write_method,
   };
 private:
-  std::map<observable_methods, std::optional<std::function<void()>>> method_observers = { {write_method, std::nullopt}};
+  std::map<observable_methods, std::function<void()>> method_observers = { {write_method, {}}};
 
   void notify_observer(observable_methods method) {
     auto observer_callback = method_observers[method];
-    if (observer_callback.has_value()) observer_callback.value()();
+    if (observer_callback) observer_callback();
   }
 public:
   ObservableOStream(std::ostream* stream, bool take_ownership): WrappedOStream(stream, take_ownership) { }
@@ -319,7 +321,6 @@ public:
       return *gptr();
 
     int ret;
-    show_progress();
 
     this->otf_bz2_stream_d->avail_out = CHUNK*10;
     this->otf_bz2_stream_d->next_out = otf_dec.get();
@@ -391,7 +392,6 @@ public:
 
     bool stream_eof = false;
     do {
-      show_progress();
       if ((otf_xz_stream_d->avail_in == 0) && !wrapped_istream->eof()) {
         otf_xz_stream_d->next_in = (uint8_t*)otf_in.get();
         wrapped_istream->read(otf_in.get(), CHUNK);
@@ -441,7 +441,7 @@ public:
   }
 };
 
-WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method);
+WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, bool take_ownership);
 
 class CompressedOStreamBuffer : public std::streambuf
 {
@@ -522,7 +522,6 @@ public:
 
   int sync(bool final_byte) override {
     int flush, ret;
-    show_progress();
 
     flush = final_byte ? BZ_FINISH : BZ_RUN;
 
@@ -615,7 +614,6 @@ public:
     otf_xz_stream_c->avail_in = pptr() - pbase();
     otf_xz_stream_c->next_in = (uint8_t*)otf_in.get();
     do {
-      show_progress();
       otf_xz_stream_c->avail_out = CHUNK;
       otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
       ret = lzma_code(otf_xz_stream_c.get(), action);
@@ -654,6 +652,7 @@ WrappedOStream wrap_ostream_otf_compression(
   int otf_compression_method,
   std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
   uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count
+  unsigned int compression_otf_thread_count,
+  bool take_ownership
 );
 #endif // PRECOMP_IO_H

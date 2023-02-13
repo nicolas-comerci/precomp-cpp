@@ -63,10 +63,7 @@ public:
   PrecompError(int error_code) : error_code(error_code) {}
 };
 
-const char* error_msg(int error_nr);
+const char* precomp_error_msg(int error_nr);
 
 long long get_time_ms();
-
-void delete_current_progress_text();
-void show_progress(std::optional<float> percent = std::nullopt, bool use_backspaces = true, bool check_time = true);
 #endif // PRECOMP_UTILS_H

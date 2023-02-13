@@ -60,7 +60,7 @@ void wait_for_key() {
   get_char_with_echo();
 }
 
-const char* error_msg(int error_nr) {
+const char* precomp_error_msg(int error_nr) {
   switch (error_nr) {
   case ERR_IGNORE_POS_TOO_BIG:
     return "Ignore position too big";
@@ -108,40 +108,4 @@ long long get_time_ms() {
   gettimeofday(&t, NULL);
   return (t.tv_sec * 1000) + (t.tv_usec / 1000);
 #endif
-}
-
-long long work_sign_start_time = get_time_ms();
-int work_sign_var = 0;
-static char work_signs[5] = "|/-\\";
-std::string next_work_sign() {
-  work_sign_var = (work_sign_var + 1) % 4;
-  work_sign_start_time = get_time_ms();
-  return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
-}
-
-long long sec_time;
-std::string current_percent_progress_txt = "  0.00% ";
-void delete_current_progress_text() {
-  const auto old_text_length = current_percent_progress_txt.length() + 6;  // we know the work sign is always 6 chars
-  print_to_console(std::string(old_text_length, '\b'));
-}
-
-void show_progress(std::optional<float> percent, bool clean_prior_progress, bool check_time) {
-  if (check_time && ((get_time_ms() - sec_time) < 250)) return;  // not enough time passed since last progress update, quit to not spam
-
-  std::string new_percent_progress_txt = percent.has_value() ? make_cstyle_format_string("%6.2f%% ", percent.value()) : current_percent_progress_txt;
-  std::string new_work_sign = next_work_sign();
-
-  if (clean_prior_progress) {
-    delete_current_progress_text();
-  }
-  else {
-    print_to_console("\n");  // print on next line so progress is legible on a separate line than the prior one
-  }
-
-  current_percent_progress_txt = new_percent_progress_txt;
-  print_to_console(current_percent_progress_txt);
-  print_to_console(new_work_sign.c_str());
-
-  sec_time = get_time_ms();
 }

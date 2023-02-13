@@ -220,6 +220,8 @@ public:
 };
 
 class Precomp {
+  std::function<void(float)> progress_callback;
+
 public:
   ObsoleteData obsolete;
   Switches switches;
@@ -235,6 +237,9 @@ public:
   // Input stream OTF decompression method has to be set AFTER the Precomp header has been read, as the compressed stream starts just after it
   void enable_input_stream_otf_decompression();
   void enable_output_stream_otf_compression(int otf_compression_method);
+
+  void set_progress_callback(std::function<void(float)> callback);
+  void call_progress_callback();
 
   unsigned char in[CHUNK];
   unsigned char out[CHUNK];
@@ -271,9 +276,9 @@ int def_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, in
 long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
 void write_decompressed_data(Precomp& precomp_mgr, WrappedOStream& ostream, long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name);
-unsigned long long compare_files(WrappedIStream& file1, WrappedIStream& file2, unsigned int pos1, unsigned int pos2);
+unsigned long long compare_files(Precomp& precomp_mgr, WrappedIStream& file1, WrappedIStream& file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(RecursionContext& context, WrappedIStream& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
-long long compare_files_penalty(RecursionContext& context, WrappedIStream& file1, WrappedIStream& file2, long long pos1, long long pos2);
+long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, WrappedIStream& file1, WrappedIStream& file2, long long pos1, long long pos2);
 void start_uncompressed_data(RecursionContext& context);
 void end_uncompressed_data(Precomp& precomp_mgr);
 void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
