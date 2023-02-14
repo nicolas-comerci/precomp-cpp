@@ -3,8 +3,8 @@
 #include "precomp_dll.h"
 
 #ifndef COMFORT
-int init(Precomp& precomp_mgr, int argc, char* argv[]);
+int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]);
 #else
-int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]);
+int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]);
 #endif
 #endif // PRECOMP_H

@@ -64,6 +64,7 @@
 
 std::string input_file_name;
 std::string output_file_name;
+int otf_xz_filter_used_count = 0;
 
 std::string libprecomp_error_msg(int error_code)
 {
@@ -225,7 +226,7 @@ void print_results(Precomp& precomp_mgr, bool print_new_size) {
   printf_time(get_time_ms() - precomp_mgr.start_time);
 }
 
-void show_used_levels(Precomp& precomp_mgr) {
+void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
     if (!precomp_mgr.ctx->anything_was_used) {
         if (!precomp_mgr.ctx->non_zlib_was_used) {
             if (precomp_mgr.ctx->compression_otf_method == OTF_NONE) {
@@ -263,29 +264,20 @@ void show_used_levels(Precomp& precomp_mgr) {
     bool first_one = true;
     for (i = 0; i < 81; i++) {
         i_sort = (i % 9) * 9 + (i / 9); // to get the displayed levels sorted
-        if (precomp_mgr.obsolete.zlib_level_was_used[i_sort]) {
-            if (!first_one) {
-                print_to_console(",");
-            } else {
-                first_one = false;
-            }
-            print_to_console("%i%i", (i_sort%9) + 1, (i_sort/9) + 1);
-            level_count++;
-        }
     }
 
     std::string disable_methods("");
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
-            {precomp_mgr.switches.use_pdf, precomp_mgr.statistics.recompressed_pdf_count, precomp_mgr.statistics.decompressed_pdf_count, "p"},
-            {precomp_mgr.switches.use_zip, precomp_mgr.statistics.recompressed_zip_count, precomp_mgr.statistics.decompressed_zip_count, "z"},
-            {precomp_mgr.switches.use_gzip, precomp_mgr.statistics.recompressed_gzip_count, precomp_mgr.statistics.decompressed_gzip_count, "g"},
-            {precomp_mgr.switches.use_png, precomp_mgr.statistics.recompressed_png_count + precomp_mgr.statistics.recompressed_png_multi_count, precomp_mgr.statistics.decompressed_png_count + precomp_mgr.statistics.decompressed_png_multi_count, "n"},
-            {precomp_mgr.switches.use_gif, precomp_mgr.statistics.recompressed_gif_count, precomp_mgr.statistics.decompressed_gif_count, "f"},
-            {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.recompressed_jpg_count + precomp_mgr.statistics.recompressed_jpg_prog_count, precomp_mgr.statistics.decompressed_jpg_count + precomp_mgr.statistics.decompressed_jpg_prog_count, "j"},
-            {precomp_mgr.switches.use_swf, precomp_mgr.statistics.recompressed_swf_count, precomp_mgr.statistics.decompressed_swf_count, "s"},
-            {precomp_mgr.switches.use_base64, precomp_mgr.statistics.recompressed_base64_count, precomp_mgr.statistics.decompressed_base64_count, "m"},
-            {precomp_mgr.switches.use_bzip2, precomp_mgr.statistics.recompressed_bzip2_count, precomp_mgr.statistics.decompressed_bzip2_count, "b"},
-            {precomp_mgr.switches.use_mp3, precomp_mgr.statistics.recompressed_mp3_count, precomp_mgr.statistics.decompressed_mp3_count, "3"},
+      {precomp_switches.use_pdf, precomp_mgr.statistics.recompressed_pdf_count, precomp_mgr.statistics.decompressed_pdf_count, "p"},
+      {precomp_switches.use_zip, precomp_mgr.statistics.recompressed_zip_count, precomp_mgr.statistics.decompressed_zip_count, "z"},
+      {precomp_switches.use_gzip, precomp_mgr.statistics.recompressed_gzip_count, precomp_mgr.statistics.decompressed_gzip_count, "g"},
+      {precomp_switches.use_png, precomp_mgr.statistics.recompressed_png_count + precomp_mgr.statistics.recompressed_png_multi_count, precomp_mgr.statistics.decompressed_png_count + precomp_mgr.statistics.decompressed_png_multi_count, "n"},
+      {precomp_switches.use_gif, precomp_mgr.statistics.recompressed_gif_count, precomp_mgr.statistics.decompressed_gif_count, "f"},
+      {precomp_switches.use_jpg, precomp_mgr.statistics.recompressed_jpg_count + precomp_mgr.statistics.recompressed_jpg_prog_count, precomp_mgr.statistics.decompressed_jpg_count + precomp_mgr.statistics.decompressed_jpg_prog_count, "j"},
+      {precomp_switches.use_swf, precomp_mgr.statistics.recompressed_swf_count, precomp_mgr.statistics.decompressed_swf_count, "s"},
+      {precomp_switches.use_base64, precomp_mgr.statistics.recompressed_base64_count, precomp_mgr.statistics.decompressed_base64_count, "m"},
+      {precomp_switches.use_bzip2, precomp_mgr.statistics.recompressed_bzip2_count, precomp_mgr.statistics.decompressed_bzip2_count, "b"},
+      {precomp_switches.use_mp3, precomp_mgr.statistics.recompressed_mp3_count, precomp_mgr.statistics.decompressed_mp3_count, "3"},
     }};
     for (auto disable_format : disable_formats) {
         if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
@@ -309,34 +301,34 @@ void show_used_levels(Precomp& precomp_mgr) {
         print_to_console("%i", precomp_mgr.max_recursion_depth_used);
     }
 
-    if ((level_count == 1) && (!precomp_mgr.switches.fast_mode)) {
+    if ((level_count == 1) && (!precomp_switches.fast_mode)) {
         print_to_console("\n\nFast mode does exactly the same for this file, only faster.\n");
     }
 
     print_to_console("\n");
 }
 
-void print_statistics(Precomp& precomp_mgr) {
+void print_statistics(Precomp& precomp_mgr, CSwitches& precomp_switches) {
   print_to_console("\nRecompressed streams: %i/%i\n", precomp_mgr.statistics.recompressed_streams_count, precomp_mgr.statistics.decompressed_streams_count);
 
   if ((precomp_mgr.statistics.recompressed_streams_count > 0) || (precomp_mgr.statistics.decompressed_streams_count > 0)) {
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{ {
-      {precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count, precomp_mgr.statistics.recompressed_pdf_count, "PDF"},
-      {precomp_mgr.switches.pdf_bmp_mode && precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_8_bit, precomp_mgr.statistics.recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
-      {precomp_mgr.switches.pdf_bmp_mode && precomp_mgr.switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_24_bit, precomp_mgr.statistics.recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
-      {precomp_mgr.switches.use_zip, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count, "ZIP"},
-      {precomp_mgr.switches.use_gzip, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count, "GZip"},
-      {precomp_mgr.switches.use_png, precomp_mgr.statistics.decompressed_png_count, precomp_mgr.statistics.recompressed_png_count, "PNG"},
-      {precomp_mgr.switches.use_png, precomp_mgr.statistics.decompressed_png_multi_count, precomp_mgr.statistics.recompressed_png_multi_count, "PNG (multi)"},
-      {precomp_mgr.switches.use_gif, precomp_mgr.statistics.decompressed_gif_count, precomp_mgr.statistics.recompressed_gif_count, "GIF"},
-      {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_count, precomp_mgr.statistics.recompressed_jpg_count, "JPG"},
-      {precomp_mgr.switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_prog_count, precomp_mgr.statistics.recompressed_jpg_prog_count, "JPG (progressive)"},
-      {precomp_mgr.switches.use_mp3, precomp_mgr.statistics.decompressed_mp3_count, precomp_mgr.statistics.recompressed_mp3_count, "MP3"},
-      {precomp_mgr.switches.use_swf, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count, "SWF"},
-      {precomp_mgr.switches.use_base64, precomp_mgr.statistics.decompressed_base64_count, precomp_mgr.statistics.recompressed_base64_count, "Base64"},
-      {precomp_mgr.switches.use_bzip2, precomp_mgr.statistics.decompressed_bzip2_count, precomp_mgr.statistics.recompressed_bzip2_count, "bZip2"},
-      {precomp_mgr.switches.intense_mode, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count, "zLib (intense mode)"},
-      {precomp_mgr.switches.brute_mode, precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count, "Brute mode"},
+      {precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count, precomp_mgr.statistics.recompressed_pdf_count, "PDF"},
+      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_8_bit, precomp_mgr.statistics.recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
+      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_24_bit, precomp_mgr.statistics.recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
+      {precomp_switches.use_zip, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count, "ZIP"},
+      {precomp_switches.use_gzip, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count, "GZip"},
+      {precomp_switches.use_png, precomp_mgr.statistics.decompressed_png_count, precomp_mgr.statistics.recompressed_png_count, "PNG"},
+      {precomp_switches.use_png, precomp_mgr.statistics.decompressed_png_multi_count, precomp_mgr.statistics.recompressed_png_multi_count, "PNG (multi)"},
+      {precomp_switches.use_gif, precomp_mgr.statistics.decompressed_gif_count, precomp_mgr.statistics.recompressed_gif_count, "GIF"},
+      {precomp_switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_count, precomp_mgr.statistics.recompressed_jpg_count, "JPG"},
+      {precomp_switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_prog_count, precomp_mgr.statistics.recompressed_jpg_prog_count, "JPG (progressive)"},
+      {precomp_switches.use_mp3, precomp_mgr.statistics.decompressed_mp3_count, precomp_mgr.statistics.recompressed_mp3_count, "MP3"},
+      {precomp_switches.use_swf, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count, "SWF"},
+      {precomp_switches.use_base64, precomp_mgr.statistics.decompressed_base64_count, precomp_mgr.statistics.recompressed_base64_count, "Base64"},
+      {precomp_switches.use_bzip2, precomp_mgr.statistics.decompressed_bzip2_count, precomp_mgr.statistics.recompressed_bzip2_count, "bZip2"},
+      {precomp_switches.intense_mode, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count, "zLib (intense mode)"},
+      {precomp_switches.brute_mode, precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count, "Brute mode"},
     } };
     for (auto format_stats : format_statistics) {
       bool condition = std::get<0>(format_stats);
@@ -348,7 +340,7 @@ void print_statistics(Precomp& precomp_mgr) {
     }
   }
 
-  if (!precomp_mgr.switches.level_switch_used) show_used_levels(precomp_mgr);
+  if (!precomp_switches.level_switch_used) show_used_levels(precomp_mgr, precomp_switches);
 }
 
 void wait_for_key() {
@@ -368,6 +360,7 @@ void log_handler(PrecompLoggingLevels level, std::string msg) {
 int main(int argc, char* argv[])
 {
   Precomp precomp_mgr;
+  CSwitches* precomp_switches = PrecompGetSwitches(&precomp_mgr);
   precomp_mgr.set_progress_callback([](float percent) {
     auto new_progress_txt = get_progress_txt(percent);
     if (!new_progress_txt) return;
@@ -381,9 +374,9 @@ int main(int argc, char* argv[])
 
   try {
 #ifndef COMFORT
-    int op = init(precomp_mgr, argc, argv);
+    int op = init(precomp_mgr, *precomp_switches, argc, argv);
 #else
-    int op = init_comfort(precomp_mgr, argc, argv);
+    int op = init_comfort(precomp_mgr, *precomp_switches, argc, argv);
 #endif
     precomp_mgr.start_time = get_time_ms();
     switch (op) {
@@ -413,7 +406,7 @@ int main(int argc, char* argv[])
     case P_COMPRESS:
     {
       print_results(precomp_mgr, true);
-      print_statistics(precomp_mgr);
+      print_statistics(precomp_mgr, *precomp_switches);
       break;
     }
     case P_DECOMPRESS:
@@ -442,8 +435,14 @@ int main(int argc, char* argv[])
   return return_errorlevel;
 }
 
+void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long long>& ignore_list) {
+  precomp_switches.ignore_list_ptr = static_cast<long long*>(malloc(ignore_list.size() * sizeof(long long)));
+  memcpy(precomp_switches.ignore_list_ptr, ignore_list.data(), ignore_list.size());
+  precomp_switches.ignore_list_count = ignore_list.size();
+}
+
 #ifndef COMFORT
-int init(Precomp& precomp_mgr, int argc, char* argv[]) {
+int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   int i, j;
   bool appended_pcf = false;
 
@@ -458,14 +457,6 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
   print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
   print_to_console("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
-
-  // init compression and memory level count
-  bool use_zlib_level[81];
-  for (i = 0; i < 81; i++) {
-    precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-    precomp_mgr.obsolete.zlib_level_was_used[i] = false;
-    use_zlib_level[i] = true;
-  }
 
   // init MP3 suppression
   for (i = 0; i < 16; i++) {
@@ -491,6 +482,8 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   bool long_help = false;
   bool preserve_extension = false;
 
+  std::vector<long long> ignore_list;
+
   for (i = 1; (i < argc) && (parse_on); i++) {
     if (argv[i][0] == '-') { // switch
       if (input_file_given) {
@@ -508,14 +501,14 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       case 'I':
       {
         if (parsePrefixText(argv[i] + 1, "intense")) { // intense mode
-          precomp_mgr.switches.intense_mode = true;
+          precomp_switches.intense_mode = true;
           if (strlen(argv[i]) > 8) {
-            precomp_mgr.switches.intense_mode_depth_limit = parseIntUntilEnd(argv[i] + 8, "intense mode level limit", ERR_INTENSE_MODE_LIMIT_TOO_BIG);
+            precomp_switches.intense_mode_depth_limit = parseIntUntilEnd(argv[i] + 8, "intense mode level limit", ERR_INTENSE_MODE_LIMIT_TOO_BIG);
           }
         }
         else {
           long long ignore_pos = parseInt64UntilEnd(argv[i] + 2, "ignore position", ERR_IGNORE_POS_TOO_BIG);
-          precomp_mgr.switches.ignore_list.push_back(ignore_pos);
+          ignore_list.push_back(ignore_pos);
         }
         break;
       }
@@ -533,20 +526,20 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         if (min_ident_size_set) {
           throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_MIN_SIZE_ONCE));
         }
-        precomp_mgr.switches.min_ident_size = parseIntUntilEnd(argv[i] + 2, "minimal identical byte size", ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
+        precomp_switches.min_ident_size = parseIntUntilEnd(argv[i] + 2, "minimal identical byte size", ERR_IDENTICAL_BYTE_SIZE_TOO_BIG);
         min_ident_size_set = true;
         break;
       }
       case 'B':
       {
         if (parsePrefixText(argv[i] + 1, "brute")) { // brute mode
-          precomp_mgr.switches.brute_mode = true;
+          precomp_switches.brute_mode = true;
           if (strlen(argv[i]) > 6) {
-            precomp_mgr.switches.brute_mode_depth_limit = parseIntUntilEnd(argv[i] + 6, "brute mode level limit", ERR_BRUTE_MODE_LIMIT_TOO_BIG);
+            precomp_switches.brute_mode_depth_limit = parseIntUntilEnd(argv[i] + 6, "brute mode level limit", ERR_BRUTE_MODE_LIMIT_TOO_BIG);
           }
         }
-        else if (!parseSwitch(precomp_mgr.switches.use_brunsli, argv[i] + 1, "brunsli")
-          && !parseSwitch(precomp_mgr.switches.use_brotli, argv[i] + 1, "brotli")) {
+        else if (!parseSwitch(precomp_switches.use_brunsli, argv[i] + 1, "brunsli")
+          && !parseSwitch(precomp_switches.use_brotli, argv[i] + 1, "brotli")) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
@@ -560,14 +553,14 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (lzma_max_memory_set) {
             throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_MEMORY_ONCE));
           }
-          precomp_mgr.switches.compression_otf_max_memory = parseIntUntilEnd(argv[i] + 3, "LZMA maximal memory");
+          precomp_switches.compression_otf_max_memory = parseIntUntilEnd(argv[i] + 3, "LZMA maximal memory");
           lzma_max_memory_set = true;
         }
         else if (toupper(argv[i][2]) == 'T') { // LZMA thread count
           if (lzma_thread_count_set) {
             throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_THREAD_ONCE));
           }
-          precomp_mgr.switches.compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
+          precomp_switches.compression_otf_thread_count = parseIntUntilEnd(argv[i] + 3, "LZMA thread count");
           lzma_thread_count_set = true;
         }
         else if (toupper(argv[i][2]) == 'L') {
@@ -678,8 +671,8 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             default:
               throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown LZMA filter type \"%c\"\n", argv[i][argindex]));
             }
-            precomp_mgr.switches.otf_xz_filter_used_count++;
-            if (precomp_mgr.switches.otf_xz_filter_used_count > LZMA_FILTERS_MAX - 1) {
+            otf_xz_filter_used_count++;
+            if (otf_xz_filter_used_count > LZMA_FILTERS_MAX - 1) {
               throw std::runtime_error(make_cstyle_format_string("ERROR: Only up to %d LZMA filters can be used at the same time\n", LZMA_FILTERS_MAX - 1));
             }
             argindex++;
@@ -694,16 +687,16 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       }
       case 'P':
       {
-        if (!parseSwitch(precomp_mgr.switches.pdf_bmp_mode, argv[i] + 1, "pdfbmp")
-          && !parseSwitch(precomp_mgr.switches.prog_only, argv[i] + 1, "progonly")
-          && !parseSwitch(precomp_mgr.switches.preflate_verify, argv[i] + 1, "pfverify")
-          && !parseSwitch(precomp_mgr.switches.use_packjpg_fallback, argv[i] + 1, "packjpg")) {
+        if (!parseSwitch(precomp_switches.pdf_bmp_mode, argv[i] + 1, "pdfbmp")
+          && !parseSwitch(precomp_switches.prog_only, argv[i] + 1, "progonly")
+          && !parseSwitch(precomp_switches.preflate_verify, argv[i] + 1, "pfverify")
+          && !parseSwitch(precomp_switches.use_packjpg_fallback, argv[i] + 1, "packjpg")) {
           if (parsePrefixText(argv[i] + 1, "pfmeta")) {
             int mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
             if (mbsize >= INT_MAX / 1024) {
               throw std::runtime_error(make_cstyle_format_string("preflate meta block size set too big\n"));
             }
-            precomp_mgr.switches.preflate_meta_block_size = mbsize * 1024;
+            precomp_switches.preflate_meta_block_size = mbsize * 1024;
           }
           else {
             throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
@@ -716,29 +709,29 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         bool set_to;
         switch (argv[i][2]) {
         case '+':
-          precomp_mgr.switches.use_pdf = false;
-          precomp_mgr.switches.use_zip = false;
-          precomp_mgr.switches.use_gzip = false;
-          precomp_mgr.switches.use_png = false;
-          precomp_mgr.switches.use_gif = false;
-          precomp_mgr.switches.use_jpg = false;
-          precomp_mgr.switches.use_mp3 = false;
-          precomp_mgr.switches.use_swf = false;
-          precomp_mgr.switches.use_base64 = false;
-          precomp_mgr.switches.use_bzip2 = false;
+          precomp_switches.use_pdf = false;
+          precomp_switches.use_zip = false;
+          precomp_switches.use_gzip = false;
+          precomp_switches.use_png = false;
+          precomp_switches.use_gif = false;
+          precomp_switches.use_jpg = false;
+          precomp_switches.use_mp3 = false;
+          precomp_switches.use_swf = false;
+          precomp_switches.use_base64 = false;
+          precomp_switches.use_bzip2 = false;
           set_to = true;
           break;
         case '-':
-          precomp_mgr.switches.use_pdf = true;
-          precomp_mgr.switches.use_zip = true;
-          precomp_mgr.switches.use_gzip = true;
-          precomp_mgr.switches.use_png = true;
-          precomp_mgr.switches.use_gif = true;
-          precomp_mgr.switches.use_jpg = true;
-          precomp_mgr.switches.use_mp3 = true;
-          precomp_mgr.switches.use_swf = true;
-          precomp_mgr.switches.use_base64 = true;
-          precomp_mgr.switches.use_bzip2 = true;
+          precomp_switches.use_pdf = true;
+          precomp_switches.use_zip = true;
+          precomp_switches.use_gzip = true;
+          precomp_switches.use_png = true;
+          precomp_switches.use_gif = true;
+          precomp_switches.use_jpg = true;
+          precomp_switches.use_mp3 = true;
+          precomp_switches.use_swf = true;
+          precomp_switches.use_base64 = true;
+          precomp_switches.use_bzip2 = true;
           set_to = false;
           break;
         default:
@@ -747,34 +740,34 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
         for (j = 3; j < (int)strlen(argv[i]); j++) {
           switch (toupper(argv[i][j])) {
           case 'P': // PDF
-            precomp_mgr.switches.use_pdf = set_to;
+            precomp_switches.use_pdf = set_to;
             break;
           case 'Z': // ZIP
-            precomp_mgr.switches.use_zip = set_to;
+            precomp_switches.use_zip = set_to;
             break;
           case 'G': // GZip
-            precomp_mgr.switches.use_gzip = set_to;
+            precomp_switches.use_gzip = set_to;
             break;
           case 'N': // PNG
-            precomp_mgr.switches.use_png = set_to;
+            precomp_switches.use_png = set_to;
             break;
           case 'F': // GIF
-            precomp_mgr.switches.use_gif = set_to;
+            precomp_switches.use_gif = set_to;
             break;
           case 'J': // JPG
-            precomp_mgr.switches.use_jpg = set_to;
+            precomp_switches.use_jpg = set_to;
             break;
           case '3': // MP3
-            precomp_mgr.switches.use_mp3 = set_to;
+            precomp_switches.use_mp3 = set_to;
             break;
           case 'S': // SWF
-            precomp_mgr.switches.use_swf = set_to;
+            precomp_switches.use_swf = set_to;
             break;
           case 'M': // MIME Base64
-            precomp_mgr.switches.use_base64 = set_to;
+            precomp_switches.use_base64 = set_to;
             break;
           case 'B': // bZip2
-            precomp_mgr.switches.use_bzip2 = set_to;
+            precomp_switches.use_bzip2 = set_to;
             break;
           default:
             throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", argv[i][j]));
@@ -842,10 +835,6 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
       case 'Z':
       {
         if (toupper(argv[i][2]) == 'L') {
-          for (j = 0; j < 81; j++) {
-            use_zlib_level[j] = false;
-          }
-
           level_switch = true;
 
           for (j = 0; j < ((int)strlen(argv[i]) - 3); j += 3) {
@@ -861,7 +850,6 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
             int mem_level_to_use = (char(argv[i][j + 4]) - '1');
             if (((comp_level_to_use >= 0) && (comp_level_to_use <= 8))
               && ((mem_level_to_use >= 0) && (mem_level_to_use <= 8))) {
-              use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
             }
             else {
               throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid zlib level %c%c\n", argv[i][j + 3], argv[i][j + 4]));
@@ -901,7 +889,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
 
       case 'M':
       {
-        if (!parseSwitch(precomp_mgr.switches.use_mjpeg, argv[i] + 1, "mjpeg")) {
+        if (!parseSwitch(precomp_switches.use_mjpeg, argv[i] + 1, "mjpeg")) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
@@ -909,7 +897,7 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
 
       case 'F':
       {
-        precomp_mgr.switches.fast_mode = true;
+        precomp_switches.fast_mode = true;
         if (argv[i][2] != 0) { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
@@ -1105,12 +1093,12 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
   if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
     if (min_ident_size_set) {
       print_to_console("\n");
-      print_to_console("Minimal ident size set to %i bytes\n", precomp_mgr.switches.min_ident_size);
+      print_to_console("Minimal ident size set to %i bytes\n", precomp_switches.min_ident_size);
     }
-    if (!precomp_mgr.switches.ignore_list.empty()) {
+    if (!ignore_list.empty()) {
       print_to_console("\n");
       print_to_console("Ignore position list:\n");
-      for (auto ignore_pos : precomp_mgr.switches.ignore_list) {
+      for (auto ignore_pos : ignore_list) {
         std::cout << ignore_pos << std::endl;
       }
       print_to_console("\n");
@@ -1121,25 +1109,17 @@ int init(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   if (level_switch) {
 
-    for (i = 0; i < 81; i++) {
-      if (use_zlib_level[i]) {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-      }
-      else {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = -1;
-      }
-    }
-
-    precomp_mgr.switches.level_switch_used = true;
+    precomp_switches.level_switch_used = true;
 
   }
 
   packjpg_mp3_dll_msg();
+  setSwitchesIgnoreList(precomp_switches, ignore_list);
 
   return operation;
 }
 #else
-int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
+int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   int i, j;
   int operation = P_COMPRESS;
   bool parse_ini_file = true;
@@ -1161,14 +1141,6 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   print_to_console(" - %s\n", V_MSG);
   print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n\n");
 
-  // init compression and memory level count
-  bool use_zlib_level[81];
-  for (i = 0; i < 81; i++) {
-    precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-    precomp_mgr.obsolete.zlib_level_was_used[i] = false;
-    use_zlib_level[i] = true;
-  }
-
   // init MP3 suppression
   for (i = 0; i < 16; i++) {
     precomp_mgr.ctx->suppress_mp3_type_until[i] = -1;
@@ -1178,6 +1150,8 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum = -1;
   precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit = -1;
   precomp_mgr.ctx->mp3_parsing_cache_second_frame = -1;
+
+  std::vector<long long> ignore_list;
 
   // parse parameters (should be input file only)
   if (argc == 1) {
@@ -1288,9 +1262,9 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
       ostream_printf(fnewini, ";; Use this to ignore streams at certain positions in the file\n");
       ostream_printf(fnewini, ";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
       ostream_printf(fnewini, "; Ignore_Positions=0\n");
-      precomp_mgr.switches.min_ident_size = 4;
+      precomp_switches.min_ident_size = 4;
       min_ident_size_set = true;
-      precomp_mgr.switches.compression_otf_max_memory = 2048;
+      precomp_switches.compression_otf_max_memory = 2048;
       lzma_max_memory_set = true;
       lzma_thread_count_set = true;
       parse_ini_file = false;
@@ -1389,10 +1363,10 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               }
               multiplicator *= 10;
             }
-            precomp_mgr.switches.min_ident_size = ident_size;
+            precomp_switches.min_ident_size = ident_size;
             min_ident_size_set = true;
 
-            print_to_console("INI: Set minimal identical byte size to %i\n", precomp_mgr.switches.min_ident_size);
+            print_to_console("INI: Set minimal identical byte size to %i\n", precomp_switches.min_ident_size);
 
             valid_param = true;
           }
@@ -1444,7 +1418,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             unsigned int multiplicator = 1;
             for (j = (strlen(value) - 1); j >= 0; j--) {
-              precomp_mgr.switches.compression_otf_max_memory += ((unsigned int)(value[j]) - '0') * multiplicator;
+              precomp_switches.compression_otf_max_memory += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
                 throw std::runtime_error("Somehow the OTF max memory amount set caused an overflow during parsing");
               }
@@ -1452,8 +1426,8 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             lzma_max_memory_set = true;
 
-            if (precomp_mgr.switches.compression_otf_max_memory > 0) {
-              print_to_console("INI: Set LZMA maximal memory to %i MiB\n", (int)precomp_mgr.switches.compression_otf_max_memory);
+            if (precomp_switches.compression_otf_max_memory > 0) {
+              print_to_console("INI: Set LZMA maximal memory to %i MiB\n", (int)precomp_switches.compression_otf_max_memory);
             }
 
             valid_param = true;
@@ -1465,7 +1439,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             unsigned int multiplicator = 1;
             for (j = (strlen(value) - 1); j >= 0; j--) {
-              precomp_mgr.switches.compression_otf_thread_count += ((unsigned int)(value[j]) - '0') * multiplicator;
+              precomp_switches.compression_otf_thread_count += ((unsigned int)(value[j]) - '0') * multiplicator;
               if ((multiplicator * 10) < multiplicator) {
                 throw std::runtime_error("Somehow the OTF thread count set caused an overflow during parsing");
               }
@@ -1473,8 +1447,8 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             lzma_thread_count_set = true;
 
-            if (precomp_mgr.switches.compression_otf_thread_count > 0) {
-              print_to_console("INI: Set LZMA thread count to %i\n", precomp_mgr.switches.compression_otf_thread_count);
+            if (precomp_switches.compression_otf_thread_count > 0) {
+              print_to_console("INI: Set LZMA thread count to %i\n", precomp_switches.compression_otf_thread_count);
             }
 
             valid_param = true;
@@ -1534,8 +1508,8 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               default:
                 throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]));
               }
-              precomp_mgr.switches.otf_xz_filter_used_count++;
-              if (precomp_mgr.switches.otf_xz_filter_used_count > 3) {
+              otf_xz_filter_used_count++;
+              if (otf_xz_filter_used_count > 3) {
                 throw std::runtime_error(make_cstyle_format_string("ERROR: Only up to 3 LZMA filters can be used at the same time\n"));
               }
             }
@@ -1552,7 +1526,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled fast mode\n");
-              precomp_mgr.switches.fast_mode = true;
+              precomp_switches.fast_mode = true;
               valid_param = true;
             }
 
@@ -1584,7 +1558,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled intense mode\n");
-              precomp_mgr.switches.intense_mode = true;
+              precomp_switches.intense_mode = true;
               valid_param = true;
             }
 
@@ -1601,7 +1575,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled brute mode\n");
-              precomp_mgr.switches.brute_mode = true;
+              precomp_switches.brute_mode = true;
               valid_param = true;
             }
 
@@ -1613,13 +1587,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "pdf_bmp_mode") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled PDF BMP mode\n");
-              precomp_mgr.switches.pdf_bmp_mode = false;
+              precomp_switches.pdf_bmp_mode = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled PDF BMP mode\n");
-              precomp_mgr.switches.pdf_bmp_mode = true;
+              precomp_switches.pdf_bmp_mode = true;
               valid_param = true;
             }
 
@@ -1631,13 +1605,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "jpg_progressive_only") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled progressive only JPG mode\n");
-              precomp_mgr.switches.prog_only = false;
+              precomp_switches.prog_only = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled progressive only JPG mode\n");
-              precomp_mgr.switches.prog_only = true;
+              precomp_switches.prog_only = true;
               valid_param = true;
             }
 
@@ -1649,13 +1623,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "mjpeg_recompression") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled MJPEG recompression\n");
-              precomp_mgr.switches.use_mjpeg = false;
+              precomp_switches.use_mjpeg = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled MJPEG recompression\n");
-              precomp_mgr.switches.use_mjpeg = true;
+              precomp_switches.use_mjpeg = true;
               valid_param = true;
             }
 
@@ -1667,13 +1641,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "jpg_brunsli") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled brunsli for JPG commpression\n");
-              precomp_mgr.switches.use_brunsli = false;
+              precomp_switches.use_brunsli = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled brunsli for JPG compression\n");
-              precomp_mgr.switches.use_brunsli = true;
+              precomp_switches.use_brunsli = true;
               valid_param = true;
             }
 
@@ -1685,13 +1659,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "jpg_brotli") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled brotli for JPG metadata compression\n");
-              precomp_mgr.switches.use_brotli = false;
+              precomp_switches.use_brotli = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled brotli for JPG metadata compression\n");
-              precomp_mgr.switches.use_brotli = true;
+              precomp_switches.use_brotli = true;
               valid_param = true;
             }
 
@@ -1703,13 +1677,13 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
           if (strcmp(param, "jpg_packjpg") == 0) {
             if (strcmp(value, "off") == 0) {
               print_to_console("INI: Disabled packJPG for JPG compression\n");
-              precomp_mgr.switches.use_brotli = false;
+              precomp_switches.use_brotli = false;
               valid_param = true;
             }
 
             if (strcmp(value, "on") == 0) {
               print_to_console("INI: Enabled packJPG for JPG compression\n");
-              precomp_mgr.switches.use_brotli = true;
+              precomp_switches.use_brotli = true;
               valid_param = true;
             }
 
@@ -1724,118 +1698,118 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             compression_type_line_used = true;
 
-            precomp_mgr.switches.use_pdf = false;
-            precomp_mgr.switches.use_zip = false;
-            precomp_mgr.switches.use_gzip = false;
-            precomp_mgr.switches.use_png = false;
-            precomp_mgr.switches.use_gif = false;
-            precomp_mgr.switches.use_jpg = false;
-            precomp_mgr.switches.use_mp3 = false;
-            precomp_mgr.switches.use_swf = false;
-            precomp_mgr.switches.use_base64 = false;
-            precomp_mgr.switches.use_bzip2 = false;
+            precomp_switches.use_pdf = false;
+            precomp_switches.use_zip = false;
+            precomp_switches.use_gzip = false;
+            precomp_switches.use_png = false;
+            precomp_switches.use_gif = false;
+            precomp_switches.use_jpg = false;
+            precomp_switches.use_mp3 = false;
+            precomp_switches.use_swf = false;
+            precomp_switches.use_base64 = false;
+            precomp_switches.use_bzip2 = false;
 
             for (j = 0; j < (int)strlen(value); j++) {
               switch (toupper(value[j])) {
               case 'P': // PDF
-                precomp_mgr.switches.use_pdf = true;
+                precomp_switches.use_pdf = true;
                 break;
               case 'Z': // ZIP
-                precomp_mgr.switches.use_zip = true;
+                precomp_switches.use_zip = true;
                 break;
               case 'G': // GZip
-                precomp_mgr.switches.use_gzip = true;
+                precomp_switches.use_gzip = true;
                 break;
               case 'N': // PNG
-                precomp_mgr.switches.use_png = true;
+                precomp_switches.use_png = true;
                 break;
               case 'F': // GIF
-                precomp_mgr.switches.use_gif = true;
+                precomp_switches.use_gif = true;
                 break;
               case 'J': // JPG
-                precomp_mgr.switches.use_jpg = true;
+                precomp_switches.use_jpg = true;
                 break;
               case '3': // MP3
-                precomp_mgr.switches.use_mp3 = true;
+                precomp_switches.use_mp3 = true;
                 break;
               case 'S': // SWF
-                precomp_mgr.switches.use_swf = true;
+                precomp_switches.use_swf = true;
                 break;
               case 'M': // MIME Base64
-                precomp_mgr.switches.use_base64 = true;
+                precomp_switches.use_base64 = true;
                 break;
               case 'B': // bZip2
-                precomp_mgr.switches.use_bzip2 = true;
+                precomp_switches.use_bzip2 = true;
                 break;
               default:
                 throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
               }
             }
 
-            if (precomp_mgr.switches.use_pdf) {
+            if (precomp_switches.use_pdf) {
               print_to_console("INI: PDF compression enabled\n");
             }
             else {
               print_to_console("INI: PDF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_zip) {
+            if (precomp_switches.use_zip) {
               print_to_console("INI: ZIP compression enabled\n");
             }
             else {
               print_to_console("INI: ZIP compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_gzip) {
+            if (precomp_switches.use_gzip) {
               print_to_console("INI: GZip compression enabled\n");
             }
             else {
               print_to_console("INI: GZip compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_png) {
+            if (precomp_switches.use_png) {
               print_to_console("INI: PNG compression enabled\n");
             }
             else {
               print_to_console("INI: PNG compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_gif) {
+            if (precomp_switches.use_gif) {
               print_to_console("INI: GIF compression enabled\n");
             }
             else {
               print_to_console("INI: GIF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_jpg) {
+            if (precomp_switches.use_jpg) {
               print_to_console("INI: JPG compression enabled\n");
             }
             else {
               print_to_console("INI: JPG compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_mp3) {
+            if (precomp_switches.use_mp3) {
               print_to_console("INI: MP3 compression enabled\n");
             }
             else {
               print_to_console("INI: MP3 compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_swf) {
+            if (precomp_switches.use_swf) {
               print_to_console("INI: SWF compression enabled\n");
             }
             else {
               print_to_console("INI: SWF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_base64) {
+            if (precomp_switches.use_base64) {
               print_to_console("INI: Base64 compression enabled\n");
             }
             else {
               print_to_console("INI: Base64 compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_bzip2) {
+            if (precomp_switches.use_bzip2) {
               print_to_console("INI: bZip2 compression enabled\n");
             }
             else {
@@ -1851,118 +1825,118 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
             }
             compression_type_line_used = true;
 
-            precomp_mgr.switches.use_pdf = true;
-            precomp_mgr.switches.use_zip = true;
-            precomp_mgr.switches.use_gzip = true;
-            precomp_mgr.switches.use_png = true;
-            precomp_mgr.switches.use_gif = true;
-            precomp_mgr.switches.use_jpg = true;
-            precomp_mgr.switches.use_mp3 = true;
-            precomp_mgr.switches.use_swf = true;
-            precomp_mgr.switches.use_base64 = true;
-            precomp_mgr.switches.use_bzip2 = true;
+            precomp_switches.use_pdf = true;
+            precomp_switches.use_zip = true;
+            precomp_switches.use_gzip = true;
+            precomp_switches.use_png = true;
+            precomp_switches.use_gif = true;
+            precomp_switches.use_jpg = true;
+            precomp_switches.use_mp3 = true;
+            precomp_switches.use_swf = true;
+            precomp_switches.use_base64 = true;
+            precomp_switches.use_bzip2 = true;
 
             for (j = 0; j < (int)strlen(value); j++) {
               switch (toupper(value[j])) {
               case 'P': // PDF
-                precomp_mgr.switches.use_pdf = false;
+                precomp_switches.use_pdf = false;
                 break;
               case 'Z': // ZIP
-                precomp_mgr.switches.use_zip = false;
+                precomp_switches.use_zip = false;
                 break;
               case 'G': // GZip
-                precomp_mgr.switches.use_gzip = false;
+                precomp_switches.use_gzip = false;
                 break;
               case 'N': // PNG
-                precomp_mgr.switches.use_png = false;
+                precomp_switches.use_png = false;
                 break;
               case 'F': // GIF
-                precomp_mgr.switches.use_gif = false;
+                precomp_switches.use_gif = false;
                 break;
               case 'J': // JPG
-                precomp_mgr.switches.use_jpg = false;
+                precomp_switches.use_jpg = false;
                 break;
               case '3': // MP3
-                precomp_mgr.switches.use_mp3 = false;
+                precomp_switches.use_mp3 = false;
                 break;
               case 'S': // SWF
-                precomp_mgr.switches.use_swf = false;
+                precomp_switches.use_swf = false;
                 break;
               case 'M': // MIME Base64
-                precomp_mgr.switches.use_base64 = false;
+                precomp_switches.use_base64 = false;
                 break;
               case 'B': // bZip2
-                precomp_mgr.switches.use_bzip2 = false;
+                precomp_switches.use_bzip2 = false;
                 break;
               default:
                 throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
               }
             }
 
-            if (precomp_mgr.switches.use_pdf) {
+            if (precomp_switches.use_pdf) {
               print_to_console("INI: PDF compression enabled\n");
             }
             else {
               print_to_console("INI: PDF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_zip) {
+            if (precomp_switches.use_zip) {
               print_to_console("INI: ZIP compression enabled\n");
             }
             else {
               print_to_console("INI: ZIP compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_gzip) {
+            if (precomp_switches.use_gzip) {
               print_to_console("INI: GZip compression enabled\n");
             }
             else {
               print_to_console("INI: GZip compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_png) {
+            if (precomp_switches.use_png) {
               print_to_console("INI: PNG compression enabled\n");
             }
             else {
               print_to_console("INI: PNG compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_gif) {
+            if (precomp_switches.use_gif) {
               print_to_console("INI: GIF compression enabled\n");
             }
             else {
               print_to_console("INI: GIF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_jpg) {
+            if (precomp_switches.use_jpg) {
               print_to_console("INI: JPG compression enabled\n");
             }
             else {
               print_to_console("INI: JPG compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_mp3) {
+            if (precomp_switches.use_mp3) {
               print_to_console("INI: MP3 compression enabled\n");
             }
             else {
               print_to_console("INI: MP3 compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_swf) {
+            if (precomp_switches.use_swf) {
               print_to_console("INI: SWF compression enabled\n");
             }
             else {
               print_to_console("INI: SWF compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_base64) {
+            if (precomp_switches.use_base64) {
               print_to_console("INI: Base64 compression enabled\n");
             }
             else {
               print_to_console("INI: Base64 compression disabled\n");
             }
 
-            if (precomp_mgr.switches.use_bzip2) {
+            if (precomp_switches.use_bzip2) {
               print_to_console("INI: bZip2 compression enabled\n");
             }
             else {
@@ -1974,10 +1948,6 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
           // zLib levels
           if (strcmp(param, "zlib_levels") == 0) {
-            for (j = 0; j < 81; j++) {
-              use_zlib_level[j] = false;
-            }
-
             level_switch = true;
 
             for (j = 0; j < ((int)strlen(value)); j += 3) {
@@ -1993,7 +1963,6 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               int mem_level_to_use = (char(value[j + 1]) - '1');
               if (((comp_level_to_use >= 0) && (comp_level_to_use <= 8))
                 && ((mem_level_to_use >= 0) && (mem_level_to_use <= 8))) {
-                use_zlib_level[comp_level_to_use + mem_level_to_use * 9] = true;
               }
               else {
                 throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid zlib level %c%c\n", value[j], value[j + 1]));
@@ -2055,7 +2024,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
                 break;
               case ',':
                 if (act_ignore_pos != -1) {
-                  precomp_mgr.switches.ignore_list.push_back(act_ignore_pos);
+                  ignore_list.push_back(act_ignore_pos);
                   act_ignore_pos = -1;
                 }
                 break;
@@ -2066,7 +2035,7 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
               }
             }
             if (act_ignore_pos != -1) {
-              precomp_mgr.switches.ignore_list.push_back(act_ignore_pos);
+              ignore_list.push_back(act_ignore_pos);
             }
 
             if (print_ignore_positions_message) {
@@ -2141,12 +2110,12 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
   if (PRECOMP_VERBOSITY_LEVEL >= PRECOMP_DEBUG_LOG) {
     if (min_ident_size_set) {
       print_to_console("\n");
-      print_to_console("Minimal ident size set to %i bytes\n", precomp_mgr.switches.min_ident_size);
+      print_to_console("Minimal ident size set to %i bytes\n", precomp_switches.min_ident_size);
     }
-    if (!precomp_mgr.switches.ignore_list.empty()) {
+    if (!ignore_list.empty()) {
       print_to_console("\n");
       print_to_console("Ignore position list:\n");
-      for (auto ignore_pos : precomp_mgr.switches.ignore_list) {
+      for (auto ignore_pos : ignore_list) {
         std::cout << ignore_pos << std::endl;
       }
       print_to_console("\n");
@@ -2155,20 +2124,12 @@ int init_comfort(Precomp& precomp_mgr, int argc, char* argv[]) {
 
   if (level_switch) {
 
-    for (i = 0; i < 81; i++) {
-      if (use_zlib_level[i]) {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-      }
-      else {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = -1;
-      }
-    }
-
-    precomp_mgr.switches.level_switch_used = true;
+    precomp_switches.level_switch_used = true;
 
   }
 
   packjpg_mp3_dll_msg();
+  setSwitchesIgnoreList(precomp_switches, ignore_list);
 
   return operation;
 }

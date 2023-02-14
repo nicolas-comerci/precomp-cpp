@@ -6,6 +6,7 @@
 #include <thread>
 #endif
 
+#include "libprecomp.h"
 #include "precomp_io.h"
 #include "precomp_utils.h"
 
@@ -41,67 +42,13 @@ extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL
 
 void PrecompSetLoggingCallback(std::function<void(PrecompLoggingLevels, std::string)> callback);
 
-// Switches class
-class EXPORT Switches {
+class EXPORT Switches: public CSwitches {
+  using CSwitches::ignore_list_ptr;
+  using CSwitches::ignore_list_count;
   public:
     Switches();
-
-    int compression_method;        //compression method to use (default: none)
-    uint64_t compression_otf_max_memory;    // max. memory for LZMA compression method (default: 2 GiB)
-    unsigned int compression_otf_thread_count;  // max. thread count for LZMA compression method (default: auto-detect)
-
-    //byte positions to ignore (default: none)
-    std::vector<long long> ignore_list;
-
-    bool intense_mode;             //intense mode (default: off)
-    bool fast_mode;                //fast mode (default: off)
-    bool brute_mode;               //brute mode (default: off)
-    bool pdf_bmp_mode;             //wrap BMP header around PDF images
-                                   //  (default: off)
-    bool prog_only;                //recompress progressive JPGs only
-                                   //  (default: off)
-    bool use_mjpeg;                //insert huffman table for MJPEG recompression
-                                   //  (default: on)
-    bool use_brunsli;              //use brunsli for JPG compression
-                                   //  (default: on)
-    bool use_brotli;               //use brotli for JPG metadata when brunsli is used
-                                   //  (default: off)
-    bool use_packjpg_fallback;     //use packJPG for JPG compression (fallback when brunsli fails)
-                                   //  (default: on)
-    bool DEBUG_MODE;               //debug mode (default: off)
-
-    unsigned int min_ident_size;   //minimal identical bytes (default: 4)
-
-    //(p)recompression types to use (default: all)
-    bool use_pdf;
-    bool use_zip;
-    bool use_gzip;
-    bool use_png;
-    bool use_gif;
-    bool use_jpg;
-    bool use_mp3;
-    bool use_swf;
-    bool use_base64;
-    bool use_bzip2;
-
-    bool level_switch_used;            //level switch used? (default: no)
-    bool use_zlib_level[81];      //compression levels to use (default: all)
-    int otf_xz_filter_used_count = 0;
-
-    int intense_mode_depth_limit = -1;
-    int brute_mode_depth_limit = -1;
-
-    // preflate config
-    size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
-    bool preflate_verify = false;
-};
-
-// Some variables I think are obsolete, not deleting them yet while other refactoring is in progress
-class ObsoleteData {
-public:
-  // I think these stopped being used when preflate was integrated into precomp
-  std::array<int, 81> comp_mem_level_count;
-  std::array<bool, 81> zlib_level_was_used;
+    
+    std::set<long long> ignore_set();
 };
 
 class ResultStatistics {
@@ -230,7 +177,6 @@ class Precomp {
   std::function<void(float)> progress_callback;
 
 public:
-  ObsoleteData obsolete;
   Switches switches;
   ResultStatistics statistics;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());

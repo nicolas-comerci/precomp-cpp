@@ -130,6 +130,17 @@ enum {
   D_BRUTE    = 254,
 };
 
+CSwitches* CreateCSwitches() {
+  // We create out C++ class but return a pointer to the inherited C struct, that way C users can interact with the data but we still are able
+  // to use our C++ amenities like default values via constructor and member functions
+  return new Switches();
+}
+
+CSwitches* PrecompGetSwitches(Precomp* precomp_mgr)
+{
+  return &precomp_mgr->switches;
+}
+
 //Switches constructor
 Switches::Switches() {
   compression_method = 2;
@@ -161,10 +172,15 @@ Switches::Switches() {
   use_base64 = true;
   use_bzip2 = true;
   level_switch_used = false;
-  for (int i = 0; i < 81; i++) {
-    use_zlib_level[i] = true;
-  }
+
+  ignore_list_ptr = nullptr;
+  ignore_list_count = 0;
 }
+
+std::set<long long> Switches::ignore_set() {
+  return std::set(ignore_list_ptr, ignore_list_ptr + ignore_list_count);
+}
+
 
 void RecursionContext::set_input_stream(std::istream* istream, bool take_ownership) {
   this->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(istream, take_ownership));
@@ -259,16 +275,6 @@ LIBPRECOMP void get_copyright_msg(char* msg) {
 void setSwitches(Precomp& precomp_mgr, Switches switches) {
   precomp_mgr.switches = switches;
   precomp_mgr.ctx->compression_otf_method = switches.compression_method;
-  if (switches.level_switch_used) {
-
-    for (int i = 0; i < 81; i++) {
-      if (switches.use_zlib_level[i]) {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-      } else {
-        precomp_mgr.obsolete.comp_mem_level_count[i] = -1;
-      }
-    }
-  }
 }
 
 // precompress a file
@@ -277,13 +283,6 @@ void setSwitches(Precomp& precomp_mgr, Switches switches) {
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
   Precomp precomp_mgr;
-
-  // init compression and memory level count
-  for (int i = 0; i < 81; i++) {
-    precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-    precomp_mgr.obsolete.zlib_level_was_used[i] = false;
-  }
-
   precomp_mgr.ctx->fin_length = fileSize64(in_file);
 
   auto fin = new std::ifstream();
@@ -320,13 +319,6 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
   Precomp precomp_mgr;
-
-  // init compression and memory level count
-  for (int i = 0; i < 81; i++) {
-    precomp_mgr.obsolete.comp_mem_level_count[i] = 0;
-    precomp_mgr.obsolete.zlib_level_was_used[i] = false;
-  }
-
   precomp_mgr.ctx->fin_length = fileSize64(in_file);
 
   auto fin = new std::ifstream();
@@ -1457,6 +1449,8 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
   std::string tempfile_base = temp_files_tag() + "_decomp_";
   std::string tempfile;
+  auto ignore_set = precomp_mgr.switches.ignore_set();
+
   for (precomp_mgr.ctx->input_file_pos = 0; precomp_mgr.ctx->input_file_pos < precomp_mgr.ctx->fin_length; precomp_mgr.ctx->input_file_pos++) {
   tempfile = tempfile_base;
 
@@ -1473,12 +1467,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     precomp_mgr.ctx->cb++;
   }
 
-  for (auto ignore_pos : precomp_mgr.switches.ignore_list) {
-    ignore_this_pos = (ignore_pos == precomp_mgr.ctx->input_file_pos);
-    if (ignore_this_pos) {
-      break;
-    }
-  }
+  ignore_this_pos = ignore_set.find(precomp_mgr.ctx->input_file_pos) != ignore_set.end();
 
   if (!ignore_this_pos) {
 
