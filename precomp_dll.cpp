@@ -228,8 +228,10 @@ Switches::Switches() {
   }
 
   intense_mode = false;
+  intense_mode_depth_limit = -1;
   fast_mode = false;
   brute_mode = false;
+  brute_mode_depth_limit = -1;
   pdf_bmp_mode = false;
   prog_only = false;
   use_mjpeg = true;
@@ -252,6 +254,10 @@ Switches::Switches() {
 
   ignore_list_ptr = nullptr;
   ignore_list_count = 0;
+
+  // preflate config
+  preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
+  preflate_verify = false;
 }
 
 std::set<long long> Switches::ignore_set() {
@@ -284,6 +290,13 @@ void RecursionContext::set_output_stream(std::ostream* ostream, bool take_owners
 std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
   if (recursion_contexts_stack.empty()) return ctx;
   return recursion_contexts_stack[0];
+}
+
+Precomp::Precomp(): CPrecomp() {
+  recursion_depth = 0;
+  max_recursion_depth = 10;
+  max_recursion_depth_used = 0;
+  max_recursion_depth_reached = false;
 }
 
 void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
@@ -355,7 +368,7 @@ void Precomp::call_progress_callback() {
 
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-LIBPRECOMP void get_copyright_msg(char* msg) {
+LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   if (V_MINOR2 == 0) {
     sprintf(msg, "Precomp DLL v%i.%i (c) 2006-2021 by Christian Schneider",V_MAJOR,V_MINOR);
   } else {
@@ -363,16 +376,11 @@ LIBPRECOMP void get_copyright_msg(char* msg) {
   }
 }
 
-void setSwitches(Precomp& precomp_mgr, Switches switches) {
-  precomp_mgr.switches = switches;
-  precomp_mgr.ctx->compression_otf_method = switches.compression_method;
-}
-
 // precompress a file
 // in_file = input filename
 // out_file = output filename
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
+LIBPRECOMP bool PrecompPrecompressFile(char* in_file, char* out_file, char* msg) {
   Precomp precomp_mgr;
   precomp_mgr.ctx->fin_length = fileSize64(in_file);
 
@@ -392,8 +400,6 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
     return false;
   }
   precomp_mgr.set_output_stream(fout, true);
-
-  setSwitches(precomp_mgr, switches);
 
   precomp_mgr.input_file_name = in_file;
 
@@ -408,7 +414,7 @@ LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switc
 // in_file = input filename
 // out_file = output filename
 // msg = Buffer for error messages (256 bytes buffer size are enough)
-LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches) {
+LIBPRECOMP bool PrecompRecompressFile(char* in_file, char* out_file, char* msg) {
   Precomp precomp_mgr;
   precomp_mgr.ctx->fin_length = fileSize64(in_file);
 
@@ -429,8 +435,6 @@ LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switch
     return false;
   }
   precomp_mgr.set_output_stream(fout, true);
-
-  setSwitches(precomp_mgr, switches);
 
   precomp_mgr.input_file_name = in_file;
 

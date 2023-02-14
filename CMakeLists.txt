@@ -153,7 +153,6 @@ add_stem2file(PREFLATE_SRC "${SRCDIR}/contrib/preflate/support/%STEM%.cpp"
                outputcachestream;task_pool")
 include_directories(AFTER "${SRCDIR}/contrib/preflate")
 
-set(PRECOMP_HDR "${SRCDIR}/precomp.h")
 set(PRECOMP_SRC "${SRCDIR}/precomp.cpp")
 
 set(PRECOMP_UTILS_SRC "${SRCDIR}/precomp_utils.cpp")
@@ -164,7 +163,7 @@ set(LIBPRECOMP_HDR "${SRCDIR}/libprecomp.h")
 set(PRECOMP_DLL_HDR "${SRCDIR}/precomp_dll.h")
 set(PRECOMP_DLL_SRC "${SRCDIR}/precomp_dll.cpp")
 
-set(DLLTEST_SRC "${SRCDIR}/dlltest.cpp")
+set(DLLTEST_SRC "${SRCDIR}/dlltest.c")
 
 add_library(precomp_dll_shared SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
@@ -175,13 +174,13 @@ add_library(precomp_dll_static STATIC ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKA
                                ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll_static PRIVATE -DPRECOMPDLL)
 
-add_executable(dlltest ${PRECOMP_DLL_HDR} ${DLLTEST_SRC})
+add_executable(dlltest ${LIBPRECOMP_HDR} ${DLLTEST_SRC})
 target_link_libraries(dlltest PRIVATE precomp_dll_shared)
 
-add_executable(precomp ${PRECOMP_DLL_HDR} ${PRECOMP_SRC} ${PRECOMP_HDR} ${LZMA_SRC} )
+add_executable(precomp ${LIBPRECOMP_HDR} ${PRECOMP_SRC} ${LZMA_SRC} )
 target_link_libraries(precomp PRIVATE precomp_dll_static)
 
-add_executable(precompf ${PRECOMP_DLL_HDR} ${PRECOMP_SRC} ${PRECOMP_HDR} ${LZMA_SRC} )
+add_executable(precompf ${LIBPRECOMP_HDR} ${PRECOMP_SRC} ${LZMA_SRC} )
 target_compile_definitions(precompf PRIVATE -DCOMFORT)
 target_link_libraries(precompf PRIVATE precomp_dll_static)
 

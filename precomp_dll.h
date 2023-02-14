@@ -18,20 +18,6 @@
 #include <fstream>
 #include <memory>
 
-#ifdef _MSC_VER
-#define EXPORT __declspec(dllexport)
-#define IMPORT __declspec(dllimport)
-#else
-#define EXPORT __attribute__((visibility("default")))
-#define IMPORT
-#endif
-
-#ifdef PRECOMPDLL
-#define LIBPRECOMP EXPORT
-#else
-#define LIBPRECOMP IMPORT
-#endif
-
 class EXPORT Switches: public CSwitches {
   using CSwitches::ignore_list_ptr;
   using CSwitches::ignore_list_count;
@@ -123,6 +109,8 @@ class Precomp: public CPrecomp {
   std::function<void(float)> progress_callback;
 
 public:
+  Precomp();
+
   Switches switches;
   ResultStatistics statistics;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
@@ -149,10 +137,6 @@ public:
   int conversion_from_method;
   
 };
-
-LIBPRECOMP void get_copyright_msg(char* msg);
-LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
-LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
 
 void packjpg_mp3_dll_msg();
 

@@ -1,10 +1,5 @@
 #include <stdio.h>
-#include "precomp_dll.h"
-
-LIBPRECOMP void get_copyright_msg(char* msg);
-
-LIBPRECOMP bool precompress_file(char* in_file, char* out_file, char* msg, Switches switches);
-LIBPRECOMP bool recompress_file(char* in_file, char* out_file, char* msg, Switches switches);
+#include "libprecomp.h"
 
 int main(int argc, char* argv[]) {
   char msg[256];
@@ -15,19 +10,17 @@ int main(int argc, char* argv[]) {
   }
 
   printf("\nCopyright message:\n");
-  get_copyright_msg(msg);
+  PrecompGetCopyrightMsg(msg);
   printf("%s\n", msg);
 
-  Switches switches; //Precomp switches
-
   if (argc == 2) {
-    if (!precompress_file(argv[1], "~temp.pcf", msg, switches)) {
+    if (!PrecompPrecompressFile(argv[1], "~temp.pcf", msg)) {
       printf("%s\n", msg);
     } else {
       printf("File %s was precompressed successfully to ~temp.pcf.\n", argv[1]);
     }
   } else {
-    if (!recompress_file(argv[2], "out.dat", msg, switches)) {
+    if (!PrecompRecompressFile(argv[2], "out.dat", msg)) {
       printf("%s\n", msg);
     } else {
       printf("File %s was recompressed successfully to out.dat.\n", argv[2]);

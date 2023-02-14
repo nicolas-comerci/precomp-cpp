@@ -1,11 +1,36 @@
 #ifndef LIBPRECOMP_H
 #define LIBPRECOMP_H
 
-enum PrecompLoggingLevels
+#include <stdbool.h>
+#include <stddef.h>
+#include "precomp_xz_params.h"
+
+#ifdef __cplusplus
+#define ExternC extern "C"
+#else
+#define ExternC
+#endif
+
+
+#ifdef _MSC_VER
+#define EXPORT __declspec(dllexport)
+#define IMPORT __declspec(dllimport)
+#else
+#define EXPORT __attribute__((visibility("default")))
+#define IMPORT
+#endif
+
+#ifdef PRECOMPDLL
+#define LIBPRECOMP EXPORT
+#else
+#define LIBPRECOMP IMPORT
+#endif
+
+typedef enum
 {
   PRECOMP_NORMAL_LOG,
   PRECOMP_DEBUG_LOG
-};
+} PrecompLoggingLevels;
 
 extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL_LOG)
 
@@ -18,6 +43,10 @@ void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*));
 #define P_DECOMPRESS 2
 #define P_CONVERT 3
 
+ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
+ExternC LIBPRECOMP bool PrecompPrecompressFile(char* in_file, char* out_file, char* msg);
+ExternC LIBPRECOMP bool PrecompRecompressFile(char* in_file, char* out_file, char* msg);
+
 // Do NOT instantiate any of these structs directly (get them using PrecompGet/CreateX functions instead)
 // if you do instantiate and attempt to use them, terrible things will happen to you and you will deserve every last bit of it.
 
@@ -29,10 +58,10 @@ typedef struct {
   unsigned int compression_otf_thread_count;  // max. thread count for LZMA compression method (default: auto-detect)
 
   bool intense_mode;             //intense mode (default: off)
-  int intense_mode_depth_limit = -1;
+  int intense_mode_depth_limit;
   bool fast_mode;                //fast mode (default: off)
   bool brute_mode;               //brute mode (default: off)
-  int brute_mode_depth_limit = -1;
+  int brute_mode_depth_limit;
   bool pdf_bmp_mode;             //wrap BMP header around PDF images (default: off)
   bool prog_only;                //recompress progressive JPGs only (default: off)
   bool use_mjpeg;                //insert huffman table for MJPEG recompression (default: on)
@@ -55,9 +84,8 @@ typedef struct {
 
   bool level_switch_used;            //level switch used? (default: no)
 
-  // preflate config
-  size_t preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
-  bool preflate_verify = false;
+  size_t preflate_meta_block_size;
+  bool preflate_verify;
 
   //byte positions to ignore (default: none)
   long long* ignore_list_ptr;
@@ -116,10 +144,10 @@ typedef struct {
   int conversion_to_method;
 
   // recursion
-  int recursion_depth = 0;
-  int max_recursion_depth = 10;
-  int max_recursion_depth_used = 0;
-  bool max_recursion_depth_reached = false;
+  int recursion_depth;
+  int max_recursion_depth;
+  int max_recursion_depth_used;
+  bool max_recursion_depth_reached;
 } CPrecomp;
 
 CPrecomp* PrecompCreate();
@@ -127,7 +155,6 @@ void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
 CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
 CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
 CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
-struct lzma_init_mt_extra_parameters;
 lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr);
 
 typedef void* CPrecompIStream;
