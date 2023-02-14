@@ -32,16 +32,6 @@
 #define LIBPRECOMP IMPORT
 #endif
 
-enum PrecompLoggingLevels
-{
-  PRECOMP_NORMAL_LOG,
-  PRECOMP_DEBUG_LOG
-};
-
-extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL_LOG)
-
-void PrecompSetLoggingCallback(std::function<void(PrecompLoggingLevels, std::string)> callback);
-
 class EXPORT Switches: public CSwitches {
   using CSwitches::ignore_list_ptr;
   using CSwitches::ignore_list_count;
@@ -51,49 +41,10 @@ class EXPORT Switches: public CSwitches {
     std::set<long long> ignore_set();
 };
 
-class ResultStatistics {
+class ResultStatistics: public CResultStatistics {
 public:
-  unsigned int recompressed_streams_count = 0;
-  unsigned int recompressed_pdf_count = 0;
-  unsigned int recompressed_pdf_count_8_bit = 0;
-  unsigned int recompressed_pdf_count_24_bit = 0;
-  unsigned int recompressed_zip_count = 0;
-  unsigned int recompressed_gzip_count = 0;
-  unsigned int recompressed_png_count = 0;
-  unsigned int recompressed_png_multi_count = 0;
-  unsigned int recompressed_gif_count = 0;
-  unsigned int recompressed_jpg_count = 0;
-  unsigned int recompressed_jpg_prog_count = 0;
-  unsigned int recompressed_mp3_count = 0;
-  unsigned int recompressed_swf_count = 0;
-  unsigned int recompressed_base64_count = 0;
-  unsigned int recompressed_bzip2_count = 0;
-  unsigned int recompressed_zlib_count = 0;    // intense mode
-  unsigned int recompressed_brute_count = 0;   // brute mode
-
-  unsigned int decompressed_streams_count = 0;
-  unsigned int decompressed_pdf_count = 0;
-  unsigned int decompressed_pdf_count_8_bit = 0;
-  unsigned int decompressed_pdf_count_24_bit = 0;
-  unsigned int decompressed_zip_count = 0;
-  unsigned int decompressed_gzip_count = 0;
-  unsigned int decompressed_png_count = 0;
-  unsigned int decompressed_png_multi_count = 0;
-  unsigned int decompressed_gif_count = 0;
-  unsigned int decompressed_jpg_count = 0;
-  unsigned int decompressed_jpg_prog_count = 0;
-  unsigned int decompressed_mp3_count = 0;
-  unsigned int decompressed_swf_count = 0;
-  unsigned int decompressed_base64_count = 0;
-  unsigned int decompressed_bzip2_count = 0;
-  unsigned int decompressed_zlib_count = 0;    // intense mode
-  unsigned int decompressed_brute_count = 0;   // brute mode
+  ResultStatistics();
 };
-
-#define P_NONE 0
-#define P_COMPRESS 1
-#define P_DECOMPRESS 2
-#define P_CONVERT 3
 
 constexpr auto IN_BUF_SIZE = 65536; //input buffer
 constexpr auto DIV3CHUNK = 262143; // DIV3CHUNK is a bit smaller/larger than CHUNK, so that DIV3CHUNK mod 3 = 0
@@ -168,7 +119,7 @@ public:
 
 };
 
-class Precomp {
+class Precomp: public CPrecomp {
   std::function<void(float)> progress_callback;
 
 public:
@@ -195,15 +146,8 @@ public:
   unsigned char out[CHUNK];
   unsigned char copybuf[COPY_BUF_SIZE];
 
-  long long start_time;
   int conversion_from_method;
-  int conversion_to_method;
-
-  // recursion
-  int recursion_depth = 0;
-  int max_recursion_depth = 10;
-  int max_recursion_depth_used = 0;
-  bool max_recursion_depth_reached = false;
+  
 };
 
 LIBPRECOMP void get_copyright_msg(char* msg);

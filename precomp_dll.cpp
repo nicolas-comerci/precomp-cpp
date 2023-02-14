@@ -89,15 +89,15 @@
 
 PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL = PRECOMP_NORMAL_LOG;
 
-std::function<void(PrecompLoggingLevels, std::string)> logging_callback;
+std::function<void(PrecompLoggingLevels, char*)> logging_callback;
 
-void PrecompSetLoggingCallback(std::function<void(PrecompLoggingLevels, std::string)> callback) {
+void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*)) {
   logging_callback = callback;
 }
 
 void print_to_log(PrecompLoggingLevels log_level, std::string format) {
   if (PRECOMP_VERBOSITY_LEVEL < log_level || !logging_callback) return;
-  logging_callback(log_level, format);
+  logging_callback(log_level, format.data());
 }
 
 template< typename... Args >
@@ -130,18 +130,93 @@ enum {
   D_BRUTE    = 254,
 };
 
+ResultStatistics::ResultStatistics(): CResultStatistics() {
+  recompressed_streams_count = 0;
+  recompressed_pdf_count = 0;
+  recompressed_pdf_count_8_bit = 0;
+  recompressed_pdf_count_24_bit = 0;
+  recompressed_zip_count = 0;
+  recompressed_gzip_count = 0;
+  recompressed_png_count = 0;
+  recompressed_png_multi_count = 0;
+  recompressed_gif_count = 0;
+  recompressed_jpg_count = 0;
+  recompressed_jpg_prog_count = 0;
+  recompressed_mp3_count = 0;
+  recompressed_swf_count = 0;
+  recompressed_base64_count = 0;
+  recompressed_bzip2_count = 0;
+  recompressed_zlib_count = 0;    // intense mode
+  recompressed_brute_count = 0;   // brute mode
+
+  decompressed_streams_count = 0;
+  decompressed_pdf_count = 0;
+  decompressed_pdf_count_8_bit = 0;
+  decompressed_pdf_count_24_bit = 0;
+  decompressed_zip_count = 0;
+  decompressed_gzip_count = 0;
+  decompressed_png_count = 0;
+  decompressed_png_multi_count = 0;
+  decompressed_gif_count = 0;
+  decompressed_jpg_count = 0;
+  decompressed_jpg_prog_count = 0;
+  decompressed_mp3_count = 0;
+  decompressed_swf_count = 0;
+  decompressed_base64_count = 0;
+  decompressed_bzip2_count = 0;
+  decompressed_zlib_count = 0;    // intense mode
+  decompressed_brute_count = 0;   // brute mode
+}
+
 CSwitches* CreateCSwitches() {
   // We create out C++ class but return a pointer to the inherited C struct, that way C users can interact with the data but we still are able
   // to use our C++ amenities like default values via constructor and member functions
   return new Switches();
 }
 
-Precomp* PrecompCreate() { return new Precomp(); }
-void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float)) {
-  precomp_mgr->set_progress_callback(callback);
+CPrecomp* PrecompCreate() { return new Precomp(); }
+void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
+  reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
 }
-CSwitches* PrecompGetSwitches(Precomp* precomp_mgr) { return &precomp_mgr->switches; }
-CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
+CSwitches* PrecompGetSwitches(CPrecomp * precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
+CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
+CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
+lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }
+
+int PrecompPrecompress(CPrecomp* precomp_mgr) {
+  return compress_file(*reinterpret_cast<Precomp*>(precomp_mgr), 0, 100);
+}
+
+int PrecompRecompress(CPrecomp* precomp_mgr) {
+  return decompress_file(*reinterpret_cast<Precomp*>(precomp_mgr));
+}
+
+int PrecompConvert(CPrecomp* precomp_mgr) {
+  return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
+}
+
+const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  if (seek_to_beg) force_seekg(*internal_precomp_ptr->ctx->fin, 0, std::ios_base::beg);
+  read_header(*internal_precomp_ptr);
+  return internal_precomp_ptr->output_file_name.c_str();
+}
+
+void PrecompConvertHeader(CPrecomp* precomp_mgr) {
+  convert_header(*reinterpret_cast<Precomp*>(precomp_mgr));
+}
+
+void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->input_file_name = input_file_name;
+  internal_precomp_ptr->set_input_stream(static_cast<std::istream*>(istream));
+}
+
+void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->output_file_name = output_file_name;
+  internal_precomp_ptr->set_output_stream(static_cast<std::ostream*>(ostream));
+}
 
 //Switches constructor
 Switches::Switches() {

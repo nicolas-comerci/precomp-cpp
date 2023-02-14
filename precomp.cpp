@@ -1,4 +1,4 @@
-#include "precomp.h"
+#include "libprecomp.h"
 /* Copyright 2006-2021 Christian Schneider
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +46,10 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <set>
+
+#include "precomp_dll.h"
+#include "precomp_io.h"
+#include "precomp_utils.h"
 #ifdef _MSC_VER
 #include <io.h>
 #define ftruncate _chsize_s
@@ -212,7 +216,7 @@ bool get_progress_txt(float percent) {
   return true;
 }
 
-void print_results(Precomp& precomp_mgr, bool print_new_size) {
+void print_results(CPrecomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
     long long fout_length = std::filesystem::file_size(output_file_name.c_str());
@@ -226,8 +230,10 @@ void print_results(Precomp& precomp_mgr, bool print_new_size) {
   printf_time(get_time_ms() - precomp_mgr.start_time);
 }
 
-void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
+void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
+  auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
+
     if (!precomp_context->anything_was_used) {
         if (!precomp_context->non_zlib_was_used) {
             if (precomp_context->compression_otf_method == OTF_NONE) {
@@ -269,16 +275,16 @@ void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
 
     std::string disable_methods("");
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
-      {precomp_switches.use_pdf, precomp_mgr.statistics.recompressed_pdf_count, precomp_mgr.statistics.decompressed_pdf_count, "p"},
-      {precomp_switches.use_zip, precomp_mgr.statistics.recompressed_zip_count, precomp_mgr.statistics.decompressed_zip_count, "z"},
-      {precomp_switches.use_gzip, precomp_mgr.statistics.recompressed_gzip_count, precomp_mgr.statistics.decompressed_gzip_count, "g"},
-      {precomp_switches.use_png, precomp_mgr.statistics.recompressed_png_count + precomp_mgr.statistics.recompressed_png_multi_count, precomp_mgr.statistics.decompressed_png_count + precomp_mgr.statistics.decompressed_png_multi_count, "n"},
-      {precomp_switches.use_gif, precomp_mgr.statistics.recompressed_gif_count, precomp_mgr.statistics.decompressed_gif_count, "f"},
-      {precomp_switches.use_jpg, precomp_mgr.statistics.recompressed_jpg_count + precomp_mgr.statistics.recompressed_jpg_prog_count, precomp_mgr.statistics.decompressed_jpg_count + precomp_mgr.statistics.decompressed_jpg_prog_count, "j"},
-      {precomp_switches.use_swf, precomp_mgr.statistics.recompressed_swf_count, precomp_mgr.statistics.decompressed_swf_count, "s"},
-      {precomp_switches.use_base64, precomp_mgr.statistics.recompressed_base64_count, precomp_mgr.statistics.decompressed_base64_count, "m"},
-      {precomp_switches.use_bzip2, precomp_mgr.statistics.recompressed_bzip2_count, precomp_mgr.statistics.decompressed_bzip2_count, "b"},
-      {precomp_switches.use_mp3, precomp_mgr.statistics.recompressed_mp3_count, precomp_mgr.statistics.decompressed_mp3_count, "3"},
+      {precomp_switches.use_pdf, precomp_statistics->recompressed_pdf_count, precomp_statistics->decompressed_pdf_count, "p"},
+      {precomp_switches.use_zip, precomp_statistics->recompressed_zip_count, precomp_statistics->decompressed_zip_count, "z"},
+      {precomp_switches.use_gzip, precomp_statistics->recompressed_gzip_count, precomp_statistics->decompressed_gzip_count, "g"},
+      {precomp_switches.use_png, precomp_statistics->recompressed_png_count + precomp_statistics->recompressed_png_multi_count, precomp_statistics->decompressed_png_count + precomp_statistics->decompressed_png_multi_count, "n"},
+      {precomp_switches.use_gif, precomp_statistics->recompressed_gif_count, precomp_statistics->decompressed_gif_count, "f"},
+      {precomp_switches.use_jpg, precomp_statistics->recompressed_jpg_count + precomp_statistics->recompressed_jpg_prog_count, precomp_statistics->decompressed_jpg_count + precomp_statistics->decompressed_jpg_prog_count, "j"},
+      {precomp_switches.use_swf, precomp_statistics->recompressed_swf_count, precomp_statistics->decompressed_swf_count, "s"},
+      {precomp_switches.use_base64, precomp_statistics->recompressed_base64_count, precomp_statistics->decompressed_base64_count, "m"},
+      {precomp_switches.use_bzip2, precomp_statistics->recompressed_bzip2_count, precomp_statistics->decompressed_bzip2_count, "b"},
+      {precomp_switches.use_mp3, precomp_statistics->recompressed_mp3_count, precomp_statistics->decompressed_mp3_count, "3"},
     }};
     for (auto disable_format : disable_formats) {
         if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
@@ -309,27 +315,28 @@ void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
     print_to_console("\n");
 }
 
-void print_statistics(Precomp& precomp_mgr, CSwitches& precomp_switches) {
-  print_to_console("\nRecompressed streams: %i/%i\n", precomp_mgr.statistics.recompressed_streams_count, precomp_mgr.statistics.decompressed_streams_count);
+void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
+  auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
+  print_to_console("\nRecompressed streams: %i/%i\n", precomp_statistics->recompressed_streams_count, precomp_statistics->decompressed_streams_count);
 
-  if ((precomp_mgr.statistics.recompressed_streams_count > 0) || (precomp_mgr.statistics.decompressed_streams_count > 0)) {
+  if ((precomp_statistics->recompressed_streams_count > 0) || (precomp_statistics->decompressed_streams_count > 0)) {
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{ {
-      {precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count, precomp_mgr.statistics.recompressed_pdf_count, "PDF"},
-      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_8_bit, precomp_mgr.statistics.recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
-      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_mgr.statistics.decompressed_pdf_count_24_bit, precomp_mgr.statistics.recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
-      {precomp_switches.use_zip, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count, "ZIP"},
-      {precomp_switches.use_gzip, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count, "GZip"},
-      {precomp_switches.use_png, precomp_mgr.statistics.decompressed_png_count, precomp_mgr.statistics.recompressed_png_count, "PNG"},
-      {precomp_switches.use_png, precomp_mgr.statistics.decompressed_png_multi_count, precomp_mgr.statistics.recompressed_png_multi_count, "PNG (multi)"},
-      {precomp_switches.use_gif, precomp_mgr.statistics.decompressed_gif_count, precomp_mgr.statistics.recompressed_gif_count, "GIF"},
-      {precomp_switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_count, precomp_mgr.statistics.recompressed_jpg_count, "JPG"},
-      {precomp_switches.use_jpg, precomp_mgr.statistics.decompressed_jpg_prog_count, precomp_mgr.statistics.recompressed_jpg_prog_count, "JPG (progressive)"},
-      {precomp_switches.use_mp3, precomp_mgr.statistics.decompressed_mp3_count, precomp_mgr.statistics.recompressed_mp3_count, "MP3"},
-      {precomp_switches.use_swf, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count, "SWF"},
-      {precomp_switches.use_base64, precomp_mgr.statistics.decompressed_base64_count, precomp_mgr.statistics.recompressed_base64_count, "Base64"},
-      {precomp_switches.use_bzip2, precomp_mgr.statistics.decompressed_bzip2_count, precomp_mgr.statistics.recompressed_bzip2_count, "bZip2"},
-      {precomp_switches.intense_mode, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count, "zLib (intense mode)"},
-      {precomp_switches.brute_mode, precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count, "Brute mode"},
+      {precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count, precomp_statistics->recompressed_pdf_count, "PDF"},
+      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count_8_bit, precomp_statistics->recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
+      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count_24_bit, precomp_statistics->recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
+      {precomp_switches.use_zip, precomp_statistics->decompressed_zip_count, precomp_statistics->recompressed_zip_count, "ZIP"},
+      {precomp_switches.use_gzip, precomp_statistics->decompressed_gzip_count, precomp_statistics->recompressed_gzip_count, "GZip"},
+      {precomp_switches.use_png, precomp_statistics->decompressed_png_count, precomp_statistics->recompressed_png_count, "PNG"},
+      {precomp_switches.use_png, precomp_statistics->decompressed_png_multi_count, precomp_statistics->recompressed_png_multi_count, "PNG (multi)"},
+      {precomp_switches.use_gif, precomp_statistics->decompressed_gif_count, precomp_statistics->recompressed_gif_count, "GIF"},
+      {precomp_switches.use_jpg, precomp_statistics->decompressed_jpg_count, precomp_statistics->recompressed_jpg_count, "JPG"},
+      {precomp_switches.use_jpg, precomp_statistics->decompressed_jpg_prog_count, precomp_statistics->recompressed_jpg_prog_count, "JPG (progressive)"},
+      {precomp_switches.use_mp3, precomp_statistics->decompressed_mp3_count, precomp_statistics->recompressed_mp3_count, "MP3"},
+      {precomp_switches.use_swf, precomp_statistics->decompressed_swf_count, precomp_statistics->recompressed_swf_count, "SWF"},
+      {precomp_switches.use_base64, precomp_statistics->decompressed_base64_count, precomp_statistics->recompressed_base64_count, "Base64"},
+      {precomp_switches.use_bzip2, precomp_statistics->decompressed_bzip2_count, precomp_statistics->recompressed_bzip2_count, "bZip2"},
+      {precomp_switches.intense_mode, precomp_statistics->decompressed_zlib_count, precomp_statistics->recompressed_zlib_count, "zLib (intense mode)"},
+      {precomp_switches.brute_mode, precomp_statistics->decompressed_brute_count, precomp_statistics->recompressed_brute_count, "Brute mode"},
     } };
     for (auto format_stats : format_statistics) {
       bool condition = std::get<0>(format_stats);
@@ -349,92 +356,13 @@ void wait_for_key() {
     get_char_with_echo();
 }
 
-void log_handler(PrecompLoggingLevels level, std::string msg) {
+void log_handler(PrecompLoggingLevels level, char* msg) {
   if (level >= PRECOMP_DEBUG_LOG) {
     // This way even with debug logging we keep the progress percent with work sign at the end
-    print_to_console("\n" + msg + "\n" + current_progress_txt);
+    print_to_console("\n" + std::string(msg) + "\n" + current_progress_txt);
   } else {
     print_to_console(msg);
   }
-}
-
-int main(int argc, char* argv[])
-{
-  std::unique_ptr<Precomp> precomp_mgr = std::unique_ptr<Precomp>(PrecompCreate());
-  CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
-  auto lel = &log_handler;
-  PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
-    auto new_progress_txt = get_progress_txt(percent);
-    if (!new_progress_txt) return;
-    print_to_console(current_progress_txt);
-  });
-  PrecompSetLoggingCallback(&log_handler);
-  int return_errorlevel = 0;
-
-  // register CTRL-C handler
-  (void)signal(SIGINT, ctrl_c_handler);
-
-  try {
-#ifndef COMFORT
-    int op = init(*precomp_mgr, *precomp_switches, argc, argv);
-#else
-    int op = init_comfort(*precomp_mgr, *precomp_switches, argc, argv);
-#endif
-    precomp_mgr->start_time = get_time_ms();
-    switch (op) {
-    
-    case P_COMPRESS:
-    {    
-      return_errorlevel = compress_file(*precomp_mgr);
-      break;
-    }
-
-    case P_DECOMPRESS:
-    {
-      return_errorlevel = decompress_file(*precomp_mgr);
-      break;
-    }
-
-    case P_CONVERT:
-    {
-      return_errorlevel = convert_file(*precomp_mgr);
-      break;
-    }
-    }
-    if (return_errorlevel != 0) throw std::runtime_error(libprecomp_error_msg(return_errorlevel));
-
-    switch (op) {
-    
-    case P_COMPRESS:
-    {
-      print_results(*precomp_mgr, true);
-      print_statistics(*precomp_mgr, *precomp_switches);
-      break;
-    }
-    case P_DECOMPRESS:
-    {
-      print_results(*precomp_mgr, false);
-      break;
-    }
-    case P_CONVERT:
-    {
-      print_results(*precomp_mgr, true);
-      break;
-    }
-    }
-  }
-  catch (const std::runtime_error& err)
-  {
-    print_to_console(err.what());
-    print_to_console("\n");
-    return_errorlevel = return_errorlevel == 0 ? 1 : return_errorlevel;
-  }
-
-#ifdef COMFORT
-  wait_for_key();
-#endif
-
-  return return_errorlevel;
 }
 
 void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long long>& ignore_list) {
@@ -444,8 +372,10 @@ void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long l
 }
 
 #ifndef COMFORT
-int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
+int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
+  auto precomp_otf_xz_extra_params = PrecompGetXzParameters(&precomp_mgr);
+
   int i, j;
   bool appended_pcf = false;
 
@@ -558,9 +488,9 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         }
         else if (toupper(argv[i][2]) == 'L') {
           if (toupper(argv[i][3]) == 'C') {
-            precomp_mgr.otf_xz_extra_params->lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
-            int lclp = (precomp_mgr.otf_xz_extra_params->lc != 0 ? precomp_mgr.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
-              + (precomp_mgr.otf_xz_extra_params->lp != 0 ? precomp_mgr.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
+            precomp_otf_xz_extra_params->lc = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal context bits");
+            int lclp = (precomp_otf_xz_extra_params->lc != 0 ? precomp_otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+              + (precomp_otf_xz_extra_params->lp != 0 ? precomp_otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
             if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
               throw std::runtime_error(make_cstyle_format_string(
                 "sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
@@ -569,9 +499,9 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
             }
           }
           else if (toupper(argv[i][3]) == 'P') {
-            precomp_mgr.otf_xz_extra_params->lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
-            int lclp = (precomp_mgr.otf_xz_extra_params->lc != 0 ? precomp_mgr.otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
-              + (precomp_mgr.otf_xz_extra_params->lp != 0 ? precomp_mgr.otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
+            precomp_otf_xz_extra_params->lp = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA literal position bits");
+            int lclp = (precomp_otf_xz_extra_params->lc != 0 ? precomp_otf_xz_extra_params->lc - 1 : LZMA_LC_DEFAULT)
+              + (precomp_otf_xz_extra_params->lp != 0 ? precomp_otf_xz_extra_params->lp - 1 : LZMA_LP_DEFAULT);
             if (lclp < LZMA_LCLP_MIN || lclp > LZMA_LCLP_MAX) {
               throw std::runtime_error(make_cstyle_format_string(
                 "sum of LZMA lc (default %d) and lp (default %d) must be inside %d..%d\n",
@@ -585,8 +515,8 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         }
         else if (toupper(argv[i][2]) == 'P') {
           if (toupper(argv[i][3]) == 'B') {
-            precomp_mgr.otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
-            int pb = precomp_mgr.otf_xz_extra_params->pb != 0 ? precomp_mgr.otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
+            precomp_otf_xz_extra_params->pb = 1 + parseIntUntilEnd(argv[i] + 4, "LZMA position bits");
+            int pb = precomp_otf_xz_extra_params->pb != 0 ? precomp_otf_xz_extra_params->pb - 1 : LZMA_PB_DEFAULT;
             if (pb < LZMA_PB_MIN || pb > LZMA_PB_MAX) {
               throw std::runtime_error(make_cstyle_format_string(
                 "LZMA pb (default %d) must be inside %d..%d\n",
@@ -618,22 +548,22 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
           while (argv[i][argindex] != 0) {
             switch (toupper(argv[i][argindex])) {
             case 'X':
-              precomp_mgr.otf_xz_extra_params->enable_filter_x86 = true;
+              precomp_otf_xz_extra_params->enable_filter_x86 = true;
               break;
             case 'P':
-              precomp_mgr.otf_xz_extra_params->enable_filter_powerpc = true;
+              precomp_otf_xz_extra_params->enable_filter_powerpc = true;
               break;
             case 'I':
-              precomp_mgr.otf_xz_extra_params->enable_filter_ia64 = true;
+              precomp_otf_xz_extra_params->enable_filter_ia64 = true;
               break;
             case 'A':
-              precomp_mgr.otf_xz_extra_params->enable_filter_arm = true;
+              precomp_otf_xz_extra_params->enable_filter_arm = true;
               break;
             case 'T':
-              precomp_mgr.otf_xz_extra_params->enable_filter_armthumb = true;
+              precomp_otf_xz_extra_params->enable_filter_armthumb = true;
               break;
             case 'S':
-              precomp_mgr.otf_xz_extra_params->enable_filter_sparc = true;
+              precomp_otf_xz_extra_params->enable_filter_sparc = true;
               break;
             case 'D':
             {
@@ -645,14 +575,14 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
                   LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
                 );
               }
-              precomp_mgr.otf_xz_extra_params->enable_filter_delta = true;
+              precomp_otf_xz_extra_params->enable_filter_delta = true;
               while ((argv[i][argindex] > '0') && (argv[i][argindex] < '9')) {
-                precomp_mgr.otf_xz_extra_params->filter_delta_distance *= 10;
-                precomp_mgr.otf_xz_extra_params->filter_delta_distance += (argv[i][argindex] - '0');
+                precomp_otf_xz_extra_params->filter_delta_distance *= 10;
+                precomp_otf_xz_extra_params->filter_delta_distance += (argv[i][argindex] - '0');
                 argindex++;
               }
-              if (precomp_mgr.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
-                || precomp_mgr.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+              if (precomp_otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
+                || precomp_otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                 throw std::runtime_error(make_cstyle_format_string(
                   "ERROR: LZMA delta filter distance must be in range %d..%d\n",
                   LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
@@ -917,13 +847,13 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
 
       input_file_given = true;
       input_file_name = argv[i];
-      precomp_mgr.input_file_name = input_file_name;
+      std::istream* input_stream = nullptr;
 
       if (input_file_name.compare("stdin") == 0) {
         if (operation != P_DECOMPRESS) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
-        precomp_mgr.set_input_stream(&std::cin, false);
+        input_stream = &std::cin;
       }
       else {
         precomp_context->fin_length = std::filesystem::file_size(argv[i]);
@@ -933,8 +863,9 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         if (!fin->is_open()) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", input_file_name.c_str()));
         }
-        precomp_mgr.set_input_stream(fin);
+        input_stream = fin;
       }
+      PrecompSetInputStream(&precomp_mgr, input_stream, input_file_name.c_str());
 
       // output file given? If not, use input filename with .pcf extension
       if ((!output_file_given) && (operation == P_COMPRESS)) {
@@ -1049,12 +980,14 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
     if (appended_pcf) {
       output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
     }
-    read_header(precomp_mgr);
-    if (output_file_name.empty()) output_file_name = precomp_mgr.output_file_name;
+    auto header_output_filename = PrecompReadHeader(&precomp_mgr, false);
+    if (output_file_name.empty()) output_file_name = header_output_filename;
   }
 
+  std::ostream* output_stream;
+  bool take_ownership_output_stream = false;
   if (output_file_given && output_file_name == "stdout") {
-    precomp_mgr.set_output_stream(&std::cout, false);
+    output_stream = &std::cout;
   }
   else {
     if (file_exists(output_file_name.c_str())) {
@@ -1078,8 +1011,11 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
     if (!fout->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
     }
-    precomp_mgr.set_output_stream(fout, true);
+    output_stream = fout;
+    take_ownership_output_stream = true;
   }
+  PrecompSetOutStream(&precomp_mgr, output_stream, output_file_name.c_str());
+
 
   print_to_console("Input file: %s\n", input_file_name.c_str());
   print_to_console("Output file: %s\n\n", output_file_name.c_str());
@@ -1098,7 +1034,7 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
     }
   }
 
-  if (operation == P_CONVERT) convert_header(precomp_mgr);
+  if (operation == P_CONVERT) PrecompConvertHeader(&precomp_mgr);
 
   if (level_switch) {
 
@@ -1112,8 +1048,10 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
   return operation;
 }
 #else
-int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
+int init_comfort(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
+  auto precomp_otf_xz_extra_params = PrecompGetXzParameters(&precomp_mgr);
+
   int i, j;
   int operation = P_COMPRESS;
   bool parse_ini_file = true;
@@ -1150,7 +1088,6 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
   }
   else {
     input_file_name = argv[1];
-    precomp_mgr.input_file_name = input_file_name;
 
     precomp_context->fin_length = std::filesystem::file_size(input_file_name.c_str());
 
@@ -1159,18 +1096,16 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
     if (!fin->is_open()) {
       throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", input_file_name.c_str()));
     }
-    precomp_mgr.set_input_stream(fin);
+    PrecompSetInputStream(&precomp_mgr, fin, input_file_name.c_str());
 
-    force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
     try {
-      read_header(precomp_mgr);
+      auto header_output_filename = PrecompReadHeader(&precomp_mgr, true);
       operation = P_DECOMPRESS;
       // append output filename to the executable directory
       std::string exec_dir = std::filesystem::current_path().string();
       output_file_name = exec_dir;
       output_file_name += PATH_DELIM;
-      output_file_name += precomp_mgr.output_file_name;
-      precomp_mgr.output_file_name = output_file_name;
+      output_file_name += header_output_filename;
     } catch (const PrecompError& err) {
       if (!(err.error_code == ERR_NO_PCF_HEADER || err.error_code == ERR_PCF_HEADER_INCOMPATIBLE_VERSION)) throw;
     }
@@ -1446,22 +1381,22 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
             for (j = 0; j < (int)strlen(value); j++) {
               switch (toupper(value[j])) {
               case 'X':
-                precomp_mgr.otf_xz_extra_params->enable_filter_x86 = true;
+                precomp_otf_xz_extra_params->enable_filter_x86 = true;
                 break;
               case 'P':
-                precomp_mgr.otf_xz_extra_params->enable_filter_powerpc = true;
+                precomp_otf_xz_extra_params->enable_filter_powerpc = true;
                 break;
               case 'I':
-                precomp_mgr.otf_xz_extra_params->enable_filter_ia64 = true;
+                precomp_otf_xz_extra_params->enable_filter_ia64 = true;
                 break;
               case 'A':
-                precomp_mgr.otf_xz_extra_params->enable_filter_arm = true;
+                precomp_otf_xz_extra_params->enable_filter_arm = true;
                 break;
               case 'T':
-                precomp_mgr.otf_xz_extra_params->enable_filter_armthumb = true;
+                precomp_otf_xz_extra_params->enable_filter_armthumb = true;
                 break;
               case 'S':
-                precomp_mgr.otf_xz_extra_params->enable_filter_sparc = true;
+                precomp_otf_xz_extra_params->enable_filter_sparc = true;
                 break;
               case 'D':
               {
@@ -1473,14 +1408,14 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
                     LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
                   );
                 }
-                precomp_mgr.otf_xz_extra_params->enable_filter_delta = true;
+                precomp_otf_xz_extra_params->enable_filter_delta = true;
                 while ((value[j] > '0') && (value[j] < '9')) {
-                  precomp_mgr.otf_xz_extra_params->filter_delta_distance *= 10;
-                  precomp_mgr.otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
+                  precomp_otf_xz_extra_params->filter_delta_distance *= 10;
+                  precomp_otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
                   j++;
                 }
-                if (precomp_mgr.otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
-                  || precomp_mgr.otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
+                if (precomp_otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
+                  || precomp_otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
                   throw std::runtime_error(make_cstyle_format_string(
                     "ERROR: LZMA delta filter distance must be in range %d..%d\n",
                     LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
@@ -2087,7 +2022,7 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
   if (!fout->is_open()) {
     throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
   }
-  precomp_mgr.set_output_stream(fout, true);
+  PrecompSetOutStream(&precomp_mgr, fout, output_file_name.c_str());
 
   print_to_console("Input file: %s\n", input_file_name.c_str());
   print_to_console("Output file: %s\n\n", output_file_name.c_str());
@@ -2118,3 +2053,81 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
   return operation;
 }
 #endif
+
+int main(int argc, char* argv[])
+{
+  std::unique_ptr<CPrecomp> precomp_mgr = std::unique_ptr<CPrecomp>(PrecompCreate());
+  CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
+  PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
+    auto new_progress_txt = get_progress_txt(percent);
+  if (!new_progress_txt) return;
+  print_to_console(current_progress_txt);
+    });
+  PrecompSetLoggingCallback(&log_handler);
+  int return_errorlevel = 0;
+
+  // register CTRL-C handler
+  (void)signal(SIGINT, ctrl_c_handler);
+
+  try {
+#ifndef COMFORT
+    int op = init(*precomp_mgr, *precomp_switches, argc, argv);
+#else
+    int op = init_comfort(*precomp_mgr, *precomp_switches, argc, argv);
+#endif
+    precomp_mgr->start_time = get_time_ms();
+    switch (op) {
+
+    case P_COMPRESS:
+    {
+      return_errorlevel = PrecompPrecompress(precomp_mgr.get());
+      break;
+    }
+
+    case P_DECOMPRESS:
+    {
+      return_errorlevel = PrecompRecompress(precomp_mgr.get());
+      break;
+    }
+
+    case P_CONVERT:
+    {
+      return_errorlevel = PrecompConvert(precomp_mgr.get());
+      break;
+    }
+    }
+    if (return_errorlevel != 0) throw std::runtime_error(libprecomp_error_msg(return_errorlevel));
+
+    switch (op) {
+
+    case P_COMPRESS:
+    {
+      print_results(*precomp_mgr, true);
+      print_statistics(*precomp_mgr, *precomp_switches);
+      break;
+    }
+    case P_DECOMPRESS:
+    {
+      print_results(*precomp_mgr, false);
+      break;
+    }
+    case P_CONVERT:
+    {
+      print_results(*precomp_mgr, true);
+      break;
+    }
+    }
+  }
+  catch (const std::runtime_error& err)
+  {
+    print_to_console(err.what());
+    print_to_console("\n");
+    return_errorlevel = return_errorlevel == 0 ? 1 : return_errorlevel;
+  }
+
+#ifdef COMFORT
+  wait_for_key();
+#endif
+
+  return return_errorlevel;
+}
