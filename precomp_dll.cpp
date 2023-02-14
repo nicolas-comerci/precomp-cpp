@@ -136,10 +136,12 @@ CSwitches* CreateCSwitches() {
   return new Switches();
 }
 
-CSwitches* PrecompGetSwitches(Precomp* precomp_mgr)
-{
-  return &precomp_mgr->switches;
+Precomp* PrecompCreate() { return new Precomp(); }
+void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float)) {
+  precomp_mgr->set_progress_callback(callback);
 }
+CSwitches* PrecompGetSwitches(Precomp* precomp_mgr) { return &precomp_mgr->switches; }
+CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
 
 //Switches constructor
 Switches::Switches() {
@@ -179,6 +181,20 @@ Switches::Switches() {
 
 std::set<long long> Switches::ignore_set() {
   return std::set(ignore_list_ptr, ignore_list_ptr + ignore_list_count);
+}
+
+RecursionContext::RecursionContext(Precomp& instance): precomp_owner(instance) {
+  compression_otf_method = OTF_XZ_MT;
+
+  // init MP3 suppression
+  for (int i = 0; i < 16; i++) {
+    suppress_mp3_type_until[i] = -1;
+  }
+  suppress_mp3_big_value_pairs_sum = -1;
+  suppress_mp3_non_zero_padbits_sum = -1;
+  suppress_mp3_inconsistent_emphasis_sum = -1;
+  suppress_mp3_inconsistent_original_bit = -1;
+  mp3_parsing_cache_second_frame = -1;
 }
 
 

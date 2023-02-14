@@ -106,17 +106,15 @@ constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;
 constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
 class Precomp;
-class RecursionContext {
+class RecursionContext: public CRecursionContext {
 public:
-  RecursionContext(Precomp& instance): precomp_owner(instance) {}
+  RecursionContext(Precomp& instance);
 
   Precomp& precomp_owner; // The precomp instance that owns this context
 
-  long long fin_length;
-
   std::set<long long>* intense_ignore_offsets = new std::set<long long>();
   std::set<long long>* brute_ignore_offsets = new std::set<long long>();
-  int compression_otf_method = OTF_XZ_MT;
+
   std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
   std::unique_ptr<WrappedIStream> fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
@@ -157,9 +155,6 @@ public:
   long long identical_bytes_decomp = -1;
   long long best_identical_bytes = -1;
   long long best_identical_bytes_decomp = -1;
-
-  bool anything_was_used;
-  bool non_zlib_was_used;
 
   // Mp3 stuff
   long long suppress_mp3_type_until[16];

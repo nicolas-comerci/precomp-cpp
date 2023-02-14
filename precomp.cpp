@@ -216,7 +216,7 @@ void print_results(Precomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
     long long fout_length = std::filesystem::file_size(output_file_name.c_str());
-    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(precomp_mgr.ctx->fin_length) + "     \n";
+    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "     \n";
     print_to_console("100.00% - " + result_print);
   }
   else {
@@ -227,9 +227,10 @@ void print_results(Precomp& precomp_mgr, bool print_new_size) {
 }
 
 void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
-    if (!precomp_mgr.ctx->anything_was_used) {
-        if (!precomp_mgr.ctx->non_zlib_was_used) {
-            if (precomp_mgr.ctx->compression_otf_method == OTF_NONE) {
+  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
+    if (!precomp_context->anything_was_used) {
+        if (!precomp_context->non_zlib_was_used) {
+            if (precomp_context->compression_otf_method == OTF_NONE) {
                 print_to_console("\nNone of the given compression and memory levels could be used.\n");
                 print_to_console("There will be no gain compressing the output file.\n");
             }
@@ -359,9 +360,10 @@ void log_handler(PrecompLoggingLevels level, std::string msg) {
 
 int main(int argc, char* argv[])
 {
-  Precomp precomp_mgr;
-  CSwitches* precomp_switches = PrecompGetSwitches(&precomp_mgr);
-  precomp_mgr.set_progress_callback([](float percent) {
+  std::unique_ptr<Precomp> precomp_mgr = std::unique_ptr<Precomp>(PrecompCreate());
+  CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
+  auto lel = &log_handler;
+  PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
     auto new_progress_txt = get_progress_txt(percent);
     if (!new_progress_txt) return;
     print_to_console(current_progress_txt);
@@ -374,28 +376,28 @@ int main(int argc, char* argv[])
 
   try {
 #ifndef COMFORT
-    int op = init(precomp_mgr, *precomp_switches, argc, argv);
+    int op = init(*precomp_mgr, *precomp_switches, argc, argv);
 #else
-    int op = init_comfort(precomp_mgr, *precomp_switches, argc, argv);
+    int op = init_comfort(*precomp_mgr, *precomp_switches, argc, argv);
 #endif
-    precomp_mgr.start_time = get_time_ms();
+    precomp_mgr->start_time = get_time_ms();
     switch (op) {
     
     case P_COMPRESS:
     {    
-      return_errorlevel = compress_file(precomp_mgr);
+      return_errorlevel = compress_file(*precomp_mgr);
       break;
     }
 
     case P_DECOMPRESS:
     {
-      return_errorlevel = decompress_file(precomp_mgr);
+      return_errorlevel = decompress_file(*precomp_mgr);
       break;
     }
 
     case P_CONVERT:
     {
-      return_errorlevel = convert_file(precomp_mgr);
+      return_errorlevel = convert_file(*precomp_mgr);
       break;
     }
     }
@@ -405,18 +407,18 @@ int main(int argc, char* argv[])
     
     case P_COMPRESS:
     {
-      print_results(precomp_mgr, true);
-      print_statistics(precomp_mgr, *precomp_switches);
+      print_results(*precomp_mgr, true);
+      print_statistics(*precomp_mgr, *precomp_switches);
       break;
     }
     case P_DECOMPRESS:
     {
-      print_results(precomp_mgr, false);
+      print_results(*precomp_mgr, false);
       break;
     }
     case P_CONVERT:
     {
-      print_results(precomp_mgr, true);
+      print_results(*precomp_mgr, true);
       break;
     }
     }
@@ -443,6 +445,7 @@ void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long l
 
 #ifndef COMFORT
 int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
+  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
   int i, j;
   bool appended_pcf = false;
 
@@ -457,16 +460,6 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
   print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
   print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
   print_to_console("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
-
-  // init MP3 suppression
-  for (i = 0; i < 16; i++) {
-    precomp_mgr.ctx->suppress_mp3_type_until[i] = -1;
-  }
-  precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit = -1;
-  precomp_mgr.ctx->mp3_parsing_cache_second_frame = -1;
 
   bool valid_syntax = false;
   bool input_file_given = false;
@@ -779,13 +772,13 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
       {
         switch (toupper(argv[i][2])) {
         case 'N': // no compression
-          precomp_mgr.ctx->compression_otf_method = OTF_NONE;
+          precomp_context->compression_otf_method = OTF_NONE;
           break;
         case 'B': // bZip2
-          precomp_mgr.ctx->compression_otf_method = OTF_BZIP2;
+          precomp_context->compression_otf_method = OTF_BZIP2;
           break;
         case 'L': // lzma2 multithreaded
-          precomp_mgr.ctx->compression_otf_method = OTF_XZ_MT;
+          precomp_context->compression_otf_method = OTF_XZ_MT;
           break;
         default:
           throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression method %c\n", argv[i][2]));
@@ -933,7 +926,7 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         precomp_mgr.set_input_stream(&std::cin, false);
       }
       else {
-        precomp_mgr.ctx->fin_length = std::filesystem::file_size(argv[i]);
+        precomp_context->fin_length = std::filesystem::file_size(argv[i]);
 
         auto fin = new std::ifstream();
         fin->open(argv[i], std::ios_base::in | std::ios_base::binary);
@@ -1120,6 +1113,7 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
 }
 #else
 int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
+  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
   int i, j;
   int operation = P_COMPRESS;
   bool parse_ini_file = true;
@@ -1141,16 +1135,6 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
   print_to_console(" - %s\n", V_MSG);
   print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n\n");
 
-  // init MP3 suppression
-  for (i = 0; i < 16; i++) {
-    precomp_mgr.ctx->suppress_mp3_type_until[i] = -1;
-  }
-  precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit = -1;
-  precomp_mgr.ctx->mp3_parsing_cache_second_frame = -1;
-
   std::vector<long long> ignore_list;
 
   // parse parameters (should be input file only)
@@ -1168,7 +1152,7 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
     input_file_name = argv[1];
     precomp_mgr.input_file_name = input_file_name;
 
-    precomp_mgr.ctx->fin_length = std::filesystem::file_size(input_file_name.c_str());
+    precomp_context->fin_length = std::filesystem::file_size(input_file_name.c_str());
 
     auto fin = new std::ifstream();
     fin->open(input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
@@ -1391,19 +1375,19 @@ int init_comfort(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, ch
           if (strcmp(param, "compression_method") == 0) {
             if (strcmp(value, "0") == 0) {
               print_to_console("INI: Using no compression method\n");
-              precomp_mgr.ctx->compression_otf_method = OTF_NONE;
+              precomp_context->compression_otf_method = OTF_NONE;
               valid_param = true;
             }
 
             if (strcmp(value, "1") == 0) {
               print_to_console("INI: Using bZip2 compression method\n");
-              precomp_mgr.ctx->compression_otf_method = OTF_BZIP2;
+              precomp_context->compression_otf_method = OTF_BZIP2;
               valid_param = true;
             }
 
             if (strcmp(value, "2") == 0) {
               print_to_console("INI: Using lzma2 multithreaded compression method\n");
-              precomp_mgr.ctx->compression_otf_method = OTF_XZ_MT;
+              precomp_context->compression_otf_method = OTF_XZ_MT;
               valid_param = true;
             }
 

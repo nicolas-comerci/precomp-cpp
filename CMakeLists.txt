@@ -160,6 +160,7 @@ set(PRECOMP_UTILS_SRC "${SRCDIR}/precomp_utils.cpp")
 
 set(PRECOMP_IO_SRC "${SRCDIR}/precomp_io.cpp")
 
+set(LIBPRECOMP_HDR "${SRCDIR}/libprecomp.h")
 set(PRECOMP_DLL_HDR "${SRCDIR}/precomp_dll.h")
 set(PRECOMP_DLL_SRC "${SRCDIR}/precomp_dll.cpp")
 
@@ -167,11 +168,11 @@ set(DLLTEST_SRC "${SRCDIR}/dlltest.cpp")
 
 add_library(precomp_dll_shared SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
-                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${PRECOMP_DLL_SRC} ${PRECOMP_DLL_HDR})
+                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll_shared PRIVATE -DPRECOMPDLL)
 add_library(precomp_dll_static STATIC ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
-                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${PRECOMP_DLL_SRC} ${PRECOMP_DLL_HDR})
+                               ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll_static PRIVATE -DPRECOMPDLL)
 
 add_executable(dlltest ${PRECOMP_DLL_HDR} ${DLLTEST_SRC})

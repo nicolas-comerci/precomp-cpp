@@ -1,7 +1,9 @@
 #ifndef LIBPRECOMP_H
 #define LIBPRECOMP_H
 
-// Do NOT instanciate this directly (get it using PrecompGetSwitches instead), if you do, terrible things will happen to you and you will deserve every last bit of it.
+// Do NOT instantiate any of these structs directly (get them using PrecompGetX functions instead)
+// if you do instantiate them and attempt to use them, terrible things will happen to you and you will deserve every last bit of it.
+
 typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
 
@@ -45,8 +47,19 @@ typedef struct {
   int ignore_list_count;
 } CSwitches;
 
+typedef struct {
+  long long fin_length;
+  int compression_otf_method ;
+
+  bool anything_was_used;
+  bool non_zlib_was_used;
+} CRecursionContext;
+
 struct Precomp;
 
+Precomp* PrecompCreate();
+void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float));
 CSwitches* PrecompGetSwitches(Precomp* precomp_mgr);
+CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr);
 
 #endif
