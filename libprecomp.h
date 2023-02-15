@@ -30,6 +30,8 @@
 
 // This is provided as a courtesy for C users, as checking the size of a file in a compliant and portable way is unnecessarily hard, but pretty much trivial for us on C++17
 ExternC LIBPRECOMP uintmax_t fileSize64(const char* filename, int* error_code);
+// Similarly, because libprecomp allows writing output to stdout, we provide this function so you can continue printing to the console/terminal while outputting to stdout
+ExternC LIBPRECOMP void print_to_terminal(const char* fmt, ...);
 
 typedef enum
 {
@@ -56,7 +58,7 @@ ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
 typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
 
-  int compression_method;        //compression method to use (default: none)
+  int compression_method;        //compression method to use (default: OTF_XZ_MT)
   unsigned long long compression_otf_max_memory;    // max. memory for LZMA compression method (default: 2 GiB)
   unsigned int compression_otf_thread_count;  // max. thread count for LZMA compression method (default: auto-detect)
 

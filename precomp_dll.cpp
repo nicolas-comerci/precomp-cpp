@@ -235,7 +235,7 @@ void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* outp
 
 //Switches constructor
 Switches::Switches() {
-  compression_method = 2;
+  compression_method = OTF_XZ_MT;
   compression_otf_max_memory = 2048;
   compression_otf_thread_count = std::thread::hardware_concurrency();
   if (compression_otf_thread_count == 0) {
@@ -5056,6 +5056,23 @@ uintmax_t fileSize64(const char* filename, int* error_code) {
   auto size = std::filesystem::file_size(filename, ec);
   *error_code = ec.value();
   return size;
+}
+void print_to_terminal(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  va_list args_copy;
+  va_copy(args_copy, args);
+  int length = std::vsnprintf(nullptr, 0, fmt, args);
+  va_end(args);
+  assert(length >= 0);
+
+  char* buf = new char[length + 1];
+  std::vsnprintf(buf, length + 1, fmt, args_copy);
+  va_end(args_copy);
+
+  std::string str(buf);
+  delete[] buf;
+  print_to_console(str);
 }
 
 std::string temp_files_tag() {
