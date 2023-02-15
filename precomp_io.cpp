@@ -15,6 +15,17 @@ int ostream_printf(std::ostream& out, std::string str) {
   return ostream_printf(wrapped_out, str);
 }
 
+void fseek64(FILE* file_ptr, unsigned long long pos, std::ios_base::seekdir dir) {
+#if defined(_MSC_VER)
+  _fseeki64(file_ptr, pos, dir);
+#elif !defined(__unix)
+  const fpos_t fpt_pos = pos;
+  fsetpos(file_ptr, &fpt_pos);
+#else
+  fseeko(file_ptr, pos, dir);
+#endif
+}
+
 long long WrappedFStream::filesize() {
   if (wrapped_iostream->is_open()) wrapped_iostream->close();
   long long size = std::filesystem::file_size(file_path.c_str());

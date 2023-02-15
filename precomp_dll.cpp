@@ -230,12 +230,7 @@ void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const c
 void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   internal_precomp_ptr->output_file_name = output_file_name;
-  auto fout = new std::ofstream();
-  fout->open(output_file_name, std::ios_base::out | std::ios_base::binary);
-  if (!fout->is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"", output_file_name));
-  }
-  internal_precomp_ptr->set_output_stream(fout);
+  internal_precomp_ptr->set_output_stream(fhandle);
 }
 
 //Switches constructor
@@ -311,6 +306,10 @@ void RecursionContext::set_output_stream(std::ostream* ostream, bool take_owners
   this->fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(ostream, take_ownership));
 }
 
+void RecursionContext::set_output_stream(FILE* fhandle, bool take_ownership) {
+  this->fout = std::unique_ptr<ObservableOStream>(new ObservableFILEOStream(fhandle, take_ownership));
+}
+
 std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
   if (recursion_contexts_stack.empty()) return ctx;
   return recursion_contexts_stack[0];
@@ -345,23 +344,39 @@ void Precomp::set_input_stream(FILE* fhandle, bool take_ownership) {
   }
 }
 
-void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
-  auto& orig_context = this->get_original_context();
-  if (ostream == &std::cout) {
-    // Write binary to stdout
-    SET_BINARY_MODE(STDOUT);
-    auto new_fout = std::unique_ptr<ObservableWrappedOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
-    new_fout->rdbuf(std::cout.rdbuf());
-    orig_context->fout = std::move(new_fout);
-  } else {
-    orig_context->set_output_stream(ostream, take_ownership);
-  }
+void Precomp::set_output_stdout() {
+  // Read binary to stdin
+  // Write binary to stdout
+  SET_BINARY_MODE(STDOUT);
+  auto new_fout = std::unique_ptr<ObservableWrappedOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
+  new_fout->rdbuf(std::cout.rdbuf());
+  this->get_original_context()->fout = std::move(new_fout);
+}
 
+void Precomp::register_output_observer_callbacks() {
   // Set write observer to update progress when writing to output file, based on how much of the input file we have read
-  orig_context->fout->register_observer(ObservableOStream::observable_methods::write_method, [this]()
+  this->get_original_context()->fout->register_observer(ObservableOStream::observable_methods::write_method, [this]()
   {
     this->call_progress_callback();
   });
+}
+
+void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
+  auto& orig_context = this->get_original_context();
+  if (ostream == &std::cout) { set_output_stdout(); }
+  else {
+    orig_context->set_output_stream(ostream, take_ownership);
+  }
+  register_output_observer_callbacks();
+}
+
+void Precomp::set_output_stream(FILE* fhandle, bool take_ownership) {
+  auto& orig_context = this->get_original_context();
+  if (fhandle == stdout) { set_output_stdout(); }
+  else {
+    orig_context->set_output_stream(fhandle, take_ownership);
+  }
+  register_output_observer_callbacks();
 }
 
 void Precomp::enable_input_stream_otf_decompression() {

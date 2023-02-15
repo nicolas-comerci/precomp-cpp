@@ -59,6 +59,7 @@ public:
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
   std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
   void set_output_stream(std::ostream* ostream, bool take_ownership = true);
+  void set_output_stream(FILE* fhandle, bool take_ownership = true);
 
   float global_min_percent = 0;
   float global_max_percent = 100;
@@ -109,6 +110,8 @@ public:
 class Precomp: public CPrecomp {
   std::function<void(float)> progress_callback;
   void set_input_stdin();
+  void set_output_stdout();
+  void register_output_observer_callbacks();
 
 public:
   Precomp();
@@ -126,6 +129,7 @@ public:
   void set_input_stream(std::istream* istream, bool take_ownership = true);
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
   void set_output_stream(std::ostream* ostream, bool take_ownership = true);
+  void set_output_stream(FILE* fhandle, bool take_ownership = true);
   // Input stream OTF decompression method has to be set AFTER the Precomp header has been read, as the compressed stream starts just after it
   void enable_input_stream_otf_decompression();
   void enable_output_stream_otf_compression(int otf_compression_method);

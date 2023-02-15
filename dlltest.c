@@ -18,8 +18,16 @@ int precompress_file(char* in_file, char* out_file) {
     return 1;
   }
 
+  FILE* fout = NULL;
+  if (strcmp(in_file, "stdout") == 0) {
+    fout = stdout;
+  } else
+  {
+    fout = fopen(out_file, "a+b");
+  }
+
   PrecompSetInputFile(precomp_mgr, fin, in_file);
-  PrecompSetOutputFile(precomp_mgr, NULL, out_file);
+  PrecompSetOutputFile(precomp_mgr, fout, out_file);
   return PrecompPrecompress(precomp_mgr);
 }
 
@@ -40,8 +48,17 @@ int recompress_file(char* in_file, char* out_file) {
     }
   }
 
+  FILE* fout = NULL;
+  if (strcmp(in_file, "stdout") == 0) {
+    fout = stdout;
+  }
+  else
+  {
+    fout = fopen(out_file, "a+b");
+  }
+
   PrecompSetInputFile(precomp_mgr, fin, in_file);
-  PrecompSetOutputFile(precomp_mgr, NULL, out_file);
+  PrecompSetOutputFile(precomp_mgr, fout, out_file);
   return PrecompRecompress(precomp_mgr);
 }
 

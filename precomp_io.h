@@ -125,6 +125,45 @@ public:
   }
 };
 
+void fseek64(FILE* file_ptr, unsigned long long pos, std::ios_base::seekdir dir);
+
+class FILEOStream : public OStreamLike {
+  FILE* file_ptr;
+  bool take_ownership;
+public:
+  FILEOStream(FILE* file, bool take_ownership) : file_ptr(file), take_ownership(take_ownership) { }
+  ~FILEOStream() override {
+    if (!take_ownership) return;
+    std::fclose(file_ptr);
+  }
+
+  bool eof() override { return std::feof(file_ptr); }
+  bool good() override { return !std::feof(file_ptr) && !std::ferror(file_ptr); }
+  bool bad() override { return std::ferror(file_ptr); }
+  void clear() override {
+    std::clearerr(file_ptr);
+  }
+
+  FILEOStream& write(const char* buf, std::streamsize count) override {
+    std::fwrite(buf, sizeof(const char), count, file_ptr);
+    return *this;
+  }
+
+  FILEOStream& put(char chr) override
+  {
+    std::fputc(chr, file_ptr);
+    return *this;
+  }
+
+  void flush() override { std::fflush(file_ptr); }
+  std::ostream::pos_type tellp() override { return std::ftell(file_ptr); }
+  FILEOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override
+  {
+    fseek64(file_ptr, offset, dir);
+    return *this;
+  }
+};
+
 class FILEIStream: public IStreamLike {
   FILE* file_ptr;
   bool take_ownership;
@@ -159,7 +198,7 @@ public:
   std::streamsize gcount() override { return _gcount; }
 
   FILEIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
-    std::fseek(file_ptr, offset, dir);
+    fseek64(file_ptr, offset, dir);
     return *this;
   }
 
@@ -254,22 +293,27 @@ public:
   }
 };
 
-class ObservableWrappedOStream: public WrappedOStream, public ObservableOStream {
+template <typename T>
+class ObservableOStreamIMPL: public T, public ObservableOStream {
 protected:
-  void internal_write(const char* buf, std::streamsize count) override { WrappedOStream::write(buf, count); }
-  void internal_put(char chr) override { WrappedOStream::put(chr); }
-  void internal_flush() override { WrappedOStream::flush(); }
-  std::ostream::pos_type internal_tellp() override { return WrappedOStream::tellp(); }
-  void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override { WrappedOStream::seekp(offset, dir); }
+  void internal_write(const char* buf, std::streamsize count) override { T::write(buf, count); }
+  void internal_put(char chr) override { T::put(chr); }
+  void internal_flush() override { T::flush(); }
+  std::ostream::pos_type internal_tellp() override { return T::tellp(); }
+  void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override { T::seekp(offset, dir); }
 
 public:
-  ObservableWrappedOStream(std::ostream* stream, bool take_ownership) : WrappedOStream(stream, take_ownership) { }
+  ObservableOStreamIMPL(FILE* stream, bool take_ownership) : T(stream, take_ownership) { }
+  ObservableOStreamIMPL(std::ostream* stream, bool take_ownership): T(stream, take_ownership) { }
 
-  bool eof() override { return WrappedOStream::eof(); }
-  bool good() override { return WrappedOStream::good(); }
-  bool bad() override { return WrappedOStream::bad(); }
-  void clear() override { WrappedOStream::clear(); }
+  bool eof() override { return T::eof(); }
+  bool good() override { return T::good(); }
+  bool bad() override { return T::bad(); }
+  void clear() override { T::clear(); }
 };
+
+using ObservableWrappedOStream = ObservableOStreamIMPL<WrappedOStream>;
+using ObservableFILEOStream = ObservableOStreamIMPL<FILEOStream>;
 
 class ObservableIStream : public WrappedIStream {
 public:
