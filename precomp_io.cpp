@@ -2,15 +2,7 @@
 
 #include <filesystem>
 
-void force_seekg(WrappedIStream& stream, long long offset, std::ios_base::seekdir origin) {
-  if (stream.bad()) {
-    throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
-  }
-  stream.clear();
-  stream.seekg(offset, origin);
-}
-
-int ostream_printf(WrappedOStream& out, std::string str) {
+int ostream_printf(OStreamLike& out, std::string str) {
   for (char character : str) {
     out.put(character);
     if (out.bad()) return 0;

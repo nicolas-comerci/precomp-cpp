@@ -2075,7 +2075,6 @@ int main(int argc, char* argv[])
 #else
     int op = init_comfort(*precomp_mgr, *precomp_switches, argc, argv);
 #endif
-    precomp_mgr->start_time = get_time_ms();
     switch (op) {
 
     case P_COMPRESS:

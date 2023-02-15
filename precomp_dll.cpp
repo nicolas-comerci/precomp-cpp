@@ -184,20 +184,25 @@ CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &r
 lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }
 
 int PrecompPrecompress(CPrecomp* precomp_mgr) {
+  precomp_mgr->start_time = get_time_ms();
   return compress_file(*reinterpret_cast<Precomp*>(precomp_mgr), 0, 100);
 }
 
 int PrecompRecompress(CPrecomp* precomp_mgr) {
-  return decompress_file(*reinterpret_cast<Precomp*>(precomp_mgr));
+  precomp_mgr->start_time = get_time_ms();
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
+  return decompress_file(*internal_precomp_ptr);
 }
 
 int PrecompConvert(CPrecomp* precomp_mgr) {
+  precomp_mgr->start_time = get_time_ms();
   return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
 }
 
 const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  if (seek_to_beg) force_seekg(*internal_precomp_ptr->ctx->fin, 0, std::ios_base::beg);
+  if (seek_to_beg) internal_precomp_ptr->ctx->fin->seekg(0, std::ios_base::beg);
   read_header(*internal_precomp_ptr);
   return internal_precomp_ptr->output_file_name.c_str();
 }
@@ -211,11 +216,26 @@ void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const
   internal_precomp_ptr->input_file_name = input_file_name;
   internal_precomp_ptr->set_input_stream(static_cast<std::istream*>(istream));
 }
+void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* input_file_name) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->input_file_name = input_file_name;
+  internal_precomp_ptr->set_input_stream(fhandle);
+}
 
 void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   internal_precomp_ptr->output_file_name = output_file_name;
   internal_precomp_ptr->set_output_stream(static_cast<std::ostream*>(ostream));
+}
+void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->output_file_name = output_file_name;
+  auto fout = new std::ofstream();
+  fout->open(output_file_name, std::ios_base::out | std::ios_base::binary);
+  if (!fout->is_open()) {
+    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"", output_file_name));
+  }
+  internal_precomp_ptr->set_output_stream(fout);
 }
 
 //Switches constructor
@@ -283,8 +303,12 @@ void RecursionContext::set_input_stream(std::istream* istream, bool take_ownersh
   this->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(istream, take_ownership));
 }
 
+void RecursionContext::set_input_stream(FILE* fhandle, bool take_ownership) {
+  this->fin = std::unique_ptr<FILEIStream>(new FILEIStream(fhandle, take_ownership));
+}
+
 void RecursionContext::set_output_stream(std::ostream* ostream, bool take_ownership) {
-  this->fout = std::unique_ptr<ObservableOStream>(new ObservableOStream(ostream, take_ownership));
+  this->fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(ostream, take_ownership));
 }
 
 std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
@@ -293,21 +317,31 @@ std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
 }
 
 Precomp::Precomp(): CPrecomp() {
+  header_already_read = false;
   recursion_depth = 0;
   max_recursion_depth = 10;
   max_recursion_depth_used = 0;
   max_recursion_depth_reached = false;
 }
 
+void Precomp::set_input_stdin() {
+  // Read binary to stdin
+  SET_BINARY_MODE(STDIN);
+  auto new_fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
+  new_fin->rdbuf(std::cin.rdbuf());
+  this->get_original_context()->fin = std::move(new_fin);
+}
+
 void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
-  auto& orig_context = this->get_original_context();
-  if (istream == &std::cin) {
-    // Read binary to stdin
-    SET_BINARY_MODE(STDIN);
-    orig_context->fin->rdbuf(std::cin.rdbuf());
-  }
+  if (istream == &std::cin) { set_input_stdin(); }
   else {
     this->get_original_context()->set_input_stream(istream, take_ownership);
+  }
+}
+void Precomp::set_input_stream(FILE* fhandle, bool take_ownership) {
+  if (fhandle == stdin) { set_input_stdin(); }
+  else {
+    this->get_original_context()->set_input_stream(fhandle, take_ownership);
   }
 }
 
@@ -316,7 +350,9 @@ void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
   if (ostream == &std::cout) {
     // Write binary to stdout
     SET_BINARY_MODE(STDOUT);
-    orig_context->fout->rdbuf(std::cout.rdbuf());
+    auto new_fout = std::unique_ptr<ObservableWrappedOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
+    new_fout->rdbuf(std::cout.rdbuf());
+    orig_context->fout = std::move(new_fout);
   } else {
     orig_context->set_output_stream(ostream, take_ownership);
   }
@@ -331,10 +367,12 @@ void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
 void Precomp::enable_input_stream_otf_decompression() {
   const auto& orig_context = this->get_original_context();
   if (&orig_context != &ctx || orig_context->compression_otf_method == OTF_NONE) return;
-  const bool take_ownership = orig_context->fin->is_owns_wrapped_stream();
+  auto wrapped_istream = dynamic_cast<WrappedIStream*>(orig_context->fin.get());
+  if (!wrapped_istream) throw std::runtime_error("Compression only supported when using C++'s std::istream or std::ostream, sorry if you are using the C API");
+  const bool take_ownership = wrapped_istream->is_owns_wrapped_stream();
   set_input_stream(
     wrap_istream_otf_compression(
-      std::unique_ptr<std::istream>(orig_context->fin->release()), orig_context->compression_otf_method, false
+      std::unique_ptr<std::istream>(wrapped_istream->release()), orig_context->compression_otf_method, false
     ).release(),
     take_ownership
   );
@@ -343,10 +381,12 @@ void Precomp::enable_input_stream_otf_decompression() {
 void Precomp::enable_output_stream_otf_compression(int otf_compression_method) {
   const auto& orig_context = this->get_original_context();
   if (&orig_context != &ctx || otf_compression_method == OTF_NONE) return;
-  const bool take_ownership = orig_context->fout->is_owns_wrapped_stream();
+  auto wrapped_ostream = dynamic_cast<WrappedOStream*>(orig_context->fout.get());
+  if (!wrapped_ostream) throw std::runtime_error("Compression only supported when using C++'s std::istream or std::ostream, sorry if you are using the C API");
+  const bool take_ownership = wrapped_ostream->is_owns_wrapped_stream();
   set_output_stream(
     wrap_ostream_otf_compression(
-      std::unique_ptr<std::ostream>(orig_context->fout->release()),
+      std::unique_ptr<std::ostream>(wrapped_ostream->release()),
       otf_compression_method,
       std::move(this->otf_xz_extra_params),
       this->switches.compression_otf_max_memory,
@@ -374,81 +414,6 @@ LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   } else {
     sprintf(msg, "Precomp DLL v%i.%i.%i (c) 2006-2021 by Christian Schneider",V_MAJOR,V_MINOR,V_MINOR2);
   }
-}
-
-// precompress a file
-// in_file = input filename
-// out_file = output filename
-// msg = Buffer for error messages (256 bytes buffer size are enough)
-LIBPRECOMP bool PrecompPrecompressFile(char* in_file, char* out_file, char* msg) {
-  Precomp precomp_mgr;
-  precomp_mgr.ctx->fin_length = fileSize64(in_file);
-
-  auto fin = new std::ifstream();
-  fin->open(in_file, std::ios_base::in | std::ios_base::binary);
-  if (!fin->is_open()) {
-    sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
-
-    return false;
-  }
-  precomp_mgr.set_input_stream(fin);
-
-  auto fout = new std::ofstream();
-  fout->open(out_file, std::ios_base::out | std::ios_base::binary);
-  if (!fout->is_open()) {
-    sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
-    return false;
-  }
-  precomp_mgr.set_output_stream(fout, true);
-
-  precomp_mgr.input_file_name = in_file;
-
-  precomp_mgr.start_time = get_time_ms();
-
-  compress_file(precomp_mgr);
-
-  return true;
-}
-
-// recompress a file
-// in_file = input filename
-// out_file = output filename
-// msg = Buffer for error messages (256 bytes buffer size are enough)
-LIBPRECOMP bool PrecompRecompressFile(char* in_file, char* out_file, char* msg) {
-  Precomp precomp_mgr;
-  precomp_mgr.ctx->fin_length = fileSize64(in_file);
-
-  auto fin = new std::ifstream();
-  fin->open(in_file, std::ios_base::in | std::ios_base::binary);
-  if (!fin->is_open()) {
-    sprintf(msg, "ERROR: Input file \"%s\" doesn't exist", in_file);
-
-    return false;
-  }
-  precomp_mgr.set_input_stream(fin);
-
-  auto fout = new std::ofstream();
-  fout->open(out_file, std::ios_base::out | std::ios_base::binary);
-  if (!fout->is_open()) {
-    sprintf(msg, "ERROR: Can't create output file \"%s\"", out_file);
-
-    return false;
-  }
-  precomp_mgr.set_output_stream(fout, true);
-
-  precomp_mgr.input_file_name = in_file;
-
-  precomp_mgr.start_time = get_time_ms();
-
-  read_header(precomp_mgr);
-  decompress_file(precomp_mgr);
-
-  return true;
-}
-
-// test if a file contains streams that can be precompressed
-LIBPRECOMP bool file_precompressable(char* in, char* msg) {
-  return false;
 }
 
 // Brute mode detects a bit less than intense mode to avoid false positives
@@ -479,7 +444,7 @@ void copy_penalty_bytes(RecursionContext& context, long long& rek_penalty_bytes_
 }
 
 #define DEF_COMPARE_CHUNK 512
-long long def_compare_bzip2(Precomp& precomp_mgr, WrappedIStream& source, WrappedIStream& compfile, int level, long long& decompressed_bytes_used) {
+long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& source, IStreamLike& compfile, int level, long long& decompressed_bytes_used) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -553,7 +518,7 @@ long long def_compare_bzip2(Precomp& precomp_mgr, WrappedIStream& source, Wrappe
   return rek_same_byte_count;
 }
 
-int def_part_bzip2(Precomp& precomp_mgr, WrappedIStream& source, WrappedOStream& dest, int level, long long stream_size_in, long long stream_size_out) {
+int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, int level, long long stream_size_in, long long stream_size_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -621,7 +586,7 @@ unsigned int frs_line_len;
 unsigned int frs_skip_len;
 unsigned char frs_skipbuf[4];
 
-size_t fread_skip(unsigned char *ptr, size_t size, size_t count, WrappedIStream& stream) {
+size_t fread_skip(unsigned char *ptr, size_t size, size_t count, IStreamLike& stream) {
   size_t bytes_read = 0;
   unsigned int read_tmp;
 
@@ -731,7 +696,7 @@ bool check_inf_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned char
   return false;
 }
 
-int inf_bzip2(Precomp& precomp_mgr, WrappedIStream& source, WrappedOStream& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
+int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
   int ret;
   unsigned have;
   bz_stream strm;
@@ -845,16 +810,16 @@ int def_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, in
   return BZ_OK;
 }
 
-long long file_recompress_bzip2(Precomp& precomp_mgr, WrappedIStream& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile) {
+long long file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile) {
   long long retval;
 
-  force_seekg(tmpfile, 0, std::ios_base::end);
+  tmpfile.seekg(0, std::ios_base::end);
   decompressed_bytes_total = tmpfile.tellg();
   if (!tmpfile.is_open()) {
     throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
   }
 
-  force_seekg(tmpfile, 0, std::ios_base::beg);
+  tmpfile.seekg(0, std::ios_base::beg);
   tmpfile.close();
   WrappedFStream tmpfile2;
   tmpfile2.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
@@ -863,12 +828,12 @@ long long file_recompress_bzip2(Precomp& precomp_mgr, WrappedIStream& origfile, 
   return retval < 0 ? -1 : retval;
 }
 
-void write_decompressed_data(Precomp& precomp_mgr, WrappedOStream& ostream, long long byte_count, const char* decompressed_file_name) {
+void write_decompressed_data(Precomp& precomp_mgr, OStreamLike& ostream, long long byte_count, const char* decompressed_file_name) {
   WrappedFStream ftempout;
   ftempout.open(decompressed_file_name, std::ios_base::in | std::ios_base::binary);
   if (!ftempout.is_open()) throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
 
-  force_seekg(ftempout, 0, std::ios_base::beg);
+  ftempout.seekg(0, std::ios_base::beg);
 
   fast_copy(precomp_mgr, ftempout, ostream, byte_count);
   ftempout.close();
@@ -884,7 +849,7 @@ void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, 
     }
 }
 
-unsigned long long compare_files(Precomp& precomp_mgr, WrappedIStream& file1, WrappedIStream& file2, unsigned int pos1, unsigned int pos2) {
+unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
@@ -892,8 +857,8 @@ unsigned long long compare_files(Precomp& precomp_mgr, WrappedIStream& file1, Wr
   int i;
   bool endNow = false;
 
-  force_seekg(file1, pos1, std::ios_base::beg);
-  force_seekg(file2, pos2, std::ios_base::beg);
+  file1.seekg(pos1, std::ios_base::beg);
+  file2.seekg(pos2, std::ios_base::beg);
 
   do {
     precomp_mgr.call_progress_callback();
@@ -918,13 +883,13 @@ unsigned long long compare_files(Precomp& precomp_mgr, WrappedIStream& file1, Wr
 
 unsigned char input_bytes1[DEF_COMPARE_CHUNK];
 
-long long compare_file_mem_penalty(RecursionContext& context, WrappedIStream& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes) {
+long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes) {
   int same_byte_count = 0;
   int size1;
   int i;
 
   unsigned long long old_pos = file1.tellg();
-  force_seekg(file1, pos1, std::ios_base::beg);
+  file1.seekg(pos1, std::ios_base::beg);
 
   file1.read(reinterpret_cast<char*>(input_bytes1), bytecount);
   size1 = file1.gcount();
@@ -961,7 +926,7 @@ long long compare_file_mem_penalty(RecursionContext& context, WrappedIStream& fi
     }
   }
 
-  force_seekg(file1, old_pos, std::ios_base::beg);
+  file1.seekg(old_pos, std::ios_base::beg);
 
   return same_byte_count;
 }
@@ -983,7 +948,7 @@ void end_uncompressed_data(Precomp& precomp_mgr) {
   fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->uncompressed_length);
 
   // fast copy of uncompressed data
-  force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->uncompressed_pos, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->uncompressed_pos, std::ios_base::beg);
   fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, precomp_mgr.ctx->uncompressed_length, true);
 
   precomp_mgr.ctx->uncompressed_length = -1;
@@ -1053,7 +1018,7 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
 
 class OwnIStream : public InputStream {
 public:
-  OwnIStream(WrappedIStream* f) : _f(f), _eof(false) {}
+  OwnIStream(IStreamLike* f) : _f(f), _eof(false) {}
 
   virtual bool eof() const {
     return _eof;
@@ -1065,15 +1030,15 @@ public:
     return res;
   }
 private:
-  WrappedIStream* _f;
+  IStreamLike* _f;
   bool _eof;
 };
 class UncompressedOutStream : public OutputStream {
 public:
-  WrappedOStream& ftempout;
+  OStreamLike& ftempout;
   Precomp* precomp_mgr;
 
-  UncompressedOutStream(bool& in_memory, WrappedOStream& tmpfile, Precomp* precomp_mgr)
+  UncompressedOutStream(bool& in_memory, OStreamLike& tmpfile, Precomp* precomp_mgr)
     : ftempout(tmpfile), precomp_mgr(precomp_mgr), _written(0), _in_memory(in_memory) {}
   ~UncompressedOutStream() {}
 
@@ -1106,8 +1071,8 @@ private:
   bool& _in_memory;
 };
 
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, WrappedIStream& file, PrecompTmpFile& tmpfile) {
-  force_seekg(file, &file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, PrecompTmpFile& tmpfile) {
+  file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
 
   recompress_deflate_result result;
   memset(&result, 0, sizeof(result));
@@ -1126,7 +1091,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, Wrappe
     result.uncompressed_stream_size = uos.written();
 
     if (precomp_mgr.switches.preflate_verify && result.accepted) {
-      force_seekg(file, &file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+      file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
       OwnIStream is2(&file);
       std::vector<uint8_t> orgdata(result.compressed_stream_size);
       is2.read(orgdata.data(), orgdata.size());
@@ -1162,23 +1127,23 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, Wrappe
 
 class OwnOStream : public OutputStream {
 public:
-  OwnOStream(WrappedOStream* f) : _f(f) {}
+  OwnOStream(OStreamLike* f) : _f(f) {}
 
   virtual size_t write(const unsigned char* buffer, const size_t size) {
     _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
     return _f->bad() ? 0 : size;
   }
 private:
-  WrappedOStream* _f;
+  OStreamLike* _f;
 };
 
-bool try_reconstructing_deflate(Precomp& precomp_mgr, WrappedIStream& fin, WrappedOStream& fout, const recompress_deflate_result& rdres) {
+bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres) {
   OwnOStream os(&fout);
   OwnIStream is(&fin);
   bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
   return result;
 }
-bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, WrappedIStream& fin, WrappedOStream& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   frs_offset = 0;
@@ -1192,7 +1157,7 @@ bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, WrappedIStream& fin, 
 }
 class OwnOStreamMultiPNG : public OutputStream {
 public:
-  OwnOStreamMultiPNG(WrappedOStream* f,
+  OwnOStreamMultiPNG(OStreamLike* f,
                       const size_t idat_count, 
                       const uint32_t* idat_crcs, 
                       const uint32_t* idat_lengths) 
@@ -1229,13 +1194,13 @@ public:
     return written;
   }
 private:
-  WrappedOStream* _f;
+  OStreamLike* _f;
   const size_t _idat_count;
   const uint32_t* _idat_crcs;
   const uint32_t* _idat_lengths;
   size_t _idat_idx, _to_read;
 };
-bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, WrappedIStream& fin, WrappedOStream& fout, const recompress_deflate_result& rdres,
+bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres,
                                 const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
@@ -1411,7 +1376,7 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
             throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
           }
 
-          force_seekg(ftempout, 0, std::ios_base::beg);
+          ftempout.seekg(0, std::ios_base::beg);
         }
         ftempout.close();
 
@@ -1534,7 +1499,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
   precomp_mgr.ctx->uncompressed_bytes_written = 0;
 
-  force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
   precomp_mgr.ctx->cb = -1;
@@ -1554,7 +1519,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   bool ignore_this_pos = false;
 
   if ((in_buf_pos + IN_BUF_SIZE) <= (precomp_mgr.ctx->input_file_pos + CHECKBUF_SIZE)) {
-    force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
     in_buf_pos = precomp_mgr.ctx->input_file_pos;
     precomp_mgr.ctx->cb = 0;
@@ -1719,11 +1684,11 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           type_buf[4096] = 0;
 
           if ((precomp_mgr.ctx->input_file_pos + act_search_pos) >= 4096) {
-            force_seekg(*precomp_mgr.ctx->fin, (precomp_mgr.ctx->input_file_pos + act_search_pos) - 4096, std::ios_base::beg);
+            precomp_mgr.ctx->fin->seekg((precomp_mgr.ctx->input_file_pos + act_search_pos) - 4096, std::ios_base::beg);
             precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), 4096);
             type_buf_length = 4096;
           } else {
-            force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
+            precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
             precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), precomp_mgr.ctx->input_file_pos + act_search_pos);
             type_buf_length = precomp_mgr.ctx->input_file_pos + act_search_pos;
           }
@@ -1856,11 +1821,11 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
         // get preceding length bytes
         if (precomp_mgr.ctx->input_file_pos >= 4) {
-          force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos - 4, std::ios_base::beg);
+          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos - 4, std::ios_base::beg);
 
           precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 10);
          if (precomp_mgr.ctx->fin->gcount() == 10) {
-          force_seekg(*precomp_mgr.ctx->fin, (long long)precomp_mgr.ctx->fin->tellg() - 2, std::ios_base::beg);
+          precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() - 2, std::ios_base::beg);
 
           idat_lengths[0] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
          if (idat_lengths[0] > 2) {
@@ -1883,7 +1848,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
             // go through additional IDATs
             for (;;) {
-              force_seekg(*precomp_mgr.ctx->fin, (long long)precomp_mgr.ctx->fin->tellg() + idat_lengths[idat_count - 1], std::ios_base::beg);
+              precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + idat_lengths[idat_count - 1], std::ios_base::beg);
               precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 12);
               if (precomp_mgr.ctx->fin->gcount() != 12) { // CRC, length, "IDAT"
                 idat_count = 0;
@@ -1929,12 +1894,12 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           PrecompTmpFile tmp_png;
           tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
-          force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
+          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
 
           idat_lengths[0] -= 2; // zLib header length
           for (int i = 0; i < idat_count; i++) {
             fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, tmp_png, idat_lengths[i]);
-            force_seekg(*precomp_mgr.ctx->fin, (long long)precomp_mgr.ctx->fin->tellg() + 12, std::ios_base::beg);
+            precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + 12, std::ios_base::beg);
           }
           idat_lengths[0] += 2;
 
@@ -2000,7 +1965,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
         precomp_mgr.ctx->input_file_pos+=2;
 
         do{
-          force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
           precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 5);
           if ((precomp_mgr.ctx->fin->gcount() != 5) || (precomp_mgr.in[0] != 0xFF))
               break;
@@ -2100,7 +2065,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
         long long act_pos = precomp_mgr.ctx->input_file_pos;
 
         // parse frames until first invalid frame is found or end-of-file
-        force_seekg(*precomp_mgr.ctx->fin, act_pos, std::ios_base::beg);
+        precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
         
         for (;;) {
           precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 4);
@@ -2181,7 +2146,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
                 break;
             }
           } else {
-            force_seekg(*precomp_mgr.ctx->fin, act_pos, std::ios_base::beg);
+            precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
           }
         }
 
@@ -2756,11 +2721,11 @@ while (precomp_mgr.ctx->fin->good()) {
           memiostream memstream2 = memiostream::make(jpg_mem_out + (ffda_pos - 1), jpg_mem_out + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
           fast_copy(precomp_mgr, memstream2, *precomp_mgr.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
         } else {
-          force_seekg(frecomp, frecomp_pos, std::ios_base::beg);
+          frecomp.seekg(frecomp_pos, std::ios_base::beg);
           fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
 
           frecomp_pos += ffda_pos - 1;
-          force_seekg(frecomp, frecomp_pos, std::ios_base::beg);
+          frecomp.seekg(frecomp_pos, std::ios_base::beg);
           fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
         }
       } else {
@@ -3096,7 +3061,7 @@ int convert_file(Precomp& precomp_mgr)
   return wrap_with_exception_catch([&]() { return convert_file_impl(precomp_mgr); });
 }
 
-long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
+long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
   long long r, decompressed_stream_size;
 
   precomp_mgr.call_progress_callback();
@@ -3105,7 +3070,7 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, in
   WrappedFStream ftempout;
   ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
 
-  force_seekg(file, &file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+  file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
 
   r = inf_bzip2(precomp_mgr, file, ftempout, compressed_stream_size, decompressed_stream_size);
   ftempout.close();
@@ -3114,7 +3079,7 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, WrappedIStream& file, in
   return r;
 }
 
-void try_recompress_bzip2(Precomp& precomp_mgr, WrappedIStream& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
+void try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
             precomp_mgr.call_progress_callback();
 
             long long decomp_bytes_total;
@@ -3183,6 +3148,7 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 void read_header(Precomp& precomp_mgr) {
+  if (precomp_mgr.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
   } else {
@@ -3211,10 +3177,11 @@ void read_header(Precomp& precomp_mgr) {
   if (precomp_mgr.output_file_name.empty()) {
     precomp_mgr.output_file_name = header_filename;
   }
+  precomp_mgr.header_already_read = true;
 }
 
 void convert_header(Precomp& precomp_mgr) {
-  force_seekg(*precomp_mgr.ctx->fin, 0, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
   if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
@@ -3252,7 +3219,7 @@ void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fout->put(0);
 }
 
-void fast_copy(Precomp& precomp_mgr, WrappedIStream& file1, WrappedOStream& file2, long long bytecount, bool update_progress) {
+void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress) {
   if (bytecount == 0) return;
 
   long long i;
@@ -3275,7 +3242,7 @@ void fast_copy(Precomp& precomp_mgr, WrappedIStream& file1, WrappedOStream& file
   if ((update_progress) && (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG)) precomp_mgr.ctx->uncompressed_bytes_written += bytecount;
 }
 
-long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, WrappedIStream& file1, WrappedIStream& file2, long long pos1, long long pos2) {
+long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
@@ -3293,16 +3260,16 @@ long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context,
 
   long long compare_end;
   if (&file1 == context.fin.get()) {
-    force_seekg(file2, 0, std::ios_base::end);
+    file2.seekg(0, std::ios_base::end);
     compare_end = file2.tellg();
   } else {
-    force_seekg(file1, 0, std::ios_base::end);
-    force_seekg(file2, 0, std::ios_base::end);
+    file1.seekg(0, std::ios_base::end);
+    file2.seekg(0, std::ios_base::end);
     compare_end = std::min(file1.tellg(), file2.tellg());
   }
 
-  force_seekg(file1, pos1, std::ios_base::beg);
-  force_seekg(file2, pos2, std::ios_base::beg);
+  file1.seekg(pos1, std::ios_base::beg);
+  file2.seekg(pos2, std::ios_base::beg);
 
   do {
     precomp_mgr.call_progress_callback();
@@ -3419,7 +3386,7 @@ void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile&
   }
 }
 
-void try_decompression_png_multi(Precomp& precomp_mgr, WrappedIStream& fpng, int windowbits, PrecompTmpFile& tmpfile) {
+void try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int windowbits, PrecompTmpFile& tmpfile) {
   init_decompression_variables(*precomp_mgr.ctx);
 
   // try to decompress at current position
@@ -3512,8 +3479,8 @@ void try_decompression_png_multi(Precomp& precomp_mgr, WrappedIStream& fpng, int
 // GIF functions
 
 bool newgif_may_write;
-WrappedOStream* frecompress_gif = NULL;
-WrappedIStream* freadfunc = NULL;
+OStreamLike* frecompress_gif = NULL;
+IStreamLike* freadfunc = NULL;
 
 int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
 {
@@ -3580,7 +3547,7 @@ bool r_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* n
   return r_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool recompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStream& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
+bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
   int i, j;
   long long last_pos = -1;
   int Row, Col, Width, Height, ExtCode;
@@ -3632,9 +3599,9 @@ bool recompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
         src_pos = srcfile.tellg();
         if (last_pos != src_pos) {
           if (last_pos == -1) {
-            force_seekg(srcfile, init_src_pos, std::ios_base::beg);
+            srcfile.seekg(init_src_pos, std::ios_base::beg);
             fast_copy(precomp_mgr, srcfile, dstfile, src_pos - init_src_pos);
-            force_seekg(srcfile, src_pos, std::ios_base::beg);
+            srcfile.seekg(src_pos, std::ios_base::beg);
 
             long long dstfile_pos = dstfile.tellp();
             dstfile.seekp(0, std::ios_base::beg);
@@ -3643,9 +3610,9 @@ bool recompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
             dstfile.put('I');
             dstfile.seekp(dstfile_pos, std::ios_base::beg);
           } else {
-            force_seekg(srcfile, last_pos, std::ios_base::beg);
+            srcfile.seekg(last_pos, std::ios_base::beg);
             fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
-            force_seekg(srcfile, src_pos, std::ios_base::beg);
+            srcfile.seekg(src_pos, std::ios_base::beg);
           }
         }
 
@@ -3703,9 +3670,9 @@ bool recompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
 
   src_pos = srcfile.tellg();
   if (last_pos != src_pos) {
-    force_seekg(srcfile, last_pos, std::ios_base::beg);
+    srcfile.seekg(last_pos, std::ios_base::beg);
     fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
-    force_seekg(srcfile, src_pos, std::ios_base::beg);
+    srcfile.seekg(src_pos, std::ios_base::beg);
   }
   return r_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
@@ -3722,7 +3689,7 @@ bool d_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile) {
   return d_gif_result(ScreenBuff, myGifFile, true);
 }
 
-bool decompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStream& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
+bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
   int i, j;
   GifFileType* myGifFile;
   int Row, Col, Width, Height, ExtCode;
@@ -3764,9 +3731,9 @@ bool decompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
         srcfile_pos = srcfile.tellg();
         if (last_pos != srcfile_pos) {
           if (last_pos == -1) {
-            force_seekg(srcfile, src_pos, std::ios_base::beg);
+            srcfile.seekg(src_pos, std::ios_base::beg);
             fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - src_pos);
-            force_seekg(srcfile, srcfile_pos, std::ios_base::beg);
+            srcfile.seekg(srcfile_pos, std::ios_base::beg);
 
             long long dstfile_pos = dstfile.tellp();
             dstfile.seekp(0, std::ios_base::beg);
@@ -3775,9 +3742,9 @@ bool decompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
             dstfile.put('G');
             dstfile.seekp(dstfile_pos, std::ios_base::beg);
           } else {
-            force_seekg(srcfile, last_pos, std::ios_base::beg);
+            srcfile.seekg(last_pos, std::ios_base::beg);
             fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
-            force_seekg(srcfile, srcfile_pos, std::ios_base::beg);
+            srcfile.seekg(srcfile_pos, std::ios_base::beg);
           }
         }
 
@@ -3786,7 +3753,7 @@ bool decompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
         if (c == 254) {
           block_size = 254;
         }
-        force_seekg(srcfile, srcfile_pos, std::ios_base::beg);
+        srcfile.seekg(srcfile_pos, std::ios_base::beg);
 
         Row = myGifFile->Image.Top; /* Image Position relative to Screen. */
         Col = myGifFile->Image.Left;
@@ -3847,9 +3814,9 @@ bool decompress_gif(Precomp& precomp_mgr, WrappedIStream& srcfile, WrappedOStrea
 
   srcfile_pos = srcfile.tellg();
   if (last_pos != srcfile_pos) {
-    force_seekg(srcfile, last_pos, std::ios_base::beg);
+    srcfile.seekg(last_pos, std::ios_base::beg);
     fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
-    force_seekg(srcfile, srcfile_pos, std::ios_base::beg);
+    srcfile.seekg(srcfile_pos, std::ios_base::beg);
   }
 
   gif_length = srcfile_pos - src_pos;
@@ -3873,7 +3840,7 @@ void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], Preco
 
   print_to_log(PRECOMP_DEBUG_LOG, "Possible GIF found at position %lli\n", precomp_mgr.ctx->input_file_pos);
 
-  force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
 
   tmpfile.close();
   // read GIF file
@@ -4126,7 +4093,7 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
   bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
-    force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
     jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
     memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + jpg_length);
     fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, jpg_length);
@@ -4221,7 +4188,7 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
         {
           WrappedFStream decompressed_jpg;
           decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
-          force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
           fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
           decompressed_jpg.close();
         }
@@ -4286,11 +4253,11 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
           if (found_ffda) {
             WrappedFStream decompressed_jpg_w_MJPGDHT;
             decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
-            force_seekg(decompressed_jpg, 0, std::ios_base::beg);
+            decompressed_jpg.seekg(0, std::ios_base::beg);
             fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
             // insert MJPGDHT
             decompressed_jpg_w_MJPGDHT.write(reinterpret_cast<char*>(MJPGDHT), MJPGDHT_LEN);
-            force_seekg(decompressed_jpg, ffda_pos - 1, std::ios_base::beg);
+            decompressed_jpg.seekg(ffda_pos - 1, std::ios_base::beg);
             fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, jpg_length - (ffda_pos - 1));
           }
           decompressed_jpg.close();
@@ -4323,7 +4290,7 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
         } else {
           WrappedFStream ftempout;
           ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-          force_seekg(ftempout, 0, std::ios_base::end);
+          ftempout.seekg(0, std::ios_base::end);
           jpg_new_length = ftempout.tellg();
           ftempout.close();
         }
@@ -4399,7 +4366,7 @@ void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTm
   bool in_memory = (mp3_length <= MP3_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
-    force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
     mp3_mem_in = new unsigned char[mp3_length];
     memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
     fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, mp3_length);
@@ -4411,7 +4378,7 @@ void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTm
     {
       WrappedFStream decompressed_mp3;
       decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
-      force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+      precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
       fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_mp3, mp3_length);
       decompressed_mp3.close();
     }
@@ -4486,7 +4453,7 @@ void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTm
     } else {
       WrappedFStream ftempout;
       ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-      force_seekg(ftempout, 0, std::ios_base::end);
+      ftempout.seekg(0, std::ios_base::end);
       mp3_new_length = ftempout.tellg();
       ftempout.close();
     }
@@ -4646,7 +4613,7 @@ void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, Precom
 
     WrappedFStream ftempout;
     ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-    force_seekg(ftempout, 0, std::ios_base::end);
+    ftempout.seekg(0, std::ios_base::end);
     print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", ftempout.tellg());
     ftempout.close();
   }
@@ -4739,7 +4706,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(Precomp& precomp_mgr, WrappedIStream& file_in, WrappedOStream& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
+void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count, long long max_byte_count) {
           int line_nr = 0;
           unsigned int act_line_len = 0;
           int avail_in;
@@ -4829,7 +4796,7 @@ void try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, Pr
 
   // try to decode at current position
   remove(tmpfile.file_path.c_str());
-  force_seekg(*precomp_mgr.ctx->fin, precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
 
   unsigned char base64_data[CHUNK >> 2];
   unsigned int* base64_line_len = new unsigned int[65536];
@@ -4958,7 +4925,7 @@ void try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, Pr
     {
       WrappedFStream ftempout;
       ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-      force_seekg(ftempout, 0, std::ios_base::end);
+      ftempout.seekg(0, std::ios_base::end);
       precomp_mgr.ctx->identical_bytes = ftempout.tellg();
     }
 
@@ -5069,9 +5036,11 @@ std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
   return fptr;
 }
 
-long long fileSize64(const char* filename) {
+uintmax_t fileSize64(const char* filename, int* error_code) {
   std::error_code ec;
-  return std::filesystem::file_size(filename, ec);
+  auto size = std::filesystem::file_size(filename, ec);
+  *error_code = ec.value();
+  return size;
 }
 
 std::string temp_files_tag() {
@@ -5127,7 +5096,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     std::filesystem::resize_file(tmpfile.file_path, decompressed_bytes);
   }
 
-  precomp_mgr.ctx->fin_length = fileSize64(tmpfile.file_path.c_str());
+  precomp_mgr.ctx->fin_length = std::filesystem::file_size(tmpfile.file_path.c_str());
   auto fin = new std::ifstream();
   fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!fin->is_open()) {
@@ -5197,7 +5166,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.max_recursion_depth_used)
       precomp_mgr.max_recursion_depth_used = (precomp_mgr.recursion_depth + 1);
     // get recursion file size
-    tmp_r.file_length = fileSize64(tmp_r.file_name.c_str());
+    tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
   }
 
   return tmp_r;
@@ -5215,7 +5184,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
 
   recursion_push(precomp_mgr);
 
-  precomp_mgr.ctx->fin_length = fileSize64(tmpfile.file_path.c_str());
+  precomp_mgr.ctx->fin_length = std::filesystem::file_size(tmpfile.file_path.c_str());
   auto fin = new std::ifstream();
   fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
   if (!fin->is_open()) {
@@ -5245,42 +5214,42 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
 
   // get recursion file size
-  tmp_r.file_length = fileSize64(tmp_r.file_name.c_str());
+  tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
 
   tmp_r.frecurse->open(tmp_r.file_name, std::ios_base::in | std::ios_base::binary);
 
   return tmp_r;
 }
 
-void fout_fput32_little_endian(WrappedOStream& output, int v) {
+void fout_fput32_little_endian(OStreamLike& output, int v) {
   output.put(v % 256);
   output.put((v >> 8) % 256);
   output.put((v >> 16) % 256);
   output.put((v >> 24) % 256);
 }
 
-void fout_fput32(WrappedOStream& output, int v) {
+void fout_fput32(OStreamLike& output, int v) {
   output.put((v >> 24) % 256);
   output.put((v >> 16) % 256);
   output.put((v >> 8) % 256);
   output.put(v % 256);
 }
 
-void fout_fput32(WrappedOStream& output, unsigned int v) {
+void fout_fput32(OStreamLike& output, unsigned int v) {
   output.put((v >> 24) % 256);
   output.put((v >> 16) % 256);
   output.put((v >> 8) % 256);
   output.put(v % 256);
 }
 
-void fout_fput_vlint(WrappedOStream& output, unsigned long long v) {
+void fout_fput_vlint(OStreamLike& output, unsigned long long v) {
   while (v >= 128) {
     output.put((v & 127) + 128);
     v = (v >> 7) - 1;
   }
   output.put(v);
 }
-void fout_fput_deflate_hdr(WrappedOStream& output, const unsigned char type, const unsigned char flags,
+void fout_fput_deflate_hdr(OStreamLike& output, const unsigned char type, const unsigned char flags,
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length,
                            const bool inc_last_hdr_byte) {
@@ -5297,7 +5266,7 @@ void fout_fput_deflate_hdr(WrappedOStream& output, const unsigned char type, con
     output.put(hdr[hdr_length - 1] + 1);
   }
 }
-void fin_fget_deflate_hdr(WrappedIStream& input, WrappedOStream& output, recompress_deflate_result& rdres, const unsigned char flags,
+void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const unsigned char flags,
                           unsigned char* hdr_data, unsigned& hdr_length, 
                           const bool inc_last_hdr_byte) {
   rdres.zlib_perfect = (flags & 2) == 0;
@@ -5316,7 +5285,7 @@ void fin_fget_deflate_hdr(WrappedIStream& input, WrappedOStream& output, recompr
   }
   output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
-void fout_fput_recon_data(WrappedOStream& output, const recompress_deflate_result& rdres) {
+void fout_fput_recon_data(OStreamLike& output, const recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     fout_fput_vlint(output, rdres.recon_data.size());
     output.write(reinterpret_cast<char*>(const_cast<unsigned char*>(rdres.recon_data.data())), rdres.recon_data.size());
@@ -5325,7 +5294,7 @@ void fout_fput_recon_data(WrappedOStream& output, const recompress_deflate_resul
   fout_fput_vlint(output, rdres.compressed_stream_size);
   fout_fput_vlint(output, rdres.uncompressed_stream_size);
 }
-void fin_fget_recon_data(WrappedIStream& input, recompress_deflate_result& rdres) {
+void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     size_t sz = fin_fget_vlint(input);
     rdres.recon_data.resize(sz);
@@ -5392,7 +5361,7 @@ int32_t fin_fget32_little_endian(std::istream& input) {
   result += ((long)input.get() << 24);
   return result;
 }
-int32_t fin_fget32(WrappedIStream& input) {
+int32_t fin_fget32(IStreamLike& input) {
   int32_t result = 0;
   result += ((long)input.get() << 24);
   result += ((long)input.get() << 16);
@@ -5400,7 +5369,7 @@ int32_t fin_fget32(WrappedIStream& input) {
   result += (long)input.get();
   return result;
 }
-long long fin_fget_vlint(WrappedIStream& input) {
+long long fin_fget_vlint(IStreamLike& input) {
   unsigned char c;
   long long v = 0, o = 0, s = 0;
   while ((c = input.get()) >= 128) {

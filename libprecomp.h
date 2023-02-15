@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 #include "precomp_xz_params.h"
 
 #ifdef __cplusplus
@@ -26,6 +28,9 @@
 #define LIBPRECOMP IMPORT
 #endif
 
+// This is provided as a courtesy for C users, as checking the size of a file in a compliant and portable way is unnecessarily hard, but pretty much trivial for us on C++17
+ExternC LIBPRECOMP uintmax_t fileSize64(const char* filename, int* error_code);
+
 typedef enum
 {
   PRECOMP_NORMAL_LOG,
@@ -36,7 +41,7 @@ extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL
 
 // You DON'T and SHOULDN'T delete the given char*, it comes from a C++ std::string and will free itself after your callback finishes running
 // With that said, if for any reason you want to keep the message around instead of immediately printing/dumping it somewhere, make a copy or your program will go BOOM!
-void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*));
+ExternC LIBPRECOMP void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*));
 
 #define P_NONE 0
 #define P_COMPRESS 1
@@ -44,8 +49,6 @@ void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*));
 #define P_CONVERT 3
 
 ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
-ExternC LIBPRECOMP bool PrecompPrecompressFile(char* in_file, char* out_file, char* msg);
-ExternC LIBPRECOMP bool PrecompRecompressFile(char* in_file, char* out_file, char* msg);
 
 // Do NOT instantiate any of these structs directly (get them using PrecompGet/CreateX functions instead)
 // if you do instantiate and attempt to use them, terrible things will happen to you and you will deserve every last bit of it.
@@ -93,7 +96,7 @@ typedef struct {
 } CSwitches;
 
 typedef struct {
-  long long fin_length;
+  uintmax_t fin_length;
   int compression_otf_method ;
 
   bool anything_was_used;
@@ -140,6 +143,7 @@ typedef struct {
 
 typedef struct {
   long long start_time;
+  bool header_already_read;
 
   int conversion_to_method;
 
@@ -150,22 +154,24 @@ typedef struct {
   bool max_recursion_depth_reached;
 } CPrecomp;
 
-CPrecomp* PrecompCreate();
-void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
-CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
-CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
-CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
-lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP CPrecomp* PrecompCreate();
+ExternC LIBPRECOMP void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
+ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr);
 
-typedef void* CPrecompIStream;
-void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name);
-typedef void* CPrecompOStream;
-void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
+ExternC LIBPRECOMP typedef void* CPrecompIStream;
+ExternC LIBPRECOMP void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name);
+ExternC LIBPRECOMP void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* input_file_name);
+ExternC LIBPRECOMP typedef void* CPrecompOStream;
+ExternC LIBPRECOMP void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
+ExternC LIBPRECOMP void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name);
 
-int PrecompPrecompress(CPrecomp* precomp_mgr);
-int PrecompRecompress(CPrecomp* precomp_mgr);
-int PrecompConvert(CPrecomp* precomp_mgr);
-const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg);
-void PrecompConvertHeader(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP int PrecompPrecompress(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP int PrecompRecompress(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP int PrecompConvert(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg);
+ExternC LIBPRECOMP void PrecompConvertHeader(CPrecomp* precomp_mgr);
 
 #endif

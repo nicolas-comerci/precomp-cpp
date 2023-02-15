@@ -24,8 +24,38 @@
  TODO: Refactor compressed streambufs to instead be derived from here
  TODO: Finish the derived Observables
  */
+
+// Interface for the things in common that something that behaves like a std::istream or std::ostream has to have
+class StreamLikeCommon {
+public:
+  virtual ~StreamLikeCommon() {}
+
+  virtual bool eof() = 0;
+  virtual bool good() = 0;
+  virtual bool bad() = 0;
+  virtual void clear() = 0;
+};
+
+class IStreamLike: public StreamLikeCommon {
+public:
+  virtual IStreamLike& read(char* buff, std::streamsize count) = 0;
+  virtual std::istream::int_type get() = 0;
+  virtual std::streamsize gcount() = 0;
+  virtual IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) = 0;
+  virtual std::istream::pos_type tellg() = 0;
+};
+
+class OStreamLike: public StreamLikeCommon {
+public:
+  virtual OStreamLike& write(const char* buf, std::streamsize count) = 0;
+  virtual OStreamLike& put(char chr) = 0;
+  virtual void flush() = 0;
+  virtual std::ostream::pos_type tellp() = 0;
+  virtual OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) = 0;
+};
+
 template <typename T>
-class WrappedStream {
+class WrappedStream: public StreamLikeCommon {
 protected:
   T* wrapped_stream;
   bool owns_wrapped_stream;
@@ -37,7 +67,7 @@ protected:
   }
 
 public:
-  virtual ~WrappedStream() {
+  ~WrappedStream() override {
     if (!owns_wrapped_stream) return;
     delete wrapped_stream;
   }
@@ -58,84 +88,187 @@ public:
 
   virtual std::streambuf* rdbuf(std::streambuf* sbuff) { return wrapped_stream->rdbuf(sbuff); }
 
-  virtual bool eof() { return wrapped_stream->eof(); }
-  virtual bool good() { return wrapped_stream->good(); }
-  virtual bool bad() { return wrapped_stream->bad(); }
-  virtual void clear() { wrapped_stream->clear(); }
+  bool eof() override { return wrapped_stream->eof(); }
+  bool good() override { return wrapped_stream->good(); }
+  bool bad() override { return wrapped_stream->bad(); }
+  void clear() override { wrapped_stream->clear(); }
 };
 
-class WrappedOStream : public WrappedStream<std::ostream> {
+class WrappedOStream: public WrappedStream<std::ostream>, public OStreamLike {
 public:
   WrappedOStream(std::ostream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
 
   ~WrappedOStream() override {}
 
-  virtual WrappedOStream& write(const char* buf, std::streamsize count) {
+  bool eof() override { return WrappedStream::eof(); }
+  bool good() override { return WrappedStream::good(); }
+  bool bad() override { return WrappedStream::bad(); }
+  void clear() override { WrappedStream::clear(); }
+
+  WrappedOStream& write(const char* buf, std::streamsize count) override {
     wrapped_stream->write(buf, count);
     return *this;
   }
 
-  virtual WrappedOStream& put(char chr) {
+  WrappedOStream& put(char chr) override {
     wrapped_stream->put(chr);
     return *this;
   }
 
-  virtual void flush() { wrapped_stream->flush(); }
+  void flush() override { wrapped_stream->flush(); }
 
-  virtual std::istream::pos_type tellp() { return wrapped_stream->tellp(); }
+  std::ostream::pos_type tellp() override { return wrapped_stream->tellp(); }
 
-  virtual WrappedOStream& seekp(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  WrappedOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
     wrapped_stream->seekp(offset, dir);
     return *this;
   }
 };
 
-class WrappedIStream : public WrappedStream<std::istream> {
+class FILEIStream: public IStreamLike {
+  FILE* file_ptr;
+  bool take_ownership;
+  size_t _gcount;
+public:
+  FILEIStream(FILE* file, bool take_ownership): file_ptr(file), take_ownership(take_ownership), _gcount(0) { }
+  ~FILEIStream() override {
+    if (!take_ownership) return;
+    std::fclose(file_ptr);
+  }
+
+  bool eof() override { return std::feof(file_ptr); }
+  bool good() override { return !std::feof(file_ptr) && !std::ferror(file_ptr); }
+  bool bad() override { return std::ferror(file_ptr); }
+  void clear() override {
+    std::clearerr(file_ptr);
+  }
+
+  FILEIStream& read(char* buff, std::streamsize count) override {
+    _gcount = std::fread(buff, sizeof(char), count, file_ptr);
+    return *this;
+  }
+
+  std::istream::int_type get() override {
+    _gcount = 1;
+    auto chr = std::fgetc(file_ptr);
+    if (chr == EOF) {
+      chr = std::istream::traits_type::eof();
+    }
+    return chr;
+  }
+  std::streamsize gcount() override { return _gcount; }
+
+  FILEIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    std::fseek(file_ptr, offset, dir);
+    return *this;
+  }
+
+  std::istream::pos_type tellg() override { return std::ftell(file_ptr); }
+};
+
+class WrappedIStream : public WrappedStream<std::istream>, public IStreamLike {
 public:
   WrappedIStream(std::istream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
 
-  virtual WrappedIStream& read(char* buff, std::streamsize count) {
+  bool eof() override { return WrappedStream::eof(); }
+  bool good() override { return WrappedStream::good(); }
+  bool bad() override { return WrappedStream::bad(); }
+  void clear() override { WrappedStream::clear(); }
+
+  WrappedIStream& read(char* buff, std::streamsize count) override {
     wrapped_stream->read(buff, count);
     return *this;
   }
 
-  virtual std::istream::int_type get() { return wrapped_stream->get(); }
+  std::istream::int_type get() override { return wrapped_stream->get(); }
 
-  virtual std::streamsize gcount() { return wrapped_stream->gcount(); }
+  std::streamsize gcount() override { return wrapped_stream->gcount(); }
 
-  virtual WrappedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  WrappedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    // istreams don't allow seeking once eof/failbit is set, which happens if we read a file to the end.
+    // This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
+    if (bad()) {
+      throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
+    }
+    clear();
     wrapped_stream->seekg(offset, dir);
     return *this;
   }
 
-  virtual std::istream::pos_type tellg() { return wrapped_stream->tellg(); }
+  std::istream::pos_type tellg() override { return wrapped_stream->tellg(); }
 };
 
 // With this we can get notified whenever we write to the ostream, useful for registering callbacks to update progress without littering our code with calls for it
-class ObservableOStream: public WrappedOStream {
+class ObservableStreamBase {
 public:
   enum observable_methods {
     write_method,
+    put_method,
+    flush_method,
+    tellp_method,
+    seekp_method
   };
-private:
-  std::map<observable_methods, std::function<void()>> method_observers = { {write_method, {}}};
+
+  void register_observer(observable_methods method, std::function<void()> callback) {
+    method_observers[method] = callback;
+  }
+protected:
+  std::map<observable_methods, std::function<void()>> method_observers = { {write_method, {}} };
 
   void notify_observer(observable_methods method) {
     auto observer_callback = method_observers[method];
     if (observer_callback) observer_callback();
   }
+};
+
+class ObservableOStream: public OStreamLike, public ObservableStreamBase {
+protected:
+  virtual void internal_write(const char* buf, std::streamsize count) = 0;
+  virtual void internal_put(char chr) = 0;
+  virtual void internal_flush() = 0;
+  virtual std::ostream::pos_type internal_tellp() = 0;
+  virtual void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) = 0;
 public:
-  ObservableOStream(std::ostream* stream, bool take_ownership): WrappedOStream(stream, take_ownership) { }
-
-  void register_observer(observable_methods method, std::function<void()> callback) {
-    method_observers[method] = callback;
-  }
-
   ObservableOStream& write(const char* buf, std::streamsize count) override {
-    WrappedOStream::write(buf, count);
+    internal_write(buf, count);
     notify_observer(write_method);
     return *this;
   }
+  ObservableOStream& put(char chr) override {
+    internal_put(chr);
+    notify_observer(put_method);
+    return *this;
+  }
+  void flush() override {
+    internal_flush();
+    notify_observer(flush_method);
+  }
+  std::ostream::pos_type tellp() override {
+    notify_observer(tellp_method);
+    return internal_tellp();    
+  }
+  ObservableOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
+    internal_seekp(offset, dir);
+    notify_observer(seekp_method);
+    return *this;
+  }
+};
+
+class ObservableWrappedOStream: public WrappedOStream, public ObservableOStream {
+protected:
+  void internal_write(const char* buf, std::streamsize count) override { WrappedOStream::write(buf, count); }
+  void internal_put(char chr) override { WrappedOStream::put(chr); }
+  void internal_flush() override { WrappedOStream::flush(); }
+  std::ostream::pos_type internal_tellp() override { return WrappedOStream::tellp(); }
+  void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override { WrappedOStream::seekp(offset, dir); }
+
+public:
+  ObservableWrappedOStream(std::ostream* stream, bool take_ownership) : WrappedOStream(stream, take_ownership) { }
+
+  bool eof() override { return WrappedOStream::eof(); }
+  bool good() override { return WrappedOStream::good(); }
+  bool bad() override { return WrappedOStream::bad(); }
+  void clear() override { WrappedOStream::clear(); }
 };
 
 class ObservableIStream : public WrappedIStream {
@@ -143,11 +276,7 @@ public:
   ObservableIStream(std::istream* stream, bool take_ownership): WrappedIStream(stream, take_ownership) { }
 };
 
-// istreams don't allow seeking once eof/failbit is set, which happens if we read a file to the end.
-// This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
-void force_seekg(WrappedIStream& stream, long long offset, std::ios_base::seekdir origin);
-
-int ostream_printf(WrappedOStream& out, std::string str);
+int ostream_printf(OStreamLike& out, std::string str);
 int ostream_printf(std::ostream& out, std::string str);
 
 template <typename T>
@@ -165,7 +294,10 @@ public:
 
   ~WrappedIOStream() override = default;
 
-  //virtual typename T::pos_type tellg() { return wrapped_iostream->tellg(); }
+  bool eof() override { return wrapped_iostream->eof(); }
+  bool good() override { return wrapped_iostream->good(); }
+  bool bad() override { return wrapped_iostream->bad(); }
+  void clear() override { wrapped_iostream->clear(); }
 };
 
 class WrappedFStream: public WrappedIOStream<std::fstream> {
