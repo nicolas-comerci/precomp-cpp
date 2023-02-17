@@ -256,9 +256,6 @@ precompression_result precompress_mp3(Precomp& precomp_mgr) {
 
   long long mp3_length = 0;
 
-  precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-  precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
-
   long long act_pos = precomp_mgr.ctx->input_file_pos;
 
   // parse frames until first invalid frame is found or end-of-file

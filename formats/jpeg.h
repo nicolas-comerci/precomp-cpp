@@ -309,9 +309,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
 
 precompression_result precompress_jpeg(Precomp& precomp_mgr) {
   precompression_result result = precompression_result(D_JPG);
-  precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-  precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
-
   bool done = false, found = false;
   bool hasQuantTable = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xDB);
   bool progressive_flag = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC2);

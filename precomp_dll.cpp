@@ -63,7 +63,6 @@
 #include <unistd.h>
 #endif
 
-#include "contrib/giflib/precomp_gif.h"
 #include "contrib/packmp3/precomp_mp3.h"
 #include "contrib/zlib/zlib.h"
 #include "contrib/preflate/preflate.h"
@@ -72,6 +71,7 @@
 
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
+#include "formats/gif.h"
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -97,6 +97,38 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
   if (PRECOMP_VERBOSITY_LEVEL < log_level || !logging_callback) return;
   logging_callback(log_level, format.data());
 }
+
+void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
+  // write compressed data header
+  precomp_mgr.ctx->fout->put(flags);
+  precomp_mgr.ctx->fout->put(format);
+}
+
+void precompression_result::dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const {
+  if (penalty_bytes.empty()) return;
+  fout_fput_vlint(*precomp_mgr.ctx->fout, penalty_bytes.size());
+
+  for (auto& chr: penalty_bytes) {
+    precomp_mgr.ctx->fout->put(chr);
+  }
+}
+
+void precompression_result::dump_stream_sizes_to_outfile(Precomp& precomp_mgr) {
+  fout_fput_vlint(*precomp_mgr.ctx->fout, original_size);
+  fout_fput_vlint(*precomp_mgr.ctx->fout, precompressed_size);
+}
+
+void precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
+  fast_copy(precomp_mgr, *precompressed_stream, *precomp_mgr.ctx->fout, precompressed_size);
+}
+
+void precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
+  dump_header_to_outfile(precomp_mgr);
+  dump_penaltybytes_to_outfile(precomp_mgr);
+  dump_stream_sizes_to_outfile(precomp_mgr);
+  dump_precompressed_data_to_outfile(precomp_mgr);
+}
+
 
 zLibMTF MTF;
 
@@ -1907,48 +1939,41 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_gif)) { // no PNG header -> GIF header?
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 'G') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] == 'I') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] == 'F')) {
-        if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == '8') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 5] == 'a')) {
-          if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 4] == '7') || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 4] == '9')) {
+      if (gif_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-            unsigned char version[5];
+        auto result = precompress_gif(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-            for (int i = 0; i < 5; i++) {
-              version[i] = precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + i];
-            }
+          result.dump_to_outfile(precomp_mgr);
 
-            precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-            precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+          // start new uncompressed data
 
-            tempfile += "gif";
-            PrecompTmpFile tmp_gif;
-            tmp_gif.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-            try_decompression_gif(precomp_mgr, version, tmp_gif);
-
-            if (!precomp_mgr.ctx->compressed_data_found) {
-              precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-              precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
-            }
-          }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
+          precomp_mgr.ctx->cb += result.original_size - 1;
+        }
+        else {
+          precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
+          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
       if (jpeg_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+
         auto result = precompress_jpeg(precomp_mgr);
         precomp_mgr.ctx->compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
-          // write compressed data header (JPG)
-          precomp_mgr.ctx->fout->put(result.flags);
-          precomp_mgr.ctx->fout->put(result.format); // JPG
-
-          fout_fput_vlint(*precomp_mgr.ctx->fout, result.original_size);
-          fout_fput_vlint(*precomp_mgr.ctx->fout, result.precompressed_size);
-
-          fast_copy(precomp_mgr, *result.precompressed_stream, *precomp_mgr.ctx->fout, result.precompressed_size);
+          result.dump_to_outfile(precomp_mgr);
 
           // start new uncompressed data
 
@@ -1965,20 +1990,16 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
       if (mp3_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) { // frame start
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+
         auto result = precompress_mp3(precomp_mgr);
         precomp_mgr.ctx->compressed_data_found = result.success;
         if (result.success) {
           // end uncompressed data
           end_uncompressed_data(precomp_mgr);
 
-          // write compressed data header (MP3)
-          precomp_mgr.ctx->fout->put(result.flags); // no penalty bytes
-          precomp_mgr.ctx->fout->put(result.format); // MP3
-
-          fout_fput_vlint(*precomp_mgr.ctx->fout, result.original_size);
-          fout_fput_vlint(*precomp_mgr.ctx->fout, result.precompressed_size);
-
-          fast_copy(precomp_mgr, *result.precompressed_stream, *precomp_mgr.ctx->fout, result.precompressed_size);
+          result.dump_to_outfile(precomp_mgr);
 
           // start new uncompressed data
 
@@ -2843,7 +2864,7 @@ void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, lon
   if ((update_progress) && (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG)) precomp_mgr.ctx->uncompressed_bytes_written += bytecount;
 }
 
-long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
+std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
@@ -2854,10 +2875,9 @@ long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context,
   long long i;
   bool endNow = false;
 
-  unsigned int local_penalty_bytes_len = 0;
-
-  unsigned int rek_penalty_bytes_len = 0;
   bool use_penalty_bytes = false;
+
+  std::vector<char> penalty_bytes;
 
   long long compare_end;
   if (&file1 == context.fin.get()) {
@@ -2891,20 +2911,19 @@ long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context,
           endNow = true;
           break;
         }
-        // stop, if local_penalty_bytes_len gets too big
-        if ((local_penalty_bytes_len + 5) >= MAX_PENALTY_BYTES) {
+        // stop, if penalty_bytes len gets too big
+        if ((penalty_bytes.size() + 5) >= MAX_PENALTY_BYTES) {
           endNow = true;
           break;
         }
 
-        local_penalty_bytes_len += 5;
         // position
-        context.local_penalty_bytes[local_penalty_bytes_len-5] = (same_byte_count >> 24) % 256;
-        context.local_penalty_bytes[local_penalty_bytes_len-4] = (same_byte_count >> 16) % 256;
-        context.local_penalty_bytes[local_penalty_bytes_len-3] = (same_byte_count >> 8) % 256;
-        context.local_penalty_bytes[local_penalty_bytes_len-2] = same_byte_count % 256;
+        penalty_bytes.push_back((same_byte_count >> 24) % 256);
+        penalty_bytes.push_back((same_byte_count >> 16) % 256);
+        penalty_bytes.push_back((same_byte_count >> 8) % 256);
+        penalty_bytes.push_back(same_byte_count % 256);
         // new byte
-        context.local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
+        penalty_bytes.push_back(input_bytes1[i]);
       } else {
         same_byte_count_penalty++;
       }
@@ -2912,10 +2931,7 @@ long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context,
       same_byte_count++;
 
       if (same_byte_count_penalty > rek_same_byte_count_penalty) {
-
         use_penalty_bytes = true;
-        rek_penalty_bytes_len = local_penalty_bytes_len;
-
         rek_same_byte_count = same_byte_count;
         rek_same_byte_count_penalty = same_byte_count_penalty;
       }
@@ -2923,14 +2939,7 @@ long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context,
     }
   } while ((minsize == COMP_CHUNK) && (!endNow));
 
-  if ((rek_penalty_bytes_len > 0) && (use_penalty_bytes)) {
-    memcpy(context.penalty_bytes.data(), context.local_penalty_bytes.data(), rek_penalty_bytes_len);
-    context.penalty_bytes_len = rek_penalty_bytes_len;
-  } else {
-    context.penalty_bytes_len = 0;
-  }
-
-  return rek_same_byte_count;
+  return { rek_same_byte_count, use_penalty_bytes ? penalty_bytes: std::vector<char>()};
 }
 
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile) {
@@ -3078,488 +3087,6 @@ void try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int wi
 }
 
 // GIF functions
-
-bool newgif_may_write;
-OStreamLike* frecompress_gif = NULL;
-IStreamLike* freadfunc = NULL;
-
-int readFunc(GifFileType* GifFile, GifByteType* buf, int count)
-{
-  freadfunc->read(reinterpret_cast<char*>(buf), count);
-  return freadfunc->gcount();
-}
-
-int writeFunc(GifFileType* GifFile, const GifByteType* buf, int count)
-{
-  if (newgif_may_write) {
-    frecompress_gif->write(reinterpret_cast<char*>(const_cast<GifByteType*>(buf)), count);
-    return frecompress_gif->bad() ? 0 : count;
-  } else {
-    return count;
-  }
-}
-
-int DGifGetLineByte(GifFileType *GifFile, GifPixelType *Line, int LineLen, GifCodeStruct *g)
-{
-    GifPixelType* LineBuf = new GifPixelType[LineLen];
-    memcpy(LineBuf, Line, LineLen);
-    int result = DGifGetLine(GifFile, LineBuf, g, LineLen);
-    memcpy(Line, LineBuf, LineLen);
-    delete[] LineBuf;
-
-    return result;
-}
-
-unsigned char** alloc_gif_screenbuf(GifFileType* myGifFile) {
-  if (myGifFile->SHeight <= 0 || myGifFile->SWidth <= 0) {
-    return nullptr;
-  }
-  unsigned char** ScreenBuff = new unsigned char*[myGifFile->SHeight];
-  for (int i = 0; i < myGifFile->SHeight; i++) {
-    ScreenBuff[i] = new unsigned char[myGifFile->SWidth];
-  }
-
-  for (int i = 0; i < myGifFile->SWidth; i++)  /* Set its color to BackGround. */
-    ScreenBuff[0][i] = myGifFile->SBackGroundColor;
-  for (int i = 1; i < myGifFile->SHeight; i++) {
-    memcpy(ScreenBuff[i], ScreenBuff[0], myGifFile->SWidth);
-  }
-  return ScreenBuff;
-}
-void free_gif_screenbuf(unsigned char** ScreenBuff, GifFileType* myGifFile) {
-  if (ScreenBuff != NULL) {
-    for (int i = 0; i < myGifFile->SHeight; i++) {
-      delete[] ScreenBuff[i];
-    }
-    delete[] ScreenBuff;
-  }
-}
-
-bool r_gif_result(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* newGifFile, bool result) {
-  free_gif_screenbuf(ScreenBuff, myGifFile);
-  DGifCloseFile(myGifFile);
-  EGifCloseFile(newGifFile);
-  return result;
-}
-bool r_gif_error(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* newGifFile) {
-  return r_gif_result(ScreenBuff, myGifFile, newGifFile, false);
-}
-bool r_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFileType* newGifFile) {
-  return r_gif_result(ScreenBuff, myGifFile, newGifFile, true);
-}
-
-bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dstfile, unsigned char block_size, GifCodeStruct* g, GifDiffStruct* gd) {
-  int i, j;
-  long long last_pos = -1;
-  int Row, Col, Width, Height, ExtCode;
-  long long src_pos, init_src_pos;
-
-  GifFileType* myGifFile;
-  GifFileType* newGifFile;
-  GifRecordType RecordType;
-  GifByteType *Extension;
-
-  freadfunc = &srcfile;
-  frecompress_gif = &dstfile;
-  newgif_may_write = false;
-
-  init_src_pos = srcfile.tellg();
-
-  myGifFile = DGifOpenPCF(NULL, readFunc);
-  if (myGifFile == NULL) {
-    return false;
-  }
-
-  newGifFile = EGifOpen(NULL, writeFunc);
-
-  newGifFile->BlockSize = block_size;
-
-  if (newGifFile == NULL) {
-    return false;
-  }
-  unsigned char** ScreenBuff = alloc_gif_screenbuf(myGifFile);
-  if (!ScreenBuff) {
-    DGifCloseFile(myGifFile);
-    EGifCloseFile(newGifFile);
-    return false;
-  }
-
-  EGifPutScreenDesc(newGifFile, myGifFile->SWidth, myGifFile->SHeight, myGifFile->SColorResolution, myGifFile->SBackGroundColor, myGifFile->SPixelAspectRatio, myGifFile->SColorMap);
-
-  do {
-    if (DGifGetRecordType(myGifFile, &RecordType) == GIF_ERROR) {
-      return r_gif_error(ScreenBuff, myGifFile, newGifFile);
-    }
-
-    switch (RecordType) {
-      case IMAGE_DESC_RECORD_TYPE:
-        if (DGifGetImageDesc(myGifFile) == GIF_ERROR) {
-          return r_gif_error(ScreenBuff, myGifFile, newGifFile);
-        }
-
-        src_pos = srcfile.tellg();
-        if (last_pos != src_pos) {
-          if (last_pos == -1) {
-            srcfile.seekg(init_src_pos, std::ios_base::beg);
-            fast_copy(precomp_mgr, srcfile, dstfile, src_pos - init_src_pos);
-            srcfile.seekg(src_pos, std::ios_base::beg);
-
-            long long dstfile_pos = dstfile.tellp();
-            dstfile.seekp(0, std::ios_base::beg);
-            // change PGF8xa to GIF8xa
-            dstfile.put('G');
-            dstfile.put('I');
-            dstfile.seekp(dstfile_pos, std::ios_base::beg);
-          } else {
-            srcfile.seekg(last_pos, std::ios_base::beg);
-            fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
-            srcfile.seekg(src_pos, std::ios_base::beg);
-          }
-        }
-
-        Row = myGifFile->Image.Top; /* Image Position relative to Screen. */
-        Col = myGifFile->Image.Left;
-        Width = myGifFile->Image.Width;
-        Height = myGifFile->Image.Height;
-
-        for (i = Row; i < (Row + Height); i++) {
-          srcfile.read(reinterpret_cast<char*>(&ScreenBuff[i][Col]), Width);
-        }
-
-        // this does send a clear code, so we pass g and gd
-        if (EGifPutImageDesc(newGifFile, g, gd, Row, Col, Width, Height, myGifFile->Image.Interlace, myGifFile->Image.ColorMap) == GIF_ERROR) {
-          return r_gif_error(ScreenBuff, myGifFile, newGifFile);
-        }
-
-        newgif_may_write = true;
-
-        if (myGifFile->Image.Interlace) {
-          for (i = 0; i < 4; i++) {
-            for (j = Row + InterlacedOffset[i]; j < (Row + Height); j += InterlacedJumps[i]) {
-              EGifPutLine(newGifFile, &ScreenBuff[j][Col], g, gd, Width);
-            }
-          }
-        } else {
-          for (i = Row; i < (Row + Height); i++) {
-            EGifPutLine(newGifFile, &ScreenBuff[i][Col], g, gd, Width);
-          }
-        }
-
-        newgif_may_write = false;
-
-        last_pos = srcfile.tellg();
-
-        break;
-      case EXTENSION_RECORD_TYPE:
-        /* Skip any extension blocks in file: */
-
-        if (DGifGetExtension(myGifFile, &ExtCode, &Extension) == GIF_ERROR) {
-          return r_gif_error(ScreenBuff, myGifFile, newGifFile);
-        }
-        while (Extension != NULL) {
-          if (DGifGetExtensionNext(myGifFile, &Extension) == GIF_ERROR) {
-            return r_gif_error(ScreenBuff, myGifFile, newGifFile);
-          }
-        }
-        break;
-      case TERMINATE_RECORD_TYPE:
-        break;
-      default:                    /* Should be traps by DGifGetRecordType. */
-        break;
-    }
-  } while (RecordType != TERMINATE_RECORD_TYPE);
-
-  src_pos = srcfile.tellg();
-  if (last_pos != src_pos) {
-    srcfile.seekg(last_pos, std::ios_base::beg);
-    fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
-    srcfile.seekg(src_pos, std::ios_base::beg);
-  }
-  return r_gif_ok(ScreenBuff, myGifFile, newGifFile);
-}
-
-bool d_gif_result(unsigned char** ScreenBuff, GifFileType* myGifFile, bool result) {
-  free_gif_screenbuf(ScreenBuff, myGifFile);
-  DGifCloseFile(myGifFile);
-  return result;
-}
-bool d_gif_error(unsigned char** ScreenBuff, GifFileType* myGifFile) {
-  return d_gif_result(ScreenBuff, myGifFile, false);
-}
-bool d_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile) {
-  return d_gif_result(ScreenBuff, myGifFile, true);
-}
-
-bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
-  int i, j;
-  GifFileType* myGifFile;
-  int Row, Col, Width, Height, ExtCode;
-  GifByteType *Extension;
-  GifRecordType RecordType;
-
-  long long srcfile_pos;
-  long long last_pos = -1;
-
-  freadfunc = &srcfile;
-  myGifFile = DGifOpen(NULL, readFunc);
-  if (myGifFile == NULL) {
-    return false;
-  }
-
-  unsigned char** ScreenBuff = NULL;
-
-  do {
-
-    if (DGifGetRecordType(myGifFile, &RecordType) == GIF_ERROR) {
-      DGifCloseFile(myGifFile);
-      return false;
-    }
-
-    switch (RecordType) {
-      case IMAGE_DESC_RECORD_TYPE:
-        if (DGifGetImageDesc(myGifFile) == GIF_ERROR) {
-          return d_gif_error(ScreenBuff, myGifFile);
-        }
-
-        if (ScreenBuff == NULL) {
-          ScreenBuff = alloc_gif_screenbuf(myGifFile);
-          if (!ScreenBuff) {
-            DGifCloseFile(myGifFile);
-            return false;
-          }
-        }
-
-        srcfile_pos = srcfile.tellg();
-        if (last_pos != srcfile_pos) {
-          if (last_pos == -1) {
-            srcfile.seekg(src_pos, std::ios_base::beg);
-            fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - src_pos);
-            srcfile.seekg(srcfile_pos, std::ios_base::beg);
-
-            long long dstfile_pos = dstfile.tellp();
-            dstfile.seekp(0, std::ios_base::beg);
-            // change GIF8xa to PGF8xa
-            dstfile.put('P');
-            dstfile.put('G');
-            dstfile.seekp(dstfile_pos, std::ios_base::beg);
-          } else {
-            srcfile.seekg(last_pos, std::ios_base::beg);
-            fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
-            srcfile.seekg(srcfile_pos, std::ios_base::beg);
-          }
-        }
-
-        unsigned char c;
-        c = srcfile.get();
-        if (c == 254) {
-          block_size = 254;
-        }
-        srcfile.seekg(srcfile_pos, std::ios_base::beg);
-
-        Row = myGifFile->Image.Top; /* Image Position relative to Screen. */
-        Col = myGifFile->Image.Left;
-        Width = myGifFile->Image.Width;
-        Height = myGifFile->Image.Height;
-
-        if (((Col + Width) > myGifFile->SWidth) ||
-            ((Row + Height) > myGifFile->SHeight)) {
-          return d_gif_error(ScreenBuff, myGifFile);
-        }
-
-        if (myGifFile->Image.Interlace) {
-          /* Need to perform 4 passes on the images: */
-          for (i = 0; i < 4; i++) {
-            for (j = Row + InterlacedOffset[i]; j < (Row + Height); j += InterlacedJumps[i]) {
-              if (DGifGetLineByte(myGifFile, &ScreenBuff[j][Col], Width, g) == GIF_ERROR) {
-                // TODO: If this fails, write as much rows to dstfile
-                //       as possible to support second decompression.
-                return d_gif_error(ScreenBuff, myGifFile);
-              }
-            }
-          }
-          // write to dstfile
-          for (i = Row; i < (Row + Height); i++) {
-            dstfile.write(reinterpret_cast<char*>(&ScreenBuff[i][Col]), Width);
-          }
-        } else {
-          for (i = Row; i < (Row + Height); i++) {
-            if (DGifGetLineByte(myGifFile, &ScreenBuff[i][Col], Width, g) == GIF_ERROR) {
-              return d_gif_error(ScreenBuff, myGifFile);
-            }
-            // write to dstfile
-            dstfile.write(reinterpret_cast<char*>(&ScreenBuff[i][Col]), Width);
-          }
-        }
-
-        last_pos = srcfile.tellg();
-
-        break;
-      case EXTENSION_RECORD_TYPE:
-        /* Skip any extension blocks in file: */
-
-        if (DGifGetExtension(myGifFile, &ExtCode, &Extension) == GIF_ERROR) {
-          return d_gif_error(ScreenBuff, myGifFile);
-        }
-        while (Extension != NULL) {
-          if (DGifGetExtensionNext(myGifFile, &Extension) == GIF_ERROR) {
-            return d_gif_error(ScreenBuff, myGifFile);
-          }
-        }
-        break;
-      case TERMINATE_RECORD_TYPE:
-        break;
-      default:                    /* Should be traps by DGifGetRecordType. */
-        break;
-    }
-  } while (RecordType != TERMINATE_RECORD_TYPE);
-
-  srcfile_pos = srcfile.tellg();
-  if (last_pos != srcfile_pos) {
-    srcfile.seekg(last_pos, std::ios_base::beg);
-    fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
-    srcfile.seekg(srcfile_pos, std::ios_base::beg);
-  }
-
-  gif_length = srcfile_pos - src_pos;
-  decomp_length = dstfile.tellp();
-
-  return d_gif_ok(ScreenBuff, myGifFile);
-}
-
-void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], PrecompTmpFile& tmpfile) {
-
-  unsigned char block_size = 255;
-  int gif_length = -1;
-  long long decomp_length = -1;
-
-  GifCodeStruct gCode;
-  GifCodeInit(&gCode);
-  GifDiffStruct gDiff;
-  GifDiffInit(&gDiff);
-
-  bool recompress_success_needed = true;
-
-  print_to_log(PRECOMP_DEBUG_LOG, "Possible GIF found at position %lli\n", precomp_mgr.ctx->input_file_pos);
-
-  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-
-  tmpfile.close();
-  // read GIF file
-  {
-    WrappedFStream ftempout;
-    ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-
-    if (!decompress_gif(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, precomp_mgr.ctx->input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
-      ftempout.close();
-      remove(tmpfile.file_path.c_str());
-      GifDiffFree(&gDiff);
-      GifCodeFree(&gCode);
-      return;
-    }
-
-    print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", decomp_length);
-  }
-
-  precomp_mgr.statistics.decompressed_streams_count++;
-  precomp_mgr.statistics.decompressed_gif_count++;
-
-  std::string tempfile2 = tmpfile.file_path + "_rec_";
-  WrappedFStream ftempout;
-  ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-  PrecompTmpFile frecomp;
-  frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
-  if (recompress_gif(precomp_mgr, ftempout, frecomp, block_size, &gCode, &gDiff)) {
-
-    frecomp.close();
-    ftempout.close();
-
-    WrappedFStream frecomp2;
-    frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    precomp_mgr.ctx->best_identical_bytes = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx, *precomp_mgr.ctx->fin, frecomp2, precomp_mgr.ctx->input_file_pos, 0);
-    frecomp2.close();
-
-    if (precomp_mgr.ctx->best_identical_bytes < gif_length) {
-      print_to_log(PRECOMP_DEBUG_LOG, "Recompression failed\n");
-    } else {
-      print_to_log(PRECOMP_DEBUG_LOG, "Recompression successful\n");
-      recompress_success_needed = true;
-
-      if (precomp_mgr.ctx->best_identical_bytes > precomp_mgr.switches.min_ident_size) {
-        precomp_mgr.statistics.recompressed_streams_count++;
-        precomp_mgr.statistics.recompressed_gif_count++;
-        precomp_mgr.ctx->non_zlib_was_used = true;
-
-        if (!precomp_mgr.ctx->penalty_bytes.empty()) {
-          memcpy(precomp_mgr.ctx->best_penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes_len);
-          precomp_mgr.ctx->best_penalty_bytes_len = precomp_mgr.ctx->penalty_bytes_len;
-        } else {
-          precomp_mgr.ctx->best_penalty_bytes_len = 0;
-        }
-
-        // end uncompressed data
-
-        precomp_mgr.ctx->compressed_data_found = true;
-        end_uncompressed_data(precomp_mgr);
-
-        // write compressed data header (GIF)
-        unsigned char add_bits = 0;
-        if (precomp_mgr.ctx->best_penalty_bytes_len != 0) add_bits += 2;
-        if (block_size == 254) add_bits += 4;
-        if (recompress_success_needed) add_bits += 128;
-
-        precomp_mgr.ctx->fout->put(1 + add_bits);
-        precomp_mgr.ctx->fout->put(D_GIF); // GIF
-
-        // store diff bytes
-        fout_fput_vlint(*precomp_mgr.ctx->fout, gDiff.GIFDiffIndex);
-        if (gDiff.GIFDiffIndex > 0)
-          print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
-        for (int dbc = 0; dbc < gDiff.GIFDiffIndex; dbc++) {
-          precomp_mgr.ctx->fout->put(gDiff.GIFDiff[dbc]);
-        }
-
-        // store penalty bytes, if any
-        if (precomp_mgr.ctx->best_penalty_bytes_len != 0) {
-          print_to_log(PRECOMP_DEBUG_LOG, "Penalty bytes were used: %i bytes\n", precomp_mgr.ctx->best_penalty_bytes_len);
-
-          fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_penalty_bytes_len);
-
-          for (int pbc = 0; pbc < precomp_mgr.ctx->best_penalty_bytes_len; pbc++) {
-            precomp_mgr.ctx->fout->put(precomp_mgr.ctx->best_penalty_bytes[pbc]);
-          }
-        }
-
-        fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes);
-        fout_fput_vlint(*precomp_mgr.ctx->fout, decomp_length);
-
-        // write decompressed data
-        write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, decomp_length, tmpfile.file_path.c_str());
-
-        // start new uncompressed data
-
-        // set input file pointer after recompressed data
-        precomp_mgr.ctx->input_file_pos += gif_length - 1;
-        precomp_mgr.ctx->cb += gif_length - 1;
-      }
-    }
-
-
-  } else {
-    print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-
-    frecomp.close();
-    ftempout.close();
-
-  }
-
-  GifDiffFree(&gDiff);
-  GifCodeFree(&gCode);
-
-  remove(tempfile2.c_str());
-  remove(tmpfile.file_path.c_str());
-
-}
-
 void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2)
 {
   unsigned char block_size = 255;

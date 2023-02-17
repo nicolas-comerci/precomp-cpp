@@ -159,15 +159,23 @@ public:
 
 class precompression_result
 {
+protected:
+  void dump_header_to_outfile(Precomp& precomp_mgr) const;
+  void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
+  void dump_stream_sizes_to_outfile(Precomp& precomp_mgr);
+  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
 public:
   precompression_result(SupportedFormats format) : success(false), format(format) {}
 
   bool success;
   char format;
   char flags;
+  std::vector<char> penalty_bytes;
   long long original_size = -1;
   long long precompressed_size = -1;
   std::unique_ptr<IStreamLike> precompressed_stream;
+
+  virtual void dump_to_outfile(Precomp& precomp_mgr);
 };
 
 void packjpg_mp3_dll_msg();
@@ -188,14 +196,13 @@ void write_decompressed_data(Precomp& precomp_mgr, OStreamLike& ostream, long lo
 void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name);
 unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
-long long compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
+std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
 void start_uncompressed_data(RecursionContext& context);
 void end_uncompressed_data(Precomp& precomp_mgr);
 void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
 void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
-void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], PrecompTmpFile& tmpfile);
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
