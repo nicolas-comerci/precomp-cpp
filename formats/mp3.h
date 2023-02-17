@@ -26,21 +26,8 @@ public:
   long long mp3_parsing_cache_mp3_length;
 };
 
-class mp3_precompression_result
-{
-public:
-  mp3_precompression_result() : success(false), format(D_MP3) {}
-
-  bool success;
-  char format;
-  char penalty_bytes;
-  long long original_size = -1;
-  long long precompressed_size = -1;
-  std::unique_ptr<IStreamLike> precompressed_stream;
-};
-
-mp3_precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long mp3_length, std::string tmp_filename, mp3_suppression_vars& suppression) {
-  mp3_precompression_result result;
+precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long mp3_length, std::string tmp_filename, mp3_suppression_vars& suppression) {
+  precompression_result result = precompression_result(D_MP3);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::unique_ptr<PrecompTmpFile>(new PrecompTmpFile());
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   std::string decompressed_mp3_filename = tmp_filename + "_";
@@ -156,11 +143,10 @@ mp3_precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long
     }
   }
 
-  result.success = mp3_success;
   if (mp3_success) {
+    result.success = true;
     print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli\n", result.original_size, result.precompressed_size);
 
-    // write compressed MP3
     if (in_memory) {
       auto memstream = memiostream::make_copy(mp3_mem_out, mp3_mem_out + result.precompressed_size);
       result.precompressed_stream = std::move(memstream);
@@ -170,7 +156,7 @@ mp3_precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long
       result.precompressed_stream = std::move(tmpfile);
     }
 
-    result.penalty_bytes = 1; // no penalty bytes
+    result.flags = 1; // no penalty bytes
   }
   else {
     print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
@@ -181,9 +167,79 @@ mp3_precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long
   return result;
 }
 
-mp3_precompression_result precompress_mp3(Precomp& precomp_mgr) {
+/* -----------------------------------------------
+  calculate frame crc
+  ----------------------------------------------- */
+inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize)
+{
+    // crc has a start value of 0xFFFF
+    unsigned short crc = 0xFFFF;
+
+    // process two last bytes from header...
+    crc = (crc << 8) ^ crc_table[(crc>>8) ^ header2];
+    crc = (crc << 8) ^ crc_table[(crc>>8) ^ header3];
+    // ... and all the bytes from the side information
+    for ( int i = 0; i < sidesize; i++ )
+        crc = (crc << 8) ^ crc_table[(crc>>8) ^ sideinfo[i]];
+
+    return crc;
+}
+
+bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection) {
+    unsigned char channels = (header3 >> 6) & 0x3;
+    int nch = (channels == MP3_MONO) ? 1 : 2;
+    int nsb, gr, ch;
+    unsigned short crc;
+    unsigned char* sideinfo;
+
+    nsb = (nch == 1) ? 17 : 32;
+
+    sideinfo = frame_data;
+    if (protection == 0x0) {
+        sideinfo += 2;
+        // if there is a crc: check and discard
+        crc = (frame_data[0] << 8) + frame_data[1];
+        if (crc != mp3_calc_layer3_crc(header2, header3, sideinfo, nsb)) {
+            // crc checksum mismatch
+            return false;
+        }
+    }
+
+    abitreader* side_reader = new abitreader(sideinfo, nsb);
+
+    side_reader->read((nch == 1) ? 18 : 20);
+
+    // granule specific side info
+    char window_switching, region0_size, region1_size;
+    for (gr = 0; gr < 2; gr++) {
+        for (ch = 0; ch < nch; ch++) {
+            side_reader->read(32);
+            side_reader->read(1);
+            window_switching = (char)side_reader->read(1);
+            if (window_switching == 0) {
+                side_reader->read(15);
+                region0_size = (char)side_reader->read(4);
+                region1_size = (char)side_reader->read(3);
+                if (region0_size + region1_size > 20) {
+                    // region size out of bounds
+                    delete side_reader;
+                    return false;
+                }
+            } else {
+                side_reader->read(22);
+            }
+            side_reader->read(3);
+        }
+    }
+
+    delete side_reader;
+
+    return true;
+}
+
+precompression_result precompress_mp3(Precomp& precomp_mgr) {
   mp3_suppression_vars suppression;
-  mp3_precompression_result result;
+  precompression_result result = precompression_result(D_MP3);
   int mpeg = -1;
   int layer = -1;
   int samples = -1;

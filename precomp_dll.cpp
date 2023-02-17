@@ -64,18 +64,14 @@
 #endif
 
 #include "contrib/giflib/precomp_gif.h"
-#include "contrib/packjpg/precomp_jpg.h"
 #include "contrib/packmp3/precomp_mp3.h"
 #include "contrib/zlib/zlib.h"
 #include "contrib/preflate/preflate.h"
-#include "contrib/brunsli/c/include/brunsli/brunsli_encode.h"
-#include "contrib/brunsli/c/include/brunsli/brunsli_decode.h"
-#include "contrib/brunsli/c/include/brunsli/jpeg_data_reader.h"
-#include "contrib/brunsli/c/include/brunsli/jpeg_data_writer.h"
 
 #include "precomp_dll.h"
 
 #include "formats/mp3.h"
+#include "formats/jpeg.h"
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -1939,91 +1935,31 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 0xFF) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] == 0xD8) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] == 0xFF) && (
-           (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC0) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC2) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC4) || ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] >= 0xDB) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] <= 0xFE))
-         )) { // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
-        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+      if (jpeg_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        auto result = precompress_jpeg(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-        bool done = false, found = false;
-        bool hasQuantTable = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xDB);
-        bool progressive_flag = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC2);
-        precomp_mgr.ctx->input_file_pos+=2;
+          // write compressed data header (JPG)
+          precomp_mgr.ctx->fout->put(result.flags);
+          precomp_mgr.ctx->fout->put(result.format); // JPG
 
-        do{
-          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-          precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 5);
-          if ((precomp_mgr.ctx->fin->gcount() != 5) || (precomp_mgr.in[0] != 0xFF))
-              break;
-          int length = (int)precomp_mgr.in[2]*256+(int)precomp_mgr.in[3];
-          switch (precomp_mgr.in[1]){
-            case 0xDB : {
-              // FF DB XX XX QtId ...
-              // Marker length (XX XX) must be = 2 + (multiple of 65 <= 260)
-              // QtId:
-              // bit 0..3: number of QT (0..3, otherwise error)
-              // bit 4..7: precision of QT, 0 = 8 bit, otherwise 16 bit               
-              if (length<=262 && ((length-2)%65)==0 && precomp_mgr.in[4]<=3) {
-                hasQuantTable = true;
-                precomp_mgr.ctx->input_file_pos += length+2;
-              }
-              else
-                done = true;
-              break;
-            }
-            case 0xC4 : {
-              done = ((precomp_mgr.in[4]&0xF)>3 || (precomp_mgr.in[4]>>4)>1);
-              precomp_mgr.ctx->input_file_pos += length+2;
-              break;
-            }
-            case 0xDA : found = hasQuantTable;
-            case 0xD9 : done = true; break; //EOI with no SOS?
-            case 0xC2 : progressive_flag = true;
-            case 0xC0 : done = (precomp_mgr.in[4] != 0x08);
-            default: precomp_mgr.ctx->input_file_pos += length+2;
-          }
+          fout_fput_vlint(*precomp_mgr.ctx->fout, result.original_size);
+          fout_fput_vlint(*precomp_mgr.ctx->fout, result.precompressed_size);
+
+          fast_copy(precomp_mgr, *result.precompressed_stream, *precomp_mgr.ctx->fout, result.precompressed_size);
+
+          // start new uncompressed data
+
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
+          precomp_mgr.ctx->cb += result.original_size - 1;
         }
-        while (!done);
-
-        if (found){
-          found = done = false;
-          precomp_mgr.ctx->input_file_pos += 5;
-
-          bool isMarker = (precomp_mgr.in[4] == 0xFF );
-          size_t bytesRead = 0;
-          for (;;) {
-            if (done) break;
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), sizeof(precomp_mgr.in[0])* CHUNK);
-            bytesRead = precomp_mgr.ctx->fin->gcount();
-            if (!bytesRead) break;
-            for (size_t i = 0; !done && (i < bytesRead); i++){
-              precomp_mgr.ctx->input_file_pos++;
-              if (!isMarker){
-                isMarker = (precomp_mgr.in[i] == 0xFF );
-              }
-              else{
-                done = (precomp_mgr.in[i] && ((precomp_mgr.in[i]&0xF8) != 0xD0) && ((progressive_flag)?(precomp_mgr.in[i] != 0xC4) && (precomp_mgr.in[i] != 0xDA):true));
-                found = (precomp_mgr.in[i] == 0xD9);
-                isMarker = false;
-              }
-            }
-          }
-        }
-
-        if (found){
-          long long jpg_length = precomp_mgr.ctx->input_file_pos - precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          PrecompTmpFile tmp_jpg;
-          tmp_jpg.open(tempfile + "jpg", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          try_decompression_jpg(precomp_mgr, jpg_length, progressive_flag, tmp_jpg);
-        }
-        if (!found || !precomp_mgr.ctx->compressed_data_found) {
+        else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
           precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
-      }
-      if (precomp_mgr.ctx->compressed_data_found) {  // If we did find jpg, we 'jpg' it to tempfile so we clean it afterwards
-        tempfile += "jpg";
       }
     }
 
@@ -2036,7 +1972,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           end_uncompressed_data(precomp_mgr);
 
           // write compressed data header (MP3)
-          precomp_mgr.ctx->fout->put(result.penalty_bytes); // no penalty bytes
+          precomp_mgr.ctx->fout->put(result.flags); // no penalty bytes
           precomp_mgr.ctx->fout->put(result.format); // MP3
 
           fout_fput_vlint(*precomp_mgr.ctx->fout, result.original_size);
@@ -2289,12 +2225,6 @@ int compress_file(Precomp& precomp_mgr, float min_percent, float max_percent)
   return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, min_percent, max_percent); });
 }
 
-int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
-	std::string* output = reinterpret_cast<std::string*>(data);
-	output->append(reinterpret_cast<const char*>(buf), count);
-	return count;
-}
-
 int decompress_file_impl(Precomp& precomp_mgr) {
 
   long long fin_pos;
@@ -2476,147 +2406,7 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_JPG: { // JPG recompression
-      tempfile += "jpg";
-      tempfile2 += "jpg";
-
-      print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
-
-      bool mjpg_dht_used = ((header1 & 4) == 4);
-	    bool brunsli_used = ((header1 & 8) == 8);
-	    bool brotli_used = ((header1 & 16) == 16);
-
-      long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-      long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-
-      print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
-
-      char recompress_msg[256];
-      unsigned char* jpg_mem_in = NULL;
-      unsigned char* jpg_mem_out = NULL;
-      unsigned int jpg_mem_out_size = -1;
-      bool in_memory = (recompressed_data_length <= JPG_MAX_MEMORY_SIZE);
-      bool recompress_success = false;
-
-      if (in_memory) {
-        jpg_mem_in = new unsigned char[decompressed_data_length];
-        memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + decompressed_data_length);
-        fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, decompressed_data_length);
-
-		if (brunsli_used) {
-			brunsli::JPEGData jpegData;
-			if (brunsli::BrunsliDecodeJpeg(jpg_mem_in, decompressed_data_length, &jpegData, brotli_used) == brunsli::BRUNSLI_OK) {
-				if (mjpg_dht_used) {
-					jpg_mem_out = new unsigned char[recompressed_data_length + MJPGDHT_LEN];
-				}
-				else {
-					jpg_mem_out = new unsigned char[recompressed_data_length];
-				}
-				std::string output;
-				brunsli::JPEGOutput writer(BrunsliStringWriter, &output);
-				if (brunsli::WriteJpeg(jpegData, writer)) {
-					jpg_mem_out_size = output.length();
-					memcpy(jpg_mem_out, output.data(), jpg_mem_out_size);
-					recompress_success = true;
-				}
-			}
-		} else {
-			pjglib_init_streams(jpg_mem_in, 1, decompressed_data_length, jpg_mem_out, 1);
-			recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
-		}
-      } else {
-        remove(tempfile.c_str());
-
-        {
-          WrappedFStream ftempout;
-          ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
-          fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
-          ftempout.close();
-        }
-
-        remove(tempfile2.c_str());
-
-        recompress_success = pjglib_convert_file2file(const_cast<char*>(tempfile.c_str()), const_cast<char*>(tempfile2.c_str()), recompress_msg);
-      }
-
-      if (!recompress_success) {
-        print_to_log(PRECOMP_DEBUG_LOG, "packJPG error: %s\n", recompress_msg);
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
-
-      PrecompTmpFile frecomp;
-      if (!in_memory) {
-        frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-      }
-
-      if (mjpg_dht_used) {
-        long long frecomp_pos = 0;
-        bool found_ffda = false;
-        bool found_ff = false;
-        int ffda_pos = -1;
-
-        if (in_memory) {
-          do {
-            ffda_pos++;
-            if (ffda_pos >= (int)jpg_mem_out_size) break;
-            if (found_ff) {
-              found_ffda = (jpg_mem_out[ffda_pos] == 0xDA);
-              if (found_ffda) break;
-              found_ff = false;
-            } else {
-              found_ff = (jpg_mem_out[ffda_pos] == 0xFF);
-            }
-          } while (!found_ffda);
-        } else {
-          do {
-            ffda_pos++;
-            frecomp.read(reinterpret_cast<char*>(precomp_mgr.in), 1);
-            if (frecomp.gcount() != 1) break;
-            if (found_ff) {
-              found_ffda = (precomp_mgr.in[0] == 0xDA);
-              if (found_ffda) break;
-              found_ff = false;
-            } else {
-              found_ff = (precomp_mgr.in[0] == 0xFF);
-            }
-          } while (!found_ffda);
-        }
-
-        if ((!found_ffda) || ((ffda_pos - 1 - MJPGDHT_LEN) < 0)) {
-          throw std::runtime_error(make_cstyle_format_string("ERROR: Motion JPG stream corrupted\n"));
-        }
-
-        // remove motion JPG huffman table
-        if (in_memory) {
-          memiostream memstream1 = memiostream::make(jpg_mem_out, jpg_mem_out + ffda_pos - 1 - MJPGDHT_LEN);
-          fast_copy(precomp_mgr, memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
-          memiostream memstream2 = memiostream::make(jpg_mem_out + (ffda_pos - 1), jpg_mem_out + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-          fast_copy(precomp_mgr, memstream2, *precomp_mgr.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-        } else {
-          frecomp.seekg(frecomp_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
-
-          frecomp_pos += ffda_pos - 1;
-          frecomp.seekg(frecomp_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-        }
-      } else {
-        if (in_memory) {
-          memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + recompressed_data_length);
-          fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
-        } else {
-          fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
-        }
-      }
-
-      if (in_memory) {
-        if (jpg_mem_in != NULL) delete[] jpg_mem_in;
-        if (jpg_mem_out != NULL) delete[] jpg_mem_out;
-      } else {
-        frecomp.close();
-
-        remove(tempfile2.c_str());
-        remove(tempfile.c_str());
-      }
+      recompress_jpg(precomp_mgr, header1);
       break;
     }
     case D_SWF: { // SWF recompression
@@ -3872,364 +3662,6 @@ void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 
-}
-
-void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile) {
-  std::string decompressed_jpg_filename = tmpfile.file_path + "_";
-  tmpfile.close();
-
-  if (progressive_jpg) {
-    print_to_log(PRECOMP_DEBUG_LOG, "Possible JPG (progressive) found at position ");
-  } else {
-    print_to_log(PRECOMP_DEBUG_LOG, "Possible JPG found at position ");
-  }
-  print_to_log(PRECOMP_DEBUG_LOG, "%lli, length %lli\n", precomp_mgr.ctx->saved_input_file_pos, jpg_length);
-  // do not recompress non-progressive JPGs when prog_only is set
-  if ((!progressive_jpg) && (precomp_mgr.switches.prog_only)) {
-    print_to_log(PRECOMP_DEBUG_LOG, "Skipping (only progressive JPGs mode set)\n");
-  }
-
-  // do not recompress non-progressive JPGs when prog_only is set
-  if ((!progressive_jpg) && (precomp_mgr.switches.prog_only)) return;
-
-  bool jpg_success = false;
-  bool recompress_success = false;
-  bool mjpg_dht_used = false;
-	bool brunsli_used = false;
-	bool brotli_used = precomp_mgr.switches.use_brotli;
-  char recompress_msg[256];
-  unsigned char* jpg_mem_in = NULL;
-  unsigned char* jpg_mem_out = NULL;
-  unsigned int jpg_mem_out_size = -1;
-  bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
-
-  if (in_memory) { // small stream => do everything in memory
-    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-    jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
-    memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + jpg_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, jpg_length);
-
-		bool brunsli_success = false;
-
-		if (precomp_mgr.switches.use_brunsli) {
-			print_to_log(PRECOMP_DEBUG_LOG, "Trying to compress using brunsli...\n");
-			brunsli::JPEGData jpegData;
-			if (brunsli::ReadJpeg(jpg_mem_in, jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
-				size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
-				jpg_mem_out = new unsigned char[output_size];
-				if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, precomp_mgr.switches.use_brotli)) {
-					recompress_success = true;
-					brunsli_success = true;
-					brunsli_used = true;
-					jpg_mem_out_size = output_size;
-				} else {
-					if (jpg_mem_out != NULL) delete[] jpg_mem_out;
-					jpg_mem_out = NULL;
-				}
-			}
-			else {
-				if (jpegData.error == brunsli::JPEGReadError::HUFFMAN_TABLE_NOT_FOUND) {
-					print_to_log(PRECOMP_DEBUG_LOG, "huffman table missing, trying to use Motion JPEG DHT\n");
-					// search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
-					bool found_ffda = false;
-					bool found_ff = false;
-					int ffda_pos = -1;
-
-					do {
-						ffda_pos++;
-						if (ffda_pos >= jpg_length) break;
-						if (found_ff) {
-							found_ffda = (jpg_mem_in[ffda_pos] == 0xDA);
-							if (found_ffda) break;
-							found_ff = false;
-						}
-						else {
-							found_ff = (jpg_mem_in[ffda_pos] == 0xFF);
-						}
-					} while (!found_ffda);
-					if (found_ffda) {
-						// reinitialise jpegData
-						brunsli::JPEGData newJpegData;
-						jpegData = newJpegData;
-
-						memmove(jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
-						memcpy(jpg_mem_in + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
-
-						if (brunsli::ReadJpeg(jpg_mem_in, jpg_length + MJPGDHT_LEN, brunsli::JPEG_READ_ALL, &jpegData)) {
-							size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
-							jpg_mem_out = new unsigned char[output_size];
-							if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, precomp_mgr.switches.use_brotli)) {
-								recompress_success = true;
-								brunsli_success = true;
-								brunsli_used = true;
-								mjpg_dht_used = true;
-								jpg_mem_out_size = output_size;
-							}
-							else {
-								if (jpg_mem_out != NULL) delete[] jpg_mem_out;
-								jpg_mem_out = NULL;
-							}
-						}
-
-						if (!brunsli_success) {
-							// revert DHT insertion
-							memmove(jpg_mem_in + (ffda_pos - 1), jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_length - (ffda_pos - 1));
-						}
-					}
-				}
-			}
-			if (!brunsli_success) {
-				if (precomp_mgr.switches.use_packjpg_fallback) {
-					print_to_log(PRECOMP_DEBUG_LOG, "Brunsli compression failed, using packJPG fallback...\n");
-				} else {
-					print_to_log(PRECOMP_DEBUG_LOG, "Brunsli compression failed\n");
-				}
-			}
-		}
-
-		if ((!precomp_mgr.switches.use_brunsli || !brunsli_success) && precomp_mgr.switches.use_packjpg_fallback) {
-			pjglib_init_streams(jpg_mem_in, 1, jpg_length, jpg_mem_out, 1);
-			recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
-			brunsli_used = false;
-			brotli_used = false;
-		}
-      } else if (precomp_mgr.switches.use_packjpg_fallback) { // large stream => use temporary files
-		print_to_log(PRECOMP_DEBUG_LOG, "JPG too large for brunsli, using packJPG fallback...\n");
-		// try to decompress at current position
-        {
-          WrappedFStream decompressed_jpg;
-          decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
-          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
-          decompressed_jpg.close();
-        }
-
-        // Workaround for JPG bugs. Sometimes tempfile1 is removed, but still
-        // not accessible by packJPG, so we prevent that by opening it here
-        // ourselves.
-        {
-          remove(tmpfile.file_path.c_str());
-          std::fstream fworkaround;
-          fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-          fworkaround.close();
-        }
-
-        recompress_success = pjglib_convert_file2file(const_cast<char*>(decompressed_jpg_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
-		    brunsli_used = false;
-		    brotli_used = false;
-      }
-
-      if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (precomp_mgr.switches.use_mjpeg) && (precomp_mgr.switches.use_packjpg_fallback)) {
-        print_to_log(PRECOMP_DEBUG_LOG, "huffman table missing, trying to use Motion JPEG DHT\n");
-        // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
-        bool found_ffda = false;
-        bool found_ff = false;
-        int ffda_pos = -1;
-
-        if (in_memory) {
-          do {
-            ffda_pos++;
-            if (ffda_pos >= jpg_length) break;
-            if (found_ff) {
-              found_ffda = (jpg_mem_in[ffda_pos] == 0xDA);
-              if (found_ffda) break;
-              found_ff = false;
-            } else {
-              found_ff = (jpg_mem_in[ffda_pos] == 0xFF);
-            }
-          } while (!found_ffda);
-          if (found_ffda) {
-            memmove(jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
-            memcpy(jpg_mem_in + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
-
-            pjglib_init_streams(jpg_mem_in, 1, jpg_length + MJPGDHT_LEN, jpg_mem_out, 1);
-            recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
-          }
-        } else {
-          WrappedFStream decompressed_jpg;
-          decompressed_jpg.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-          do {
-            ffda_pos++;
-            decompressed_jpg.read(reinterpret_cast<char*>(precomp_mgr.in), 1);
-            if (decompressed_jpg.gcount() != 1) break;
-            if (found_ff) {
-              found_ffda = (precomp_mgr.in[0] == 0xDA);
-              if (found_ffda) break;
-              found_ff = false;
-            } else {
-              found_ff = (precomp_mgr.in[0] == 0xFF);
-            }
-          } while (!found_ffda);
-          std::string mjpgdht_tempfile = tmpfile.file_path + "_mjpgdht";
-          if (found_ffda) {
-            WrappedFStream decompressed_jpg_w_MJPGDHT;
-            decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
-            decompressed_jpg.seekg(0, std::ios_base::beg);
-            fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
-            // insert MJPGDHT
-            decompressed_jpg_w_MJPGDHT.write(reinterpret_cast<char*>(MJPGDHT), MJPGDHT_LEN);
-            decompressed_jpg.seekg(ffda_pos - 1, std::ios_base::beg);
-            fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, jpg_length - (ffda_pos - 1));
-          }
-          decompressed_jpg.close();
-          recompress_success = pjglib_convert_file2file(const_cast<char*>(mjpgdht_tempfile.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
-        }
-
-        mjpg_dht_used = recompress_success;
-      }
-
-      precomp_mgr.statistics.decompressed_streams_count++;
-      if (progressive_jpg) {
-        precomp_mgr.statistics.decompressed_jpg_prog_count++;
-      } else {
-        precomp_mgr.statistics.decompressed_jpg_count++;
-      }
-
-      if ((!recompress_success) && (precomp_mgr.switches.use_packjpg_fallback)) {
-        print_to_log(PRECOMP_DEBUG_LOG, "packJPG error: %s\n", recompress_msg);
-      }
-
-      if (!in_memory) {
-        remove(decompressed_jpg_filename.c_str());
-      }
-
-      if (recompress_success) {
-        int jpg_new_length = -1;
-
-        if (in_memory) {
-          jpg_new_length = jpg_mem_out_size;
-        } else {
-          WrappedFStream ftempout;
-          ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-          ftempout.seekg(0, std::ios_base::end);
-          jpg_new_length = ftempout.tellg();
-          ftempout.close();
-        }
-
-        if (jpg_new_length > 0) {
-          precomp_mgr.statistics.recompressed_streams_count++;
-          if (progressive_jpg) {
-            precomp_mgr.statistics.recompressed_jpg_prog_count++;
-          } else {
-            precomp_mgr.statistics.recompressed_jpg_count++;
-          }
-          precomp_mgr.ctx->non_zlib_was_used = true;
-
-          precomp_mgr.ctx->best_identical_bytes = jpg_length;
-          precomp_mgr.ctx->best_identical_bytes_decomp = jpg_new_length;
-          jpg_success = true;
-        }
-      }
-
-      if (jpg_success) {
-
-        print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli bytes\n", precomp_mgr.ctx->best_identical_bytes, precomp_mgr.ctx->best_identical_bytes_decomp);
-
-        precomp_mgr.ctx->compressed_data_found = true;
-        end_uncompressed_data(precomp_mgr);
-
-        // write compressed data header (JPG)
-
-		    char jpg_flags = 1; // no penalty bytes
-		    if (mjpg_dht_used) jpg_flags += 4; // motion JPG DHT used
-		    if (brunsli_used) jpg_flags += 8;
-		    if (brotli_used) jpg_flags += 16;
-        precomp_mgr.ctx->fout->put(jpg_flags);
-        precomp_mgr.ctx->fout->put(D_JPG); // JPG
-
-        fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes);
-        fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp);
-
-        // write compressed JPG
-        if (in_memory) {
-          memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + precomp_mgr.ctx->best_identical_bytes_decomp);
-          fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp);
-        } else {
-          write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
-        }
-
-        // start new uncompressed data
-
-        // set input file pointer after recompressed data
-        precomp_mgr.ctx->input_file_pos += precomp_mgr.ctx->best_identical_bytes - 1;
-        precomp_mgr.ctx->cb += precomp_mgr.ctx->best_identical_bytes - 1;
-
-      } else {
-        print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-      }
-
-      if (jpg_mem_in != NULL) delete[] jpg_mem_in;
-      if (jpg_mem_out != NULL) delete[] jpg_mem_out;
-}
-
-bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection) {
-  unsigned char channels = (header3 >> 6) & 0x3;
-  int nch = (channels == MP3_MONO) ? 1 : 2;
-  int nsb, gr, ch;
-  unsigned short crc;
-  unsigned char* sideinfo;
-
-  nsb = (nch == 1) ? 17 : 32;
-
-  sideinfo = frame_data;
-  if (protection == 0x0) {
-    sideinfo += 2;
-    // if there is a crc: check and discard
-    crc = (frame_data[0] << 8) + frame_data[1];
-    if (crc != mp3_calc_layer3_crc(header2, header3, sideinfo, nsb)) {
-      // crc checksum mismatch
-      return false;
-    }
-  }
-
-  abitreader* side_reader = new abitreader(sideinfo, nsb);
-
-  side_reader->read((nch == 1) ? 18 : 20);
-
-  // granule specific side info
-  char window_switching, region0_size, region1_size;
-  for (gr = 0; gr < 2; gr++) {
-    for (ch = 0; ch < nch; ch++) {
-      side_reader->read(32);
-      side_reader->read(1);
-      window_switching = (char)side_reader->read(1);
-      if (window_switching == 0) {
-        side_reader->read(15);
-        region0_size = (char)side_reader->read(4);
-        region1_size = (char)side_reader->read(3);
-        if (region0_size + region1_size > 20) {
-          // region size out of bounds
-          delete side_reader;
-          return false;
-        }
-      } else {
-        side_reader->read(22);
-      }
-      side_reader->read(3);
-    }
-  }
-
-  delete side_reader;
-
-  return true;
-}
-
-/* -----------------------------------------------
-  calculate frame crc
-  ----------------------------------------------- */
-inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize)
-{
-  // crc has a start value of 0xFFFF
-  unsigned short crc = 0xFFFF;
-
-  // process two last bytes from header...
-  crc = (crc << 8) ^ crc_table[(crc>>8) ^ header2];
-  crc = (crc << 8) ^ crc_table[(crc>>8) ^ header3];
-  // ... and all the bytes from the side information
-  for ( int i = 0; i < sidesize; i++ )
-    crc = (crc << 8) ^ crc_table[(crc>>8) ^ sideinfo[i]];
-
-  return crc;
 }
 
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {

@@ -18,7 +18,7 @@
 #include <fstream>
 #include <memory>
 
-enum {
+enum SupportedFormats {
   D_PDF = 0,
   D_ZIP = 1,
   D_GZIP = 2,
@@ -157,6 +157,19 @@ public:
   
 };
 
+class precompression_result
+{
+public:
+  precompression_result(SupportedFormats format) : success(false), format(format) {}
+
+  bool success;
+  char format;
+  char flags;
+  long long original_size = -1;
+  long long precompressed_size = -1;
+  std::unique_ptr<IStreamLike> precompressed_stream;
+};
+
 void packjpg_mp3_dll_msg();
 
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
@@ -183,7 +196,6 @@ void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompT
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], PrecompTmpFile& tmpfile);
-void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile);
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
@@ -195,8 +207,6 @@ void try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int wi
 
 void init_decompression_variables(RecursionContext& context);
 
-bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection);
-inline unsigned short mp3_calc_layer3_crc(unsigned char header2, unsigned char header3, unsigned char* sideinfo, int sidesize);
 void sort_comp_mem_levels();
 int compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
 int decompress_file(Precomp& precomp_mgr);
