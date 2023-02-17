@@ -4,6 +4,9 @@
 #include <optional>
 #include <string>
 
+
+std::string temp_files_tag();
+
 int auto_detected_thread_count();
 
 // This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
@@ -52,6 +55,8 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 constexpr auto ERR_DURING_RECOMPRESSION = 19;
 constexpr auto ERR_NO_PCF_HEADER = 20;
 constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = 21;
+
+std::string temp_files_tag();
 
 class PrecompError: public std::exception
 {

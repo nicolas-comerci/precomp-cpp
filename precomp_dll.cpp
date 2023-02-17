@@ -75,6 +75,8 @@
 
 #include "precomp_dll.h"
 
+#include "formats/mp3.h"
+
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
 // It allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary
@@ -100,11 +102,6 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
   logging_callback(log_level, format.data());
 }
 
-template< typename... Args >
-void print_to_log(PrecompLoggingLevels log_level, const char* format, Args... args) {
-  print_to_log(log_level, make_cstyle_format_string(format, args...));
-}
-
 zLibMTF MTF;
 
 int min_ident_size_intense_brute_mode = 64;
@@ -113,22 +110,6 @@ unsigned char zlib_header[2];
 unsigned int* idat_lengths = NULL;
 unsigned int* idat_crcs = NULL;
 int idat_count;
-
-enum {
-  D_PDF      = 0,
-  D_ZIP      = 1,
-  D_GZIP     = 2,
-  D_PNG      = 3,
-  D_MULTIPNG = 4,
-  D_GIF      = 5,
-  D_JPG      = 6,
-  D_SWF      = 7,
-  D_BASE64   = 8,
-  D_BZIP2    = 9,
-  D_MP3      = 10,
-  D_RAW      = 255,
-  D_BRUTE    = 254,
-};
 
 ResultStatistics::ResultStatistics(): CResultStatistics() {
   recompressed_streams_count = 0;
@@ -281,16 +262,6 @@ std::set<long long> Switches::ignore_set() {
 
 RecursionContext::RecursionContext(Precomp& instance): precomp_owner(instance) {
   compression_otf_method = OTF_XZ_MT;
-
-  // init MP3 suppression
-  for (int i = 0; i < 16; i++) {
-    suppress_mp3_type_until[i] = -1;
-  }
-  suppress_mp3_big_value_pairs_sum = -1;
-  suppress_mp3_non_zero_padbits_sum = -1;
-  suppress_mp3_inconsistent_emphasis_sum = -1;
-  suppress_mp3_inconsistent_original_bit = -1;
-  mp3_parsing_cache_second_frame = -1;
 }
 
 
@@ -2057,144 +2028,29 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 0xFF) && ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] & 0xE0) == 0xE0)) { // frame start
-        int mpeg = -1;
-        int layer = -1;
-        int samples = -1;
-        int channels = -1;
-        int protection = -1;
-        int type = -1;
+      if (mp3_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) { // frame start
+        auto result = precompress_mp3(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
+        if (result.success) {
+          // end uncompressed data
+          end_uncompressed_data(precomp_mgr);
 
-        int bits;
-        int padding;
-        int frame_size;
-        int n = 0;
-        long long mp3_parsing_cache_second_frame_candidate = -1;
-        long long mp3_parsing_cache_second_frame_candidate_size = -1;
+          // write compressed data header (MP3)
+          precomp_mgr.ctx->fout->put(result.penalty_bytes); // no penalty bytes
+          precomp_mgr.ctx->fout->put(result.format); // MP3
 
-        long long mp3_length = 0;
+          fout_fput_vlint(*precomp_mgr.ctx->fout, result.original_size);
+          fout_fput_vlint(*precomp_mgr.ctx->fout, result.precompressed_size);
 
-        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+          fast_copy(precomp_mgr, *result.precompressed_stream, *precomp_mgr.ctx->fout, result.precompressed_size);
 
-        long long act_pos = precomp_mgr.ctx->input_file_pos;
+          // start new uncompressed data
 
-        // parse frames until first invalid frame is found or end-of-file
-        precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
-        
-        for (;;) {
-          precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 4);
-          if (precomp_mgr.ctx->fin->gcount() != 4) break;
-          // check syncword
-          if ((precomp_mgr.in[0] != 0xFF) || ((precomp_mgr.in[1] & 0xE0) != 0xE0)) break;
-          // compare data from header
-          if (n == 0) {
-            mpeg        = (precomp_mgr.in[1] >> 3) & 0x3;
-            layer       = (precomp_mgr.in[1] >> 1) & 0x3;
-            protection  = (precomp_mgr.in[1] >> 0) & 0x1;
-            samples     = (precomp_mgr.in[2] >> 2) & 0x3;
-            channels    = (precomp_mgr.in[3] >> 6) & 0x3;
-            type = MBITS( precomp_mgr.in[1], 5, 1 );
-            // avoid slowdown and multiple verbose messages on unsupported types that have already been detected
-            if ((type != MPEG1_LAYER_III) && (precomp_mgr.ctx->saved_input_file_pos <= precomp_mgr.ctx->suppress_mp3_type_until[type])) {
-                break;
-            }
-          } else {
-            if (n == 1) {
-              mp3_parsing_cache_second_frame_candidate = act_pos;
-              mp3_parsing_cache_second_frame_candidate_size = act_pos - precomp_mgr.ctx->saved_input_file_pos;
-            }
-            if (type == MPEG1_LAYER_III) { // supported MP3 type, all header information must be identical to the first frame
-              if (
-                (mpeg       != ((precomp_mgr.in[1] >> 3) & 0x3)) ||
-                (layer      != ((precomp_mgr.in[1] >> 1) & 0x3)) ||
-                (protection != ((precomp_mgr.in[1] >> 0) & 0x1)) ||
-                (samples    != ((precomp_mgr.in[2] >> 2) & 0x3)) ||
-                (channels   != ((precomp_mgr.in[3] >> 6) & 0x3)) ||
-                (type       != MBITS( precomp_mgr.in[1], 5, 1))) break;
-            } else { // unsupported type, compare only type, ignore the other header information to get a longer stream
-              if (type != MBITS( precomp_mgr.in[1], 5, 1)) break;
-            }
-          }
-
-          bits     = (precomp_mgr.in[2] >> 4) & 0xF;
-          padding  = (precomp_mgr.in[2] >> 1) & 0x1;
-          // check for problems
-          if ((mpeg == 0x1) || (layer == 0x0) ||
-              (bits == 0x0) || (bits == 0xF) || (samples == 0x3)) break;
-          // find out frame size
-          frame_size = frame_size_table[mpeg][layer][samples][bits];
-          if (padding) frame_size += (layer == LAYER_I) ? 4 : 1;
-
-          // if this frame was part of a stream that already has been parsed, skip parsing
-          if (n == 0) {
-            if (act_pos == precomp_mgr.ctx->mp3_parsing_cache_second_frame) {
-              n = precomp_mgr.ctx->mp3_parsing_cache_n;
-              mp3_length = precomp_mgr.ctx->mp3_parsing_cache_mp3_length;
-
-              // update values
-              precomp_mgr.ctx->mp3_parsing_cache_second_frame = act_pos + frame_size;
-              precomp_mgr.ctx->mp3_parsing_cache_n -= 1;
-              precomp_mgr.ctx->mp3_parsing_cache_mp3_length -= frame_size;
-
-              break;
-            }
-          }
-
-          n++;
-          mp3_length += frame_size;
-          act_pos += frame_size;
-
-          // if supported MP3 type, validate frames
-          if ((type == MPEG1_LAYER_III) && (frame_size > 4)) {
-            unsigned char header2 = precomp_mgr.in[2];
-            unsigned char header3 = precomp_mgr.in[3];
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), frame_size - 4);
-            if (precomp_mgr.ctx->fin->gcount() != (unsigned int)(frame_size - 4)) {
-              // discard incomplete frame
-              n--;
-              mp3_length -= frame_size;
-              break;
-            }
-            if (!is_valid_mp3_frame(precomp_mgr.in, header2, header3, protection)) {
-                n = 0;
-                break;
-            }
-          } else {
-            precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
-          }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
+          precomp_mgr.ctx->cb += result.original_size - 1;
         }
-
-        // conditions for proper first frame: 5 consecutive frames
-        if (n >= 5) {
-          if (mp3_parsing_cache_second_frame_candidate > -1) {
-            precomp_mgr.ctx->mp3_parsing_cache_second_frame = mp3_parsing_cache_second_frame_candidate;
-            precomp_mgr.ctx->mp3_parsing_cache_n = n - 1;
-            precomp_mgr.ctx->mp3_parsing_cache_mp3_length = mp3_length - mp3_parsing_cache_second_frame_candidate_size;
-          }
-
-          long long position_length_sum = precomp_mgr.ctx->saved_input_file_pos + mp3_length;
-
-          // type must be MPEG-1, Layer III, packMP3 won't process any other files
-          if ( type == MPEG1_LAYER_III ) {
-            // sums of position and length of last MP3 errors are suppressed to avoid slowdowns
-            if    ((precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum != position_length_sum)
-               && (precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum != position_length_sum)
-               && (precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum != position_length_sum)
-               && (precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit != position_length_sum)) {
-              tempfile += "mp3";
-              PrecompTmpFile tmp_mp3;
-              tmp_mp3.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-              try_decompression_mp3(precomp_mgr, mp3_length, tmp_mp3);
-            }
-          } else if (type > 0) {
-            precomp_mgr.ctx->suppress_mp3_type_until[type] = position_length_sum;
-            print_to_log(PRECOMP_DEBUG_LOG, "Unsupported MP3 type found at position %lli, length %lli\n", precomp_mgr.ctx->saved_input_file_pos, mp3_length);
-            print_to_log(PRECOMP_DEBUG_LOG, "Type: %s\n", filetype_description[type]);
-          }
-        }
-
-        if (!precomp_mgr.ctx->compressed_data_found) {
+        else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
           precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
@@ -2918,67 +2774,7 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_MP3: { // MP3 recompression
-      tempfile += "mp3";
-      tempfile2 += "mp3";
-
-      print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - MP3\n");
-
-      long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-      long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-
-      print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli  - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
-
-      char recompress_msg[256];
-      unsigned char* mp3_mem_in = NULL;
-      unsigned char* mp3_mem_out = NULL;
-      unsigned int mp3_mem_out_size = -1;
-      bool in_memory = (recompressed_data_length <= MP3_MAX_MEMORY_SIZE);
-
-      bool recompress_success = false;
-
-      if (in_memory) {
-        mp3_mem_in = new unsigned char[decompressed_data_length];
-        memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + decompressed_data_length);
-        fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, decompressed_data_length);
-
-        pmplib_init_streams(mp3_mem_in, 1, decompressed_data_length, mp3_mem_out, 1);
-        recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
-      } else {
-        remove(tempfile.c_str());
-
-        {
-          WrappedFStream ftempout;
-          ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
-          fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
-          ftempout.close();
-        }
-
-        remove(tempfile2.c_str());
-
-        recompress_success = pmplib_convert_file2file(const_cast<char*>(tempfile.c_str()), const_cast<char*>(tempfile2.c_str()), recompress_msg);
-      }
-
-      if (!recompress_success) {
-        print_to_log(PRECOMP_DEBUG_LOG, "packMP3 error: %s\n", recompress_msg);
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
-
-      if (in_memory) {
-        memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + recompressed_data_length);
-        fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
-
-        if (mp3_mem_in != NULL) delete[] mp3_mem_in;
-        if (mp3_mem_out != NULL) delete[] mp3_mem_out;
-      } else {
-        {
-          PrecompTmpFile frecomp;
-          frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-          fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
-        }
-
-        remove(tempfile2.c_str());
-        remove(tempfile.c_str());
-      }
+      recompress_mp3(precomp_mgr);
       break;
     }
     case D_BRUTE: { // brute mode recompression
@@ -4366,163 +4162,6 @@ void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool prog
       if (jpg_mem_out != NULL) delete[] jpg_mem_out;
 }
 
-void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTmpFile& tmpfile) {
-  std::string decompressed_mp3_filename = tmpfile.file_path + "_";
-  tmpfile.close();
-
-  print_to_log(PRECOMP_DEBUG_LOG, "Possible MP3 found at position %lli, length %lli\n", precomp_mgr.ctx->saved_input_file_pos, mp3_length);
-
-  bool mp3_success = false;
-  bool recompress_success = false;
-  char recompress_msg[256];
-  unsigned char* mp3_mem_in = NULL;
-  unsigned char* mp3_mem_out = NULL;
-  unsigned int mp3_mem_out_size = -1;
-  bool in_memory = (mp3_length <= MP3_MAX_MEMORY_SIZE);
-
-  if (in_memory) { // small stream => do everything in memory
-    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-    mp3_mem_in = new unsigned char[mp3_length];
-    memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, mp3_length);
-
-    pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
-    recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
-  } else { // large stream => use temporary files
-    // try to decompress at current position
-    {
-      WrappedFStream decompressed_mp3;
-      decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
-      precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
-      fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_mp3, mp3_length);
-      decompressed_mp3.close();
-    }
-    
-    // workaround for bugs, similar to packJPG
-    {
-      remove(tmpfile.file_path.c_str());
-      std::fstream fworkaround;
-      fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-      fworkaround.close();
-    }
-
-    recompress_success = pmplib_convert_file2file(const_cast<char*>(decompressed_mp3_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
-  }
-
-  if ((!recompress_success) && (strncmp(recompress_msg, "synching failure", 16) == 0)) {
-    int frame_n;
-    int pos;
-    if (sscanf(recompress_msg, "synching failure (frame #%i at 0x%X)", &frame_n, &pos) == 2) {
-      if ((pos > 0) && (pos < mp3_length)) {
-        mp3_length = pos;
-
-        print_to_log(PRECOMP_DEBUG_LOG, "Too much garbage data at the end, retry with new length %i\n", pos);
-
-        if (in_memory) {
-          pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
-          recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
-        } else {
-          std::filesystem::resize_file(decompressed_mp3_filename, pos);
-
-          // workaround for bugs, similar to packJPG
-          {
-            remove(tmpfile.file_path.c_str());
-            std::fstream fworkaround;
-            fworkaround.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
-          }
-
-          recompress_success = pmplib_convert_file2file(const_cast<char*>(decompressed_mp3_filename.c_str()), const_cast<char*>(tmpfile.file_path.c_str()), recompress_msg);
-        }
-      }
-    }
-  } else if ((!recompress_success) && (strncmp(recompress_msg, "big value pairs out of bounds", 29) == 0)) {
-    precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum = precomp_mgr.ctx->saved_input_file_pos + mp3_length;
-    print_to_log(PRECOMP_DEBUG_LOG, "Ignoring following streams with position/length sum %lli to avoid slowdown\n", precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum);
-  } else if ((!recompress_success) && (strncmp(recompress_msg, "non-zero padbits found", 22) == 0)) {
-    precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum = precomp_mgr.ctx->saved_input_file_pos + mp3_length;
-    print_to_log(PRECOMP_DEBUG_LOG, "Ignoring following streams with position/length sum %lli to avoid slowdown\n", precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum);
-  } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent use of emphasis", 28) == 0)) {
-    precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum = precomp_mgr.ctx->saved_input_file_pos + mp3_length;
-    print_to_log(PRECOMP_DEBUG_LOG, "Ignoring following streams with position/length sum %lli to avoid slowdown\n", precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum);
-  } else if ((!recompress_success) && (strncmp(recompress_msg, "inconsistent original bit", 25) == 0)) {
-    precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit = precomp_mgr.ctx->saved_input_file_pos + mp3_length;
-    print_to_log(PRECOMP_DEBUG_LOG, "Ignoring following streams with position/length sum %lli to avoid slowdown\n", precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit);
-  }
-
-  precomp_mgr.statistics.decompressed_streams_count++;
-  precomp_mgr.statistics.decompressed_mp3_count++;
-
-  if (!recompress_success) {
-    print_to_log(PRECOMP_DEBUG_LOG, "packMP3 error: %s\n", recompress_msg);
-  }
-
-  if (!in_memory) {
-    remove(decompressed_mp3_filename.c_str());
-  }
-
-  if (recompress_success) {
-    int mp3_new_length = -1;
-
-    if (in_memory) {
-      mp3_new_length = mp3_mem_out_size;
-    } else {
-      WrappedFStream ftempout;
-      ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-      ftempout.seekg(0, std::ios_base::end);
-      mp3_new_length = ftempout.tellg();
-      ftempout.close();
-    }
-
-    if (mp3_new_length > 0) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_mp3_count++;
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
-      precomp_mgr.ctx->best_identical_bytes = mp3_length;
-      precomp_mgr.ctx->best_identical_bytes_decomp = mp3_new_length;
-      mp3_success = true;
-    }
-  }
-
-  if (mp3_success) {
-
-    print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli\n", precomp_mgr.ctx->best_identical_bytes, precomp_mgr.ctx->best_identical_bytes_decomp);
-
-    // end uncompressed data
-
-    precomp_mgr.ctx->compressed_data_found = true;
-    end_uncompressed_data(precomp_mgr);
-
-    // write compressed data header (MP3)
-
-    precomp_mgr.ctx->fout->put(1); // no penalty bytes
-    precomp_mgr.ctx->fout->put(D_MP3); // MP3
-
-    fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes);
-    fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp);
-
-    // write compressed MP3
-    if (in_memory) {
-      memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + precomp_mgr.ctx->best_identical_bytes_decomp);
-      fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp);
-    } else {
-      write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, precomp_mgr.ctx->best_identical_bytes_decomp, tmpfile.file_path.c_str());
-    }
-
-    // start new uncompressed data
-
-    // set input file pointer after recompressed data
-    precomp_mgr.ctx->input_file_pos += precomp_mgr.ctx->best_identical_bytes - 1;
-    precomp_mgr.ctx->cb += precomp_mgr.ctx->best_identical_bytes - 1;
-
-  } else {
-    print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-  }
-
-  if (mp3_mem_in != NULL) delete[] mp3_mem_in;
-  if (mp3_mem_out != NULL) delete[] mp3_mem_out;
-}
-
 bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsigned char header3, int protection) {
   unsigned char channels = (header3 >> 6) & 0x3;
   int nch = (channels == MP3_MONO) ? 1 : 2;
@@ -5075,20 +4714,6 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
-std::string temp_files_tag() {
-  // Generate a random 8digit tag for the temp files of a recursion level so they don't overwrite each other
-  static std::random_device rd;
-  static std::mt19937 gen(rd());
-  static std::uniform_int_distribution<> dis(0, 15);
-
-  std::stringstream ss;
-  ss << std::hex;
-  for (int i = 0; i < 8; i++) {
-    ss << dis(gen);
-  }
-  return ss.str();
-}
-
 void recursion_push(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
   precomp_mgr.ctx = std::unique_ptr<RecursionContext>(new RecursionContext(precomp_mgr));
@@ -5144,17 +4769,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 
   precomp_mgr.ctx->intense_ignore_offsets = new std::set<long long>();
   precomp_mgr.ctx->brute_ignore_offsets = new std::set<long long>();
-
-  // init MP3 suppression
-  for (int i = 0; i < 16; i++) {
-    precomp_mgr.ctx->suppress_mp3_type_until[i] = -1;
-  }
-  precomp_mgr.ctx->suppress_mp3_big_value_pairs_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_non_zero_padbits_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_emphasis_sum = -1;
-  precomp_mgr.ctx->suppress_mp3_inconsistent_original_bit = -1;
-
-  precomp_mgr.ctx->mp3_parsing_cache_second_frame = -1;
 
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
   precomp_mgr.ctx->compression_otf_method = OTF_NONE;

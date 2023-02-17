@@ -1,5 +1,8 @@
 #include "precomp_utils.h"
 
+#include <random>
+#include <sstream>
+
 #ifndef __unix
 #include <conio.h>
 #include <windows.h>
@@ -21,6 +24,20 @@
 #include "contrib\mingw_std_threads\mingw.thread.h"
 #endif // _GLIBCXX_HAS_GTHREADS
 #endif
+
+std::string temp_files_tag() {
+  // Generate a random 8digit tag for the temp files of a recursion level so they don't overwrite each other
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<> dis(0, 15);
+
+  std::stringstream ss;
+  ss << std::hex;
+  for (int i = 0; i < 8; i++) {
+    ss << dis(gen);
+  }
+  return ss.str();
+}
 
 int auto_detected_thread_count() {
   int threads = std::thread::hardware_concurrency();

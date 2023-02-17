@@ -18,6 +18,29 @@
 #include <fstream>
 #include <memory>
 
+enum {
+  D_PDF = 0,
+  D_ZIP = 1,
+  D_GZIP = 2,
+  D_PNG = 3,
+  D_MULTIPNG = 4,
+  D_GIF = 5,
+  D_JPG = 6,
+  D_SWF = 7,
+  D_BASE64 = 8,
+  D_BZIP2 = 9,
+  D_MP3 = 10,
+  D_RAW = 255,
+  D_BRUTE = 254,
+};
+
+void print_to_log(PrecompLoggingLevels log_level, std::string format);
+
+template< typename... Args >
+void print_to_log(PrecompLoggingLevels log_level, const char* format, Args... args) {
+  print_to_log(log_level, make_cstyle_format_string(format, args...));
+}
+
 class EXPORT Switches: public CSwitches {
   using CSwitches::ignore_list_ptr;
   using CSwitches::ignore_list_count;
@@ -94,17 +117,6 @@ public:
   long long identical_bytes_decomp = -1;
   long long best_identical_bytes = -1;
   long long best_identical_bytes_decomp = -1;
-
-  // Mp3 stuff
-  long long suppress_mp3_type_until[16];
-  long long suppress_mp3_big_value_pairs_sum;
-  long long suppress_mp3_non_zero_padbits_sum;
-  long long suppress_mp3_inconsistent_emphasis_sum;
-  long long suppress_mp3_inconsistent_original_bit;
-  long long mp3_parsing_cache_second_frame;
-  long long mp3_parsing_cache_n;
-  long long mp3_parsing_cache_mp3_length;
-
 };
 
 class Precomp: public CPrecomp {
@@ -172,7 +184,6 @@ void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, Precom
 void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_gif(Precomp& precomp_mgr, unsigned char version[5], PrecompTmpFile& tmpfile);
 void try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool progressive_jpg, PrecompTmpFile& tmpfile);
-void try_decompression_mp3(Precomp& precomp_mgr, long long mp3_length, PrecompTmpFile& tmpfile);
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
@@ -198,7 +209,6 @@ void read_header(Precomp& precomp_mgr);
 void convert_header(Precomp& precomp_mgr);
 std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
 void print64(long long i64);
-std::string temp_files_tag();
 
 class zLibMTF {
   struct MTFItem {

@@ -389,11 +389,20 @@ class memiostream: public WrappedIOStream<std::iostream>
   class membuf : public std::streambuf
   {
   public:
+    std::vector<char> memvector;
     membuf() = delete;
-    membuf(char* begin, char* end)
+    membuf(char* begin, char* end, bool copy)
     {
-      this->setg(begin, begin, end);
-      this->setp(begin, end);
+      if (copy) {
+        auto length = end - begin;
+        memvector = std::vector(begin, end);
+        this->setg(memvector.data(), memvector.data(), memvector.data() + length);
+        this->setp(memvector.data(), memvector.data() + length);
+      } else
+      {
+        this->setg(begin, begin, end);
+        this->setp(begin, end);
+      }
     }
 
     pos_type seekoff(off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override
@@ -424,8 +433,12 @@ class memiostream: public WrappedIOStream<std::iostream>
 
 public:
   static memiostream make(unsigned char* begin, unsigned char* end) {
-    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
+    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), false);
     return {membuf_ptr};
+  }
+  static std::unique_ptr<memiostream> make_copy(unsigned char* begin, unsigned char* end) {
+    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), true);
+    return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
   }
 };
 
