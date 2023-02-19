@@ -160,7 +160,7 @@ public:
 class precompression_result
 {
 protected:
-  void dump_header_to_outfile(Precomp& precomp_mgr) const;
+  virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
   void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
   void dump_stream_sizes_to_outfile(Precomp& precomp_mgr);
   void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
@@ -176,6 +176,7 @@ public:
   std::unique_ptr<IStreamLike> precompressed_stream;
 
   virtual void dump_to_outfile(Precomp& precomp_mgr);
+  virtual long long input_pos_add_offset() { return original_size - 1; }
 };
 
 void packjpg_mp3_dll_msg();
@@ -202,13 +203,11 @@ void end_uncompressed_data(Precomp& precomp_mgr);
 void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
 void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
-void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
 void try_decompression_base64(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
-void try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int windowbits, PrecompTmpFile& tmpfile);
 
 // helpers for try_decompression functions
 
@@ -258,7 +257,23 @@ public:
     List[Root = Index].Previous = -1;
   }
 };
-struct recompress_deflate_result;
+
+struct recompress_deflate_result {
+  long long compressed_stream_size;
+  long long uncompressed_stream_size;
+  std::vector<unsigned char> recon_data;
+  bool accepted;
+  bool uncompressed_in_memory;
+  bool zlib_perfect;
+  char zlib_comp_level;
+  char zlib_mem_level;
+  char zlib_window_bits;
+};
+
+recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, PrecompTmpFile& tmpfile);
+void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type);
+void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres);
+void debug_pos(Precomp& precomp_mgr);
 
 int32_t fin_fget32_little_endian(std::istream& input);
 int32_t fin_fget32(IStreamLike& input);
@@ -271,6 +286,7 @@ void fout_fput32_little_endian(OStreamLike& output, int v);
 void fout_fput32(OStreamLike& output, int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
+char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres);
 void fout_fput_deflate_hdr(OStreamLike& output, const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
 void fout_fput_recon_data(OStreamLike& output, const recompress_deflate_result&);
 void fout_fput_uncompressed(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
@@ -279,8 +295,6 @@ void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, lon
 
 unsigned char base64_char_decode(unsigned char c);
 void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
-
-void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2);
 
 struct recursion_result {
   bool success;

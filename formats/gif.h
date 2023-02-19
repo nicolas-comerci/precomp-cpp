@@ -87,6 +87,13 @@ bool recompress_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFi
   return recompress_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
+bool gif_header_check(unsigned char* checkbuf)
+{
+  return
+    *checkbuf == 'G' && *(checkbuf + 1) == 'I' && *(checkbuf + 2) == 'F' &&
+    *(checkbuf + 3) == '8' && (*(checkbuf + 4) == '7' || *(checkbuf + 4) == '9') && *(checkbuf + 5) == 'a';
+}
+
 bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dstfile, long long src_pos, int& gif_length, long long& decomp_length, unsigned char& block_size, GifCodeStruct* g) {
   int i, j;
   GifFileType* myGifFile;
@@ -357,11 +364,99 @@ bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
 
-bool gif_header_check(unsigned char* checkbuf)
+void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2)
 {
-  return
-    *checkbuf == 'G' && *(checkbuf + 1) == 'I' && *(checkbuf + 2) == 'F' &&
-    *(checkbuf + 3) == '8' && (*(checkbuf + 4) == '7' || *(checkbuf + 4) == '9') && *(checkbuf + 5) == 'a';
+  unsigned char block_size = 255;
+
+  bool penalty_bytes_stored = ((header1 & 2) == 2);
+  if ((header1 & 4) == 4) block_size = 254;
+  bool recompress_success_needed = ((header1 & 128) == 128);
+
+  GifDiffStruct gDiff;
+
+  // read diff bytes
+  gDiff.GIFDiffIndex = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(gDiff.GIFDiff), gDiff.GIFDiffIndex);
+  print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
+  gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
+  gDiff.GIFDiffIndex = 0;
+  gDiff.GIFCodeCount = 0;
+
+  // read penalty bytes
+  if (penalty_bytes_stored) {
+    precomp_mgr.ctx->penalty_bytes_len = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    precomp_mgr.ctx->fin->read(precomp_mgr.ctx->penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes_len);
+  }
+
+  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+
+  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
+
+  tempfile += "gif";
+  tempfile2 += "gif";
+  remove(tempfile.c_str());
+  {
+    WrappedFStream ftempout;
+    ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
+    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
+    ftempout.close();
+  }
+
+  bool recompress_success = false;
+
+  {
+    remove(tempfile2.c_str());
+    WrappedFStream frecomp;
+    frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
+
+    // recompress data
+    WrappedFStream ftempout;
+    ftempout.open(tempfile, std::ios_base::in | std::ios_base::binary);
+    recompress_success = recompress_gif(precomp_mgr, ftempout, frecomp, block_size, NULL, &gDiff);
+    frecomp.close();
+    ftempout.close();
+  }
+
+  if (recompress_success_needed) {
+    if (!recompress_success) {
+      GifDiffFree(&gDiff);
+      throw PrecompError(ERR_DURING_RECOMPRESSION);
+    }
+  }
+
+  long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
+
+  {
+    PrecompTmpFile frecomp;
+    frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
+    fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
+  }
+
+  remove(tempfile2.c_str());
+  remove(tempfile.c_str());
+
+  if (penalty_bytes_stored) {
+    precomp_mgr.ctx->fout->flush();
+
+    long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
+
+    int pb_pos = 0;
+    for (int pbc = 0; pbc < precomp_mgr.ctx->penalty_bytes_len; pbc += 5) {
+      pb_pos = ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc]) << 24;
+      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 1]) << 16;
+      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 2]) << 8;
+      pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 3];
+
+      precomp_mgr.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
+      precomp_mgr.ctx->fout->write(precomp_mgr.ctx->penalty_bytes.data() + pbc + 4, 1);
+    }
+
+    precomp_mgr.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);
+  }
+
+  GifDiffFree(&gDiff);
 }
 
 class gif_precompression_result: public precompression_result {

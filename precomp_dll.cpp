@@ -63,7 +63,6 @@
 #include <unistd.h>
 #endif
 
-#include "contrib/packmp3/precomp_mp3.h"
 #include "contrib/zlib/zlib.h"
 #include "contrib/preflate/preflate.h"
 
@@ -72,6 +71,7 @@
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
+#include "formats/png.h"
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -137,7 +137,6 @@ int min_ident_size_intense_brute_mode = 64;
 unsigned char zlib_header[2];
 unsigned int* idat_lengths = NULL;
 unsigned int* idat_crcs = NULL;
-int idat_count;
 
 ResultStatistics::ResultStatistics(): CResultStatistics() {
   recompressed_streams_count = 0;
@@ -980,18 +979,6 @@ void init_decompression_variables(RecursionContext& context) {
   context.identical_bytes_decomp = -1;
 }
 
-struct recompress_deflate_result {
-  long long compressed_stream_size;
-  long long uncompressed_stream_size;
-  std::vector<unsigned char> recon_data;
-  bool accepted;
-  bool uncompressed_in_memory;
-  bool zlib_perfect;
-  char zlib_comp_level;
-  char zlib_mem_level;
-  char zlib_window_bits;
-};
-
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type) {
   if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
   std::stringstream ss;
@@ -1820,120 +1807,25 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
-      if (memcmp(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, "IDAT", 4) == 0) {
+      if (png_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
+        auto result = precompress_png(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
 
-        // space for length and crc parts of IDAT chunks
-        idat_lengths = (unsigned int*)(realloc(idat_lengths, 100 * sizeof(unsigned int)));
-        idat_crcs = (unsigned int*)(realloc(idat_crcs, 100 * sizeof(unsigned int)));
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+          result.dump_to_outfile(precomp_mgr);
 
-        idat_count = 0;
-        bool zlib_header_correct = false;
-        int windowbits = 0;
+          // start new uncompressed data
 
-        // get preceding length bytes
-        if (precomp_mgr.ctx->input_file_pos >= 4) {
-          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos - 4, std::ios_base::beg);
-
-          precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 10);
-         if (precomp_mgr.ctx->fin->gcount() == 10) {
-          precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() - 2, std::ios_base::beg);
-
-          idat_lengths[0] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
-         if (idat_lengths[0] > 2) {
-
-          // check zLib header and get windowbits
-          zlib_header[0] = precomp_mgr.in[8];
-          zlib_header[1] = precomp_mgr.in[9];
-          if ((((precomp_mgr.in[8] << 8) + precomp_mgr.in[9]) % 31) == 0) {
-            if ((precomp_mgr.in[8] & 15) == 8) {
-              if ((precomp_mgr.in[9] & 32) == 0) { // FDICT must not be set
-                windowbits = (precomp_mgr.in[8] >> 4) + 8;
-                zlib_header_correct = true;
-              }
-            }
-          }
-
-          if (zlib_header_correct) {
-
-            idat_count++;
-
-            // go through additional IDATs
-            for (;;) {
-              precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + idat_lengths[idat_count - 1], std::ios_base::beg);
-              precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 12);
-              if (precomp_mgr.ctx->fin->gcount() != 12) { // CRC, length, "IDAT"
-                idat_count = 0;
-                break;
-              }
-
-              if (memcmp(precomp_mgr.in + 8, "IDAT", 4) == 0) {
-                idat_crcs[idat_count] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
-                idat_lengths[idat_count] = (precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7];
-                idat_count++;
-
-                if ((idat_count % 100) == 0) {
-                  idat_lengths = (unsigned int*)realloc(idat_lengths, (idat_count + 100) * sizeof(unsigned int));
-                  idat_crcs = (unsigned int*)realloc(idat_crcs, (idat_count + 100) * sizeof(unsigned int));
-                }
-
-                if (idat_count > 65535) {
-                  idat_count = 0;
-                  break;
-                }
-              } else {
-                break;
-              }
-            }
-          }
-         }
-         }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
-
-        if (idat_count == 1) {
-
-          // try to recompress directly
-          precomp_mgr.ctx->input_file_pos += 6;
-          tempfile += "png";
-          PrecompTmpFile tmp_png;
-          tmp_png.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          try_decompression_png(precomp_mgr, -windowbits, tmp_png);
-          precomp_mgr.ctx->cb += 6;
-        } else if (idat_count > 1) {
-          // copy to temp0.dat before trying to recompress
-          std::string png_tmp_filename = tempfile + "png";
-          remove(png_tmp_filename.c_str());
-          PrecompTmpFile tmp_png;
-          tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-
-          precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
-
-          idat_lengths[0] -= 2; // zLib header length
-          for (int i = 0; i < idat_count; i++) {
-            fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, tmp_png, idat_lengths[i]);
-            precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + 12, std::ios_base::beg);
-          }
-          idat_lengths[0] += 2;
-
-          precomp_mgr.ctx->input_file_pos += 6;
-          tempfile += "pngmulti";
-          PrecompTmpFile tmp_pngmulti;
-          tmp_pngmulti.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          try_decompression_png_multi(precomp_mgr, tmp_png, -windowbits, tmp_pngmulti);
-          precomp_mgr.ctx->cb += 6;
-        }
-
-        if (!precomp_mgr.ctx->compressed_data_found) {
+        else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
           precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
-
-        free(idat_lengths);
-        idat_lengths = NULL;
-        free(idat_crcs);
-        idat_crcs = NULL;
       }
 
     }
@@ -1953,8 +1845,8 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
-          precomp_mgr.ctx->cb += result.original_size - 1;
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
@@ -1978,8 +1870,8 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
-          precomp_mgr.ctx->cb += result.original_size - 1;
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
@@ -2004,8 +1896,8 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          precomp_mgr.ctx->input_file_pos += result.original_size - 1;
-          precomp_mgr.ctx->cb += result.original_size - 1;
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
@@ -2391,7 +2283,7 @@ while (precomp_mgr.ctx->fin->good()) {
       fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, header1, precomp_mgr.in, hdr_length, true);
 
       // get IDAT count
-      idat_count = fin_fget_vlint(*precomp_mgr.ctx->fin) + 1;
+      int idat_count = fin_fget_vlint(*precomp_mgr.ctx->fin) + 1;
 
       idat_crcs = (unsigned int*)(realloc(idat_crcs, idat_count * sizeof(unsigned int)));
       idat_lengths = (unsigned int*)(realloc(idat_lengths, idat_count * sizeof(unsigned int)));
@@ -2946,240 +2838,6 @@ void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, Precom
   try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
                                  D_GZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 2, gzip_header_length - 2, false,
                                  "in GZIP", tmpfile);
-}
-
-void try_decompression_png(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {
-  init_decompression_variables(*precomp_mgr.ctx);
-
-  // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, tmpfile);
-
-  if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-
-    precomp_mgr.statistics.decompressed_streams_count++;
-    precomp_mgr.statistics.decompressed_png_count++;
-
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG");
-
-    if (rdres.accepted) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_png_count++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
-      debug_sums(precomp_mgr, rdres);
-
-      // end uncompressed data
-      precomp_mgr.ctx->compressed_data_found = true;
-      end_uncompressed_data(precomp_mgr);
-
-      debug_pos(precomp_mgr);
-
-      // write compressed data header (PNG)
-      fout_fput_deflate_hdr(*precomp_mgr.ctx->fout, D_PNG, 0, rdres, zlib_header, 2, true);
-
-      // write reconstruction and decompressed data
-      fout_fput_recon_data(*precomp_mgr.ctx->fout, rdres);
-      tmpfile.reopen();
-      fout_fput_uncompressed(precomp_mgr, rdres, tmpfile);
-
-      debug_pos(precomp_mgr);
-      // set input file pointer after recompressed data
-      precomp_mgr.ctx->input_file_pos += rdres.compressed_stream_size - 1;
-      precomp_mgr.ctx->cb += rdres.compressed_stream_size - 1;
-
-    } else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
-      print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-    }
-  }
-}
-
-void try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int windowbits, PrecompTmpFile& tmpfile) {
-  init_decompression_variables(*precomp_mgr.ctx);
-
-  // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, tmpfile);
-
-  if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-
-    precomp_mgr.statistics.decompressed_streams_count++;
-    precomp_mgr.statistics.decompressed_png_multi_count++;
-
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in multiPNG");
-
-    if (rdres.accepted) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_png_multi_count++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
-      debug_sums(precomp_mgr, rdres);
-
-      // end uncompressed data
-      precomp_mgr.ctx->compressed_data_found = true;
-      end_uncompressed_data(precomp_mgr);
-
-      debug_pos(precomp_mgr);
-
-      // write compressed data header (PNG)
-      fout_fput_deflate_hdr(*precomp_mgr.ctx->fout, D_MULTIPNG, 0, rdres, zlib_header, 2, true);
-
-      // simulate IDAT write to get IDAT pairs count
-      int i = 1;
-      int idat_pos = idat_lengths[0] - 2;
-      unsigned int idat_pairs_written_count = 0;
-      if (idat_pos < rdres.compressed_stream_size) {
-        do {
-          idat_pairs_written_count++;
-
-          idat_pos += idat_lengths[i];
-          if (idat_pos >= rdres.compressed_stream_size) break;
-
-          i++;
-        } while (i < idat_count);
-      }
-      // store IDAT pairs count
-      fout_fput_vlint(*precomp_mgr.ctx->fout, idat_pairs_written_count);
-
-      // store IDAT CRCs and lengths
-      fout_fput_vlint(*precomp_mgr.ctx->fout, idat_lengths[0]);
-
-      // store IDAT CRCs and lengths
-      i = 1;
-      idat_pos = idat_lengths[0] - 2;
-      idat_pairs_written_count = 0;
-      if (idat_pos < rdres.compressed_stream_size) {
-        do {
-          fout_fput32(*precomp_mgr.ctx->fout, idat_crcs[i]);
-          fout_fput_vlint(*precomp_mgr.ctx->fout, idat_lengths[i]);
-
-          idat_pairs_written_count++;
-
-          idat_pos += idat_lengths[i];
-          if (idat_pos >= rdres.compressed_stream_size) break;
-
-          i++;
-        } while (i < idat_count);
-      }
-
-      // write reconstruction and decompressed data
-      fout_fput_recon_data(*precomp_mgr.ctx->fout, rdres);
-      tmpfile.reopen();
-      fout_fput_uncompressed(precomp_mgr, rdres, tmpfile);
-
-      debug_pos(precomp_mgr);
-
-      // set input file pointer after recompressed data
-      precomp_mgr.ctx->input_file_pos += rdres.compressed_stream_size - 1;
-      precomp_mgr.ctx->cb += rdres.compressed_stream_size - 1;
-      // now add IDAT chunk overhead
-      precomp_mgr.ctx->input_file_pos += (idat_pairs_written_count * 12);
-      precomp_mgr.ctx->cb += (idat_pairs_written_count * 12);
-
-    } else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
-      print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-    }
-  }
-}
-
-// GIF functions
-void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2)
-{
-  unsigned char block_size = 255;
-
-  bool penalty_bytes_stored = ((header1 & 2) == 2);
-  if ((header1 & 4) == 4) block_size = 254;
-  bool recompress_success_needed = ((header1 & 128) == 128);
-
-  GifDiffStruct gDiff;
-
-  // read diff bytes
-  gDiff.GIFDiffIndex = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(gDiff.GIFDiff), gDiff.GIFDiffIndex);
-  print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
-  gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
-  gDiff.GIFDiffIndex = 0;
-  gDiff.GIFCodeCount = 0;
-
-  // read penalty bytes
-  if (penalty_bytes_stored) {
-    precomp_mgr.ctx->penalty_bytes_len = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    precomp_mgr.ctx->fin->read(precomp_mgr.ctx->penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes_len);
-  }
-
-  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-
-  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
-
-  tempfile += "gif";
-  tempfile2 += "gif";
-  remove(tempfile.c_str());
-  {
-    WrappedFStream ftempout;
-    ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
-    ftempout.close();
-  }
-
-  bool recompress_success = false;
-
-  {
-    remove(tempfile2.c_str());
-    WrappedFStream frecomp;
-    frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
-
-    // recompress data
-    WrappedFStream ftempout;
-    ftempout.open(tempfile, std::ios_base::in | std::ios_base::binary);
-    recompress_success = recompress_gif(precomp_mgr, ftempout, frecomp, block_size, NULL, &gDiff);
-    frecomp.close();
-    ftempout.close();
-  }
-
-  if (recompress_success_needed) {
-    if (!recompress_success) {
-      GifDiffFree(&gDiff);
-      throw PrecompError(ERR_DURING_RECOMPRESSION);
-    }
-  }
-
-  long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
-
-  {
-    PrecompTmpFile frecomp;
-    frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
-  }
-
-  remove(tempfile2.c_str());
-  remove(tempfile.c_str());
-
-  if (penalty_bytes_stored) {
-    precomp_mgr.ctx->fout->flush();
-
-    long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
-
-    int pb_pos = 0;
-    for (int pbc = 0; pbc < precomp_mgr.ctx->penalty_bytes_len; pbc += 5) {
-      pb_pos = ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc]) << 24;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 1]) << 16;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 2]) << 8;
-      pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 3];
-
-      precomp_mgr.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      precomp_mgr.ctx->fout->write(precomp_mgr.ctx->penalty_bytes.data() + pbc + 4, 1);
-    }
-
-    precomp_mgr.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);
-  }
-
-  GifDiffFree(&gDiff);
 }
 
 // JPG routines
@@ -3854,11 +3512,14 @@ void fout_fput_vlint(OStreamLike& output, unsigned long long v) {
   }
   output.put(v);
 }
+char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
+  return 1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2);
+}
 void fout_fput_deflate_hdr(OStreamLike& output, const unsigned char type, const unsigned char flags,
                            const recompress_deflate_result& rdres,
                            const unsigned char* hdr, const unsigned hdr_length,
                            const bool inc_last_hdr_byte) {
-  output.put(1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2) + flags);
+  output.put(make_deflate_pcf_hdr_flags(rdres) + flags);
   output.put(type); // PDF/PNG/...
   if (rdres.zlib_perfect) {
     output.put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);

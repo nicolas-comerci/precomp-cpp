@@ -2,6 +2,8 @@
 #define PRECOMP_MP3_HANDLER_H
 #include "precomp_dll.h"
 
+#include "contrib/packmp3/precomp_mp3.h"
+
 bool mp3_header_check(unsigned char* checkbuf)
 {
   return *checkbuf == 0xFF && (*(checkbuf + 1) & 0xE0) == 0xE0;
