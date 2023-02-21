@@ -203,7 +203,6 @@ void end_uncompressed_data(Precomp& precomp_mgr);
 void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile);
 void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
-void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
 void try_decompression_base64(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
@@ -269,7 +268,6 @@ struct recompress_deflate_result {
   char zlib_window_bits;
 };
 
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, PrecompTmpFile& tmpfile);
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type);
 void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres);
 void debug_pos(Precomp& precomp_mgr);
@@ -279,7 +277,6 @@ int32_t fin_fget32(IStreamLike& input);
 long long fin_fget_vlint(IStreamLike& input);
 void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result&, const unsigned char flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last);
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
-bool fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result&, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last, int64_t& rec_length, PrecompTmpFile& tmpfile);
 void fin_fget_uncompressed(const recompress_deflate_result&);
 void fout_fput32_little_endian(OStreamLike& output, int v);
 void fout_fput32(OStreamLike& output, int v);

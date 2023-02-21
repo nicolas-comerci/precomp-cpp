@@ -69,6 +69,7 @@
 #include "precomp_dll.h"
 
 #include "formats/deflate.h"
+#include "formats/zlib.h"
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
@@ -916,154 +917,7 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
 
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
-void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type,
-                               const unsigned hdr_length, const uint64_t rec_length) {
-  if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
-  std::stringstream ss;
-  ss << "Decompressed data - " << type << std::endl;
-  ss << "Header length: " << hdr_length << std::endl;
-  if (rdres.zlib_perfect) {
-    ss << "ZLIB Parameters: compression level " << rdres.zlib_comp_level 
-                          << " memory level " << rdres.zlib_mem_level
-                          << " window bits " << rdres.zlib_window_bits << std::endl;
-  } else {
-    ss << "Reconstruction data size: " << rdres.recon_data.size() << std::endl;
-  }
-  if (rec_length > 0) {
-    ss << "Recursion data length: " << rec_length << std::endl;
-  } else {
-    ss << "Recompressed length: " << rdres.compressed_stream_size << " - decompressed length: " << rdres.uncompressed_stream_size << std::endl;
-  }
-  print_to_log(PRECOMP_DEBUG_LOG, ss.str());
-}
 
-class OwnIStream : public InputStream {
-public:
-  OwnIStream(IStreamLike* f) : _f(f), _eof(false) {}
-
-  virtual bool eof() const {
-    return _eof;
-  }
-  virtual size_t read(unsigned char* buffer, const size_t size) {
-    _f->read(reinterpret_cast<char*>(buffer), size);
-    size_t res = _f->gcount();
-    _eof |= res < size;
-    return res;
-  }
-private:
-  IStreamLike* _f;
-  bool _eof;
-};
-class UncompressedOutStream : public OutputStream {
-public:
-  OStreamLike& ftempout;
-  Precomp* precomp_mgr;
-
-  UncompressedOutStream(bool& in_memory, OStreamLike& tmpfile, Precomp* precomp_mgr)
-    : ftempout(tmpfile), precomp_mgr(precomp_mgr), _written(0), _in_memory(in_memory) {}
-  ~UncompressedOutStream() {}
-
-  virtual size_t write(const unsigned char* buffer, const size_t size) {
-    precomp_mgr->call_progress_callback();
-    if (_in_memory) {
-      auto decomp_io_buf_ptr = precomp_mgr->ctx->decomp_io_buf.data();
-      if (_written + size >= MAX_IO_BUFFER_SIZE) {
-        _in_memory = false;
-        memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
-        fast_copy(*precomp_mgr, memstream, ftempout, _written);
-      }
-      else {
-        memcpy(decomp_io_buf_ptr + _written, buffer, size);
-        _written += size;
-        return size;
-      }
-    }
-    _written += size;
-    ftempout.write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
-    return ftempout.bad() ? 0 : size;
-  }
-
-  uint64_t written() const {
-    return _written;
-  }
-
-private:
-  uint64_t _written;
-  bool& _in_memory;
-};
-
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, PrecompTmpFile& tmpfile) {
-  file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
-
-  recompress_deflate_result result;
-  memset(&result, 0, sizeof(result));
-  
-  OwnIStream is(&file);
-
-  {
-    result.uncompressed_in_memory = true;
-    UncompressedOutStream uos(result.uncompressed_in_memory, tmpfile, &precomp_mgr);
-    uint64_t compressed_stream_size = 0;
-    result.accepted = preflate_decode(uos, result.recon_data,
-                                      compressed_stream_size, is, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); },
-                                      0,
-                                      precomp_mgr.switches.preflate_meta_block_size); // you can set a minimum deflate stream size here
-    result.compressed_stream_size = compressed_stream_size;
-    result.uncompressed_stream_size = uos.written();
-
-    if (precomp_mgr.switches.preflate_verify && result.accepted) {
-      file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
-      OwnIStream is2(&file);
-      std::vector<uint8_t> orgdata(result.compressed_stream_size);
-      is2.read(orgdata.data(), orgdata.size());
-
-      MemStream reencoded_deflate;
-      auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(decomp_io_buf_ptr, decomp_io_buf_ptr + result.uncompressed_stream_size) : std::vector<uint8_t>());
-      OwnIStream uncompressed_file(result.uncompressed_in_memory ? nullptr : &tmpfile);
-      if (!preflate_reencode(reencoded_deflate, result.recon_data, 
-                             result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file, 
-                             result.uncompressed_stream_size,
-                             [] {})
-          || orgdata != reencoded_deflate.data()) {
-        result.accepted = false;
-        static size_t counter = 0;
-        char namebuf[50];
-        while (true) {
-          snprintf(namebuf, 49, "preflate_error_%04d.raw", counter++);
-          std::fstream f;
-          f.open(namebuf, std::ios_base::in | std::ios_base::binary);
-          if (f.is_open()) {
-            continue;
-          }
-          f.open(namebuf, std::ios_base::out | std::ios_base::binary);
-          f.write(reinterpret_cast<char*>(orgdata.data()), orgdata.size());
-          break;
-        }
-      }
-    }
-  }
-  return std::move(result);
-}
-
-class OwnOStream : public OutputStream {
-public:
-  OwnOStream(OStreamLike* f) : _f(f) {}
-
-  virtual size_t write(const unsigned char* buffer, const size_t size) {
-    _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
-    return _f->bad() ? 0 : size;
-  }
-private:
-  OStreamLike* _f;
-};
-
-bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres) {
-  OwnOStream os(&fout);
-  OwnIStream is(&fin);
-  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
-  return result;
-}
 bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
@@ -1883,30 +1737,25 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
 
       if (!ignore_this_position) {
-        if (((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1]) % 31) == 0) &&
-            ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] & 32) == 0)) { // FDICT must not be set
-          int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] & 15);
-          if (compression_method == 8) {
-            int windowbits = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] >> 4) + 8;
+        if (zlib_header_check(precomp_mgr)) {
+          precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+          precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-            if (check_inflate_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb + 2, -windowbits)) {
-              precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-              precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+          auto result = try_decompression_zlib(precomp_mgr);
+          if (result.success) {
+            precomp_mgr.ctx->compressed_data_found = true;
 
-              precomp_mgr.ctx->input_file_pos += 2; // skip zLib header
+            end_uncompressed_data(precomp_mgr);
 
-              tempfile += "zlib";
-              PrecompTmpFile tmp_zlib;
-              tmp_zlib.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-              try_decompression_zlib(precomp_mgr, -windowbits, tmp_zlib);
+            result.dump_to_outfile(precomp_mgr);
 
-              precomp_mgr.ctx->cb += 2;
-
-              if (!precomp_mgr.ctx->compressed_data_found) {
-                precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-                precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
-              }
-            }
+            // set input file pointer after recompressed data
+            precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+            precomp_mgr.ctx->cb += result.input_pos_add_offset();
+          }
+          else {
+            precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
+            precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
           }
         }
       }
@@ -2089,9 +1938,7 @@ while (precomp_mgr.ctx->fin->good()) {
       precomp_mgr.ctx->fout->put(3);
       precomp_mgr.ctx->fout->put(4);
       tempfile += "zip";
-      PrecompTmpFile tmp_zip;
-      tmp_zip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tmp_zip);
+      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tempfile);
 
       debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
 
@@ -2107,9 +1954,7 @@ while (precomp_mgr.ctx->fin->good()) {
       precomp_mgr.ctx->fout->put(31);
       precomp_mgr.ctx->fout->put(139);
       tempfile += "gzip";
-      PrecompTmpFile tmp_gzip;
-      tmp_gzip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tmp_gzip);
+      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tempfile);
 
       debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
 
@@ -2193,9 +2038,7 @@ while (precomp_mgr.ctx->fin->good()) {
       precomp_mgr.ctx->fout->put('W');
       precomp_mgr.ctx->fout->put('S');
       tempfile += "swf";
-      PrecompTmpFile tmp_swf;
-      tmp_swf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, true, recursion_data_length, tmp_swf);
+      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, true, recursion_data_length, tempfile);
 
       debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
 
@@ -2344,35 +2187,11 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_BRUTE: { // brute mode recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      int64_t recursion_data_length;
-      tempfile += "brute";
-      PrecompTmpFile tmp_brute;
-      tmp_brute.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tmp_brute);
-
-      debug_deflate_reconstruct(rdres, "brute mode", hdr_length, recursion_data_length);
-
-      if (!ok) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_raw_deflate(precomp_mgr, header1);
       break;
     }
     case D_RAW: { // raw zLib recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      int64_t recursion_data_length;
-      tempfile += "zlib";
-      PrecompTmpFile tmp_zlib;
-      tmp_zlib.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, true, recursion_data_length, tmp_zlib);
-
-      debug_deflate_reconstruct(rdres, "raw zLib", hdr_length, recursion_data_length);
-
-      if (!ok) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_zlib(precomp_mgr, header1);
       break;
     }
     default:
@@ -2710,12 +2529,6 @@ void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 
-}
-
-void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {
-  try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
-                                 D_RAW, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 2, true,
-                                 "(intense mode)", tmpfile);
 }
 
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {
@@ -3446,33 +3259,6 @@ void fout_fput_deflate_rec(Precomp& precomp_mgr, const unsigned char type,
     remove(recres.file_name.c_str());
   } else {
     fout_fput_uncompressed(precomp_mgr, rdres, tmpfile);
-  }
-}
-bool fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const unsigned char flags,
-                          unsigned char* hdr, unsigned& hdr_length, const bool inc_last,
-                          int64_t& recursion_length, PrecompTmpFile& tmpfile) {
-  fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, flags, hdr, hdr_length, inc_last);
-  fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
-
-  debug_sums(precomp_mgr, rdres);
-  
-  // write decompressed data
-  if (flags & 128) {
-    recursion_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_length, tmpfile);
-    debug_pos(precomp_mgr);
-    auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    bool result = try_reconstructing_deflate(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
-    r.frecurse->close();
-    remove(r.file_name.c_str());
-    return result;
-  } else {
-    recursion_length = 0;
-    debug_pos(precomp_mgr);
-    bool result = try_reconstructing_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
-    return result;
   }
 }
 
