@@ -68,6 +68,7 @@
 
 #include "precomp_dll.h"
 
+#include "formats/deflate.h"
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
@@ -626,87 +627,6 @@ size_t fread_skip(unsigned char *ptr, size_t size, size_t count, IStreamLike& st
   } while (bytes_read < count);
 
   return bytes_read;
-}
-
-int histogram[256];
-
-bool check_inf_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned char* out_buf, int cb_pos, int windowbits, bool use_brute_parameters = false) {
-  // first check BTYPE bits, skip 11 ("reserved (error)")
-  int btype = (in_buf[cb_pos] & 0x07) >> 1;
-  if (btype == 3) return false;
-  // skip BTYPE = 00 ("uncompressed") only in brute mode, because these can be useful for recursion
-  // and often occur in combination with static/dynamic BTYPE blocks
-  if (use_brute_parameters) {
-    if (btype == 0) return false;
-
-    // use a histogram to see if the first 64 bytes are too redundant for a deflate stream,
-    // if a byte is present 8 or more times, it's most likely not a deflate stream
-    // and could slow down the process (e.g. repeated patterns of "0xEBE1F1" or "0xEBEBEBFF"
-    // did this before)
-    memset(&histogram[0], 0, sizeof(histogram));
-    int maximum=0, used=0, offset=cb_pos;
-    for (int i=0;i<4;i++,offset+=64){
-      for (int j=0;j<64;j++){
-        int* freq = &histogram[in_buf[offset+j]];
-        used+=((*freq)==0);
-        maximum+=(++(*freq))>maximum;
-      }
-      if (maximum>=((12+i)<<i) || used*(7-(i+(i/2)))<(i+1)*64)
-        return false;
-    }
-  }
-
-  int ret;
-  unsigned have = 0;
-  z_stream strm;
-
-  /* allocate inflate state */
-  strm.zalloc = Z_NULL;
-  strm.zfree = Z_NULL;
-  strm.opaque = Z_NULL;
-  strm.avail_in = 0;
-  strm.next_in = Z_NULL;
-  ret = inflateInit2(&strm, windowbits);
-  if (ret != Z_OK)
-    return false;
-
-  precomp_mgr.call_progress_callback();
-
-  strm.avail_in = 2048;
-  strm.next_in = in_buf + cb_pos;
-
-  /* run inflate() on input until output buffer not full */
-  do {
-    strm.avail_out = CHUNK;
-    strm.next_out = out_buf;
-
-    ret = inflate(&strm, Z_NO_FLUSH);
-    switch (ret) {
-      case Z_NEED_DICT:
-        ret = Z_DATA_ERROR;
-      case Z_DATA_ERROR:
-      case Z_MEM_ERROR:
-        (void)inflateEnd(&strm);
-        return false;
-    }
-
-    have += CHUNK - strm.avail_out;
-  } while (strm.avail_out == 0);
-
-
-  /* clean up and return */
-  (void)inflateEnd(&strm);
-  switch (ret) {
-      case Z_OK:
-        return true;
-      case Z_STREAM_END:
-        // Skip short streams - most likely false positives
-        unsigned less_than_skip = 32;
-        if (use_brute_parameters) less_than_skip = 1024;
-        return (have >= less_than_skip);
-  }
-
-  return false;
 }
 
 int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
@@ -1416,71 +1336,6 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
   }
 }
 
-void try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter,
-                                    const unsigned char type, 
-                                    const unsigned char* hdr, const int hdr_length, const bool inc_last, 
-                                    const char* debugname, PrecompTmpFile& tmpfile) {
-  init_decompression_variables(*precomp_mgr.ctx);
-
-  // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, tmpfile);
-
-  if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-    precomp_mgr.statistics.decompressed_streams_count++;
-    dcounter++;
-
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, debugname);
-
-    if (rdres.accepted) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      rcounter++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
-      debug_sums(precomp_mgr, rdres);
-
-      // end uncompressed data
-
-      debug_pos(precomp_mgr);
-
-      precomp_mgr.ctx->compressed_data_found = true;
-      end_uncompressed_data(precomp_mgr);
-
-      // check recursion
-      tmpfile.reopen();
-      recursion_result r = recursion_write_file_and_compress(precomp_mgr, rdres, tmpfile);
-
-#if 0
-      // Do we really want to allow uncompressed streams that are smaller than the compressed
-      // ones? (It makes sense if the uncompressed stream contains a JPEG, or something similar.
-      if (rdres.uncompressed_stream_size <= rdres.compressed_stream_size && !r.success) {
-        precomp_mgr.statistics.recompressed_streams_count--;
-        compressed_data_found = false;
-        return;
-      }
-#endif
-
-      debug_pos(precomp_mgr);
-
-      // write compressed data header without first bytes
-      tmpfile.reopen();
-      fout_fput_deflate_rec(precomp_mgr, type, rdres, hdr, hdr_length, inc_last, r, tmpfile);
-
-      debug_pos(precomp_mgr);
-
-      // set input file pointer after recompressed data
-      precomp_mgr.ctx->input_file_pos += rdres.compressed_stream_size - 1;
-      precomp_mgr.ctx->cb += rdres.compressed_stream_size - 1;
-
-    } else {
-      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
-      print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-    }
-
-  }
-}
-
 void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile) {
   try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
                                  D_ZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 4, zip_header_length - 4, false,
@@ -2034,7 +1889,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           if (compression_method == 8) {
             int windowbits = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] >> 4) + 8;
 
-            if (check_inf_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb + 2, -windowbits)) {
+            if (check_inflate_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb + 2, -windowbits)) {
               precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
               precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
@@ -2082,11 +1937,19 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        if (check_inf_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb, -15, true)) {
-          tempfile += "brute";
-          PrecompTmpFile tmp_brute;
-          tmp_brute.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          try_decompression_brute(precomp_mgr, tmp_brute);
+        if (check_raw_deflate_stream_start(precomp_mgr)) {
+          auto result = try_decompression_raw_deflate(precomp_mgr);
+          if (result.success) {
+            precomp_mgr.ctx->compressed_data_found = true;
+
+            end_uncompressed_data(precomp_mgr);
+
+            result.dump_to_outfile(precomp_mgr);
+
+            // set input file pointer after recompressed data
+            precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+            precomp_mgr.ctx->cb += result.input_pos_add_offset();
+          }
         }
 
         if (!precomp_mgr.ctx->compressed_data_found) {
@@ -2853,12 +2716,6 @@ void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile
   try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
                                  D_RAW, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 2, true,
                                  "(intense mode)", tmpfile);
-}
-
-void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile) {
-  try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
-                                 D_BRUTE, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 0, false,
-                                 "(brute mode)", tmpfile);
 }
 
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {

@@ -163,13 +163,13 @@ protected:
   virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
   void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
   void dump_stream_sizes_to_outfile(Precomp& precomp_mgr);
-  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
+  virtual void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
 public:
   precompression_result(SupportedFormats format) : success(false), format(format) {}
 
   bool success;
   char format;
-  char flags;
+  char flags = 0;
   std::vector<char> penalty_bytes;
   long long original_size = -1;
   long long precompressed_size = -1;
@@ -204,7 +204,6 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
 void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
 void try_decompression_zlib(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
-void try_decompression_brute(Precomp& precomp_mgr, PrecompTmpFile& tmpfile);
 void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile);
 void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
 void try_decompression_base64(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);

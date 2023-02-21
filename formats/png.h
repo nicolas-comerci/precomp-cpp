@@ -1,52 +1,12 @@
 #ifndef PRECOMP_PNG_HANDLER_H
 #define PRECOMP_PNG_HANDLER_H
 #include "precomp_dll.h"
+#include "formats/deflate.h"
 
 bool png_header_check(unsigned char* checkbuf)
 {
   return memcmp(checkbuf, "IDAT", 4) == 0;
 }
-
-class deflate_precompression_result: public precompression_result {
-protected:
-  void dump_recon_data_to_outfile(Precomp& precomp_mgr) {
-    if (!rdres.zlib_perfect) {
-      fout_fput_vlint(*precomp_mgr.ctx->fout, rdres.recon_data.size());
-      precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
-    }
-  }
-public:
-  recompress_deflate_result rdres;
-  std::array<unsigned char, 2> zlib_header;
-  bool inc_last_hdr_byte;
-
-  deflate_precompression_result(SupportedFormats format): precompression_result(format) {}
-
-  void dump_header_to_outfile(Precomp& precomp_mgr) const override {
-    // write compressed data header
-    precomp_mgr.ctx->fout->put(make_deflate_pcf_hdr_flags(rdres));
-    precomp_mgr.ctx->fout->put(format);
-    if (rdres.zlib_perfect) {
-      precomp_mgr.ctx->fout->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
-    }
-    fout_fput_vlint(*precomp_mgr.ctx->fout, zlib_header.size());
-    if (!inc_last_hdr_byte) {
-      precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size());
-    }
-    else {
-      precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size() - 1);
-      precomp_mgr.ctx->fout->put(zlib_header[zlib_header.size() - 1] + 1);
-    }
-  }
-
-  void dump_to_outfile(Precomp& precomp_mgr) override {
-    dump_header_to_outfile(precomp_mgr);
-    dump_penaltybytes_to_outfile(precomp_mgr);
-    dump_recon_data_to_outfile(precomp_mgr);
-    dump_stream_sizes_to_outfile(precomp_mgr);
-    dump_precompressed_data_to_outfile(precomp_mgr);
-  }
-};
 
 class png_precompression_result: public deflate_precompression_result {
 protected:
@@ -180,7 +140,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       }
 
       result.rdres = std::move(rdres);
-      result.zlib_header = zlib_header;
+      std::copy(zlib_header.begin(), zlib_header.end(), std::back_inserter(result.zlib_header));
       result.inc_last_hdr_byte = true;
 
       debug_pos(precomp_mgr);
