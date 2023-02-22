@@ -201,7 +201,6 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
 void start_uncompressed_data(RecursionContext& context);
 void end_uncompressed_data(Precomp& precomp_mgr);
 void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
-void try_decompression_base64(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile);
 
 // helpers for try_decompression functions
 
@@ -284,9 +283,6 @@ void fout_fput_recon_data(OStreamLike& output, const recompress_deflate_result&)
 void fout_fput_uncompressed(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 
 void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress = false);
-
-unsigned char base64_char_decode(unsigned char c);
-void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& file_out, int line_count, unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF);
 
 struct recursion_result {
   bool success;
