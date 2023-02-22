@@ -70,6 +70,7 @@
 
 #include "formats/deflate.h"
 #include "formats/zlib.h"
+#include "formats/zip.h"
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
@@ -1135,12 +1136,6 @@ void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_
   }
 }
 
-void try_decompression_zip(Precomp& precomp_mgr, int zip_header_length, PrecompTmpFile& tmpfile) {
-  try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
-                                 D_ZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 4, zip_header_length - 4, false,
-                                 "in ZIP", tmpfile);
-}
-
 int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
 
   precomp_mgr.ctx->comp_decomp_state = P_COMPRESS;
@@ -1187,43 +1182,24 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   if (!ignore_this_pos) {
 
     // ZIP header?
-    if (((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 'P') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] == 'K')) && (precomp_mgr.switches.use_zip)) {
-      // local file header?
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] == 3) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 4)) {
-        print_to_log(PRECOMP_DEBUG_LOG, "ZIP header detected\n");
-        print_to_log(PRECOMP_DEBUG_LOG, "ZIP header detected at position %lli\n", precomp_mgr.ctx->input_file_pos);
-        unsigned int compressed_size = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 21] << 24) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 20] << 16) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 19] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 18];
-        unsigned int uncompressed_size = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 25] << 24) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 24] << 16) + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 23] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 22];
-        unsigned int filename_length = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 27] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 26];
-        unsigned int extra_field_length = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 29] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 28];
-        print_to_log(PRECOMP_DEBUG_LOG, "compressed size: %i\n", compressed_size);
-        print_to_log(PRECOMP_DEBUG_LOG, "uncompressed size: %i\n", uncompressed_size);
-        print_to_log(PRECOMP_DEBUG_LOG, "file name length: %i\n", filename_length);
-        print_to_log(PRECOMP_DEBUG_LOG, "extra field length: %i\n", extra_field_length);
+    if (precomp_mgr.switches.use_zip && zip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      auto result = try_decompression_zip(precomp_mgr);
+      precomp_mgr.ctx->compressed_data_found = result.success;
 
-        if ((filename_length + extra_field_length) <= CHECKBUF_SIZE
-            && precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] == 8 && precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 9] == 0) { // Compression method 8: Deflate
+      if (result.success) {
+        end_uncompressed_data(precomp_mgr);
 
-          int header_length = 30 + filename_length + extra_field_length;
+        result.dump_to_outfile(precomp_mgr);
 
-          precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-          precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+        // start new uncompressed data
 
-          precomp_mgr.ctx->input_file_pos += header_length;
-
-          tempfile += "zip";
-          PrecompTmpFile tmp_zip;
-          tmp_zip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          try_decompression_zip(precomp_mgr, header_length, tmp_zip);
-
-          precomp_mgr.ctx->cb += header_length;
-
-          if (!precomp_mgr.ctx->compressed_data_found) {
-            precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-            precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
-          }
-
-        }
+        // set input file pointer after recompressed data
+        precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+        precomp_mgr.ctx->cb += result.input_pos_add_offset();
+      }
+      else {
+        precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
+        precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
       }
     }
 
@@ -1868,21 +1844,7 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }     
     case D_ZIP: { // ZIP recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      int64_t recursion_data_length;
-      precomp_mgr.ctx->fout->put('P');
-      precomp_mgr.ctx->fout->put('K');
-      precomp_mgr.ctx->fout->put(3);
-      precomp_mgr.ctx->fout->put(4);
-      tempfile += "zip";
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tempfile);
-
-      debug_deflate_reconstruct(rdres, "ZIP", hdr_length, recursion_data_length);
-
-      if (!ok) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_zip(precomp_mgr, header1);
       break;
     }
     case D_GZIP: { // GZip recompression
