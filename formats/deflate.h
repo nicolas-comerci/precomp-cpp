@@ -370,35 +370,11 @@ bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamL
   return result;
 }
 
-bool fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const unsigned char flags,
-  unsigned char* hdr, unsigned& hdr_length, const bool inc_last,
-  int64_t& recursion_length, std::string tmp_filename) {
-  PrecompTmpFile tmpfile;
-  tmpfile.open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
   fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, flags, hdr, hdr_length, inc_last);
   fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
 
   debug_sums(precomp_mgr, rdres);
-
-  // write decompressed data
-  if (flags & 128) {
-    recursion_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_length, tmpfile);
-    debug_pos(precomp_mgr);
-    auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    bool result = try_reconstructing_deflate(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
-    r.frecurse->close();
-    remove(r.file_name.c_str());
-    return result;
-  }
-  else {
-    recursion_length = 0;
-    debug_pos(precomp_mgr);
-    bool result = try_reconstructing_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
-    return result;
-  }
 }
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type,
@@ -427,8 +403,28 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
 void recompress_deflate(Precomp& precomp_mgr, unsigned char precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
-  int64_t recursion_data_length;
-  bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, incl_last_hdr_byte, recursion_data_length, filename);
+  int64_t recursion_data_length = 0;
+  bool ok;
+  fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, incl_last_hdr_byte);
+
+  // write decompressed data
+  if (precomp_hdr_flags & 128) {
+    recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    PrecompTmpFile tmpfile;
+    tmpfile.open(filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, tmpfile);
+    debug_pos(precomp_mgr);
+    auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
+    ok = try_reconstructing_deflate(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, rdres);
+    debug_pos(precomp_mgr);
+    r.frecurse->close();
+    remove(r.file_name.c_str());
+  }
+  else {
+    debug_pos(precomp_mgr);
+    ok = try_reconstructing_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
+    debug_pos(precomp_mgr);
+  }
 
   debug_deflate_reconstruct(rdres, type.c_str(), hdr_length, recursion_data_length);
 

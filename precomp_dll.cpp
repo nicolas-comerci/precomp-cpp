@@ -73,6 +73,7 @@
 #include "formats/zip.h"
 #include "formats/gzip.h"
 #include "formats/mp3.h"
+#include "formats/pdf.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
 #include "formats/png.h"
@@ -598,41 +599,6 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
   return BZ_OK;
 }
 
-// fread_skip variables, shared with def_part_skip
-unsigned int frs_offset;
-unsigned int frs_line_len;
-unsigned int frs_skip_len;
-unsigned char frs_skipbuf[4];
-
-size_t fread_skip(unsigned char *ptr, size_t size, size_t count, IStreamLike& stream) {
-  size_t bytes_read = 0;
-  unsigned int read_tmp;
-
-  do {
-    if ((count - bytes_read) >= (frs_line_len - frs_offset)) {
-      if ((frs_line_len - frs_offset) > 0) {
-        stream.read(reinterpret_cast<char*>(ptr + bytes_read), size * (frs_line_len - frs_offset));
-        read_tmp = stream.gcount();
-         if (read_tmp == 0) return bytes_read;
-        bytes_read += read_tmp;
-      }
-      // skip padding bytes
-      stream.read(reinterpret_cast<char*>(frs_skipbuf), size * frs_skip_len);
-      read_tmp = stream.gcount();
-      if (read_tmp == 0) return bytes_read;
-      frs_offset = 0;
-    } else {
-      stream.read(reinterpret_cast<char*>(ptr + bytes_read), size * (count - bytes_read));
-      read_tmp = stream.gcount();
-      if (read_tmp == 0) return bytes_read;
-      bytes_read += read_tmp;
-      frs_offset += read_tmp;
-    }
-  } while (bytes_read < count);
-
-  return bytes_read;
-}
-
 int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
   int ret;
   unsigned have;
@@ -921,19 +887,6 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
 
-bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
-  std::vector<unsigned char> unpacked_output;
-  unpacked_output.resize(rdres.uncompressed_stream_size);
-  frs_offset = 0;
-  frs_skip_len = skip_part;
-  frs_line_len = read_part;
-  if ((int64_t)fread_skip(unpacked_output.data(), 1, rdres.uncompressed_stream_size, fin) != rdres.uncompressed_stream_size) {
-    return false;
-  }
-  OwnOStream os(&fout);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
-}
-
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
 void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
   if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
@@ -946,195 +899,6 @@ void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
 }
 void debug_pos(Precomp& precomp_mgr) {
   print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
-}
-void try_decompression_pdf(Precomp& precomp_mgr, int windowbits, int pdf_header_length, int img_width, int img_height, int img_bpc, PrecompTmpFile& tmpfile) {
-  init_decompression_variables(*precomp_mgr.ctx);
-
-  int bmp_header_type = 0; // 0 = none, 1 = 8-bit, 2 = 24-bit
-
-  // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, tmpfile);
-
-  if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-
-    precomp_mgr.statistics.decompressed_streams_count++;
-    if (img_bpc == 8) {
-      precomp_mgr.statistics.decompressed_pdf_count_8_bit++;
-    } else {
-      precomp_mgr.statistics.decompressed_pdf_count++;
-    }
-    
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF");
-
-    if (rdres.accepted) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_pdf_count++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
-      debug_sums(precomp_mgr, rdres);
-
-      if (img_bpc == 8) {
-        if (rdres.uncompressed_stream_size == (img_width * img_height)) {
-          bmp_header_type = 1;
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (8 bit)\n");
-          precomp_mgr.statistics.recompressed_pdf_count_8_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count--;
-        } else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
-          bmp_header_type = 2;
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (24 bit)\n");
-          precomp_mgr.statistics.decompressed_pdf_count_8_bit--;
-          precomp_mgr.statistics.decompressed_pdf_count_24_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count_24_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count--;
-        } else {
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size didn't match with stream size\n");
-          precomp_mgr.statistics.decompressed_pdf_count_8_bit--;
-          precomp_mgr.statistics.decompressed_pdf_count++;
-        }
-      }
-
-      // end uncompressed data
-
-      precomp_mgr.ctx->compressed_data_found = true;
-      end_uncompressed_data(precomp_mgr);
-
-      debug_pos(precomp_mgr);
-
-      // write compressed data header (PDF) without 12 first bytes
-      //   (/FlateDecode)
-
-      unsigned char bmp_c = 0;
-
-      if (bmp_header_type == 1) {
-        // 8 Bit, Bit 7,6 = 01
-        bmp_c = 64;
-      } else if (bmp_header_type == 2) {
-        // 24 Bit, Bit 7,6 = 10
-        bmp_c = 128;
-      }
-
-      fout_fput_deflate_hdr(*precomp_mgr.ctx->fout, D_PDF, bmp_c, rdres, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 12, pdf_header_length - 12, false);
-      fout_fput_recon_data(*precomp_mgr.ctx->fout, rdres);
-
-      // eventually write BMP header
-
-      if (bmp_header_type > 0) {
-
-        int i;
-
-        precomp_mgr.ctx->fout->put('B');
-        precomp_mgr.ctx->fout->put('M');
-        // BMP size in bytes
-        int bmp_size = ((img_width+3) & -4) * img_height;
-        if (bmp_header_type == 2) bmp_size *= 3;
-        if (bmp_header_type == 1) {
-          bmp_size += 54 + 1024;
-        } else {
-          bmp_size += 54;
-        }
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, bmp_size);
-
-        for (i = 0; i < 4; i++) {
-          precomp_mgr.ctx->fout->put(0);
-        }
-        precomp_mgr.ctx->fout->put(54);
-        if (bmp_header_type == 1) {
-          precomp_mgr.ctx->fout->put(4);
-        } else {
-          precomp_mgr.ctx->fout->put(0);
-        }
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(40);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
-
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_width);
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_height);
-
-        precomp_mgr.ctx->fout->put(1);
-        precomp_mgr.ctx->fout->put(0);
-
-        if (bmp_header_type == 1) {
-          precomp_mgr.ctx->fout->put(8);
-        } else {
-          precomp_mgr.ctx->fout->put(24);
-        }
-        precomp_mgr.ctx->fout->put(0);
-
-        for (i = 0; i < 4; i++) {
-          precomp_mgr.ctx->fout->put(0);
-        }
-
-        if (bmp_header_type == 2)  img_width *= 3;
-
-        int datasize = ((img_width+3) & -4) * img_height;
-        if (bmp_header_type == 2) datasize *= 3;
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, datasize);
-
-        for (i = 0; i < 16; i++) {
-          precomp_mgr.ctx->fout->put(0);
-        }
-
-        if (bmp_header_type == 1) {
-          // write BMP palette
-          for (i = 0; i < 1024; i++) {
-            precomp_mgr.ctx->fout->put(0);
-          }
-        }
-      }
-
-      // write decompressed data
-
-      if ((bmp_header_type == 0) || ((img_width % 4) == 0)) {
-        tmpfile.reopen();
-        fout_fput_uncompressed(precomp_mgr, rdres, tmpfile);
-      } else {
-        WrappedFStream ftempout;
-        if (!rdres.uncompressed_in_memory) {
-          ftempout.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-          if (!ftempout.is_open()) {
-            throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
-          }
-
-          ftempout.seekg(0, std::ios_base::beg);
-        }
-        ftempout.close();
-
-        WrappedFStream ftempout2;
-        ftempout2.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-        unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-        for (int y = 0; y < img_height; y++) {
-
-          if (rdres.uncompressed_in_memory) {
-            memiostream memstream = memiostream::make(buf_ptr, buf_ptr + img_width);
-            fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, img_width);
-            buf_ptr += img_width;
-          } else {
-            fast_copy(precomp_mgr, ftempout2, *precomp_mgr.ctx->fout, img_width);
-          }
-
-          for (int i = 0; i < (4 - (img_width % 4)); i++) {
-            precomp_mgr.ctx->fout->put(0);
-          }
-
-        }
-      }
-
-      // start new uncompressed data
-      debug_pos(precomp_mgr);
-
-      // set input file pointer after recompressed data
-      precomp_mgr.ctx->input_file_pos += rdres.compressed_stream_size - 1;
-      precomp_mgr.ctx->cb += rdres.compressed_stream_size - 1;
-
-    } else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
-      print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
-    }
-  }
 }
 
 int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
@@ -1234,149 +998,25 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
-      if (memcmp(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, "/FlateDecode", 12) == 0) {
+      if (pdf_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        long long act_search_pos = 12;
-        bool found_stream = false;
-        do {
-          if (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos] == 's') {
-            if (memcmp(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + act_search_pos, "stream", 6) == 0) {
-              found_stream = true;
-              break;
-            }
-          }
-          act_search_pos++;
-        } while (act_search_pos < (CHECKBUF_SIZE - 6));
+        auto result = precompress_pdf(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
 
-        if (found_stream) {
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-          // check if the stream is an image and width and height are given
+          result.dump_to_outfile(precomp_mgr);
 
-          // read 4096 bytes before stream
+          // start new uncompressed data
 
-          unsigned char type_buf[4097];
-          int type_buf_length;
-
-          type_buf[4096] = 0;
-
-          if ((precomp_mgr.ctx->input_file_pos + act_search_pos) >= 4096) {
-            precomp_mgr.ctx->fin->seekg((precomp_mgr.ctx->input_file_pos + act_search_pos) - 4096, std::ios_base::beg);
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), 4096);
-            type_buf_length = 4096;
-          } else {
-            precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), precomp_mgr.ctx->input_file_pos + act_search_pos);
-            type_buf_length = precomp_mgr.ctx->input_file_pos + act_search_pos;
-          }
-
-          // find "<<"
-
-          int start_pos = -1;
-
-          for (int i = type_buf_length; i > 0; i--) {
-            if ((type_buf[i] == '<') && (type_buf[i-1] == '<')) {
-              start_pos = i;
-              break;
-            }
-          }
-
-          int width_val = 0, height_val = 0, bpc_val = 0;
-
-          if ((start_pos > -1) && (precomp_mgr.switches.pdf_bmp_mode)) {
-
-            int width_pos, height_pos, bpc_pos;
-
-            // find "/Width"
-            width_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Width") - type_buf;
-
-            if (width_pos > 0)
-              for (int i = width_pos + 7; i < type_buf_length; i++) {
-                if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-                  if (type_buf[i] != ' ') {
-                    width_val = width_val * 10 + (type_buf[i] - '0');
-                  }
-                } else {
-                  break;
-                }
-              }
-
-            // find "/Height"
-            height_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Height") - type_buf;
-
-            if (height_pos > 0)
-              for (int i = height_pos + 8; i < type_buf_length; i++) {
-                if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-                  if (type_buf[i] != ' ') {
-                    height_val = height_val * 10 + (type_buf[i] - '0');
-                  }
-                } else {
-                  break;
-                }
-              }
-
-            // find "/BitsPerComponent"
-            bpc_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/BitsPerComponent") - type_buf;
-
-            if (bpc_pos > 0)
-              for (int i = bpc_pos  + 18; i < type_buf_length; i++) {
-                if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-                  if (type_buf[i] != ' ') {
-                    bpc_val = bpc_val * 10 + (type_buf[i] - '0');
-                  }
-                } else {
-                  break;
-                }
-              }
-
-            if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
-              print_to_log(PRECOMP_DEBUG_LOG, "Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
-            }
-          }
-
-          if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 6] == 13) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 6] == 10)) {
-            if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] == 13) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] == 10)) {
-              // seems to be two byte EOL - zLib Header present?
-              if (((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 9]) % 31) == 0) &&
-                  ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 9] & 32) == 0)) { // FDICT must not be set
-                int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8] & 15);
-                if (compression_method == 8) {
-
-                  int windowbits = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8] >> 4) + 8;
-
-                  precomp_mgr.ctx->input_file_pos += act_search_pos + 10; // skip PDF part
-
-                  tempfile += "pdf";
-                  PrecompTmpFile tmp_pdf;
-                  tmp_pdf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-                  try_decompression_pdf(precomp_mgr , -windowbits, act_search_pos + 10, width_val, height_val, bpc_val, tmp_pdf);
-
-                  precomp_mgr.ctx->cb += act_search_pos + 10;
-                }
-              }
-            } else {
-              // seems to be one byte EOL - zLib Header present?
-              if ((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8]) % 31) == 0) {
-                int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] & 15);
-                if (compression_method == 8) {
-                  int windowbits = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] >> 4) + 8;
-
-                  precomp_mgr.ctx->input_file_pos += act_search_pos + 9; // skip PDF part
-
-                  tempfile += "pdf";
-                  PrecompTmpFile tmp_pdf;
-                  tmp_pdf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-                  try_decompression_pdf(precomp_mgr, -windowbits, act_search_pos + 9, width_val, height_val, bpc_val, tmp_pdf);
-
-                  precomp_mgr.ctx->cb += act_search_pos + 9;
-                }
-              }
-            }
-          }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
-
-        if (!precomp_mgr.ctx->compressed_data_found) {
+        else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
           precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
@@ -1747,47 +1387,7 @@ while (precomp_mgr.ctx->fin->good()) {
 
     switch (headertype) {
     case D_PDF: { // PDF recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      // restore PDF header
-      ostream_printf(*precomp_mgr.ctx->fout, "/FlateDecode");
-      fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, header1, precomp_mgr.in, hdr_length, false);
-      fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
-      int bmp_c = (header1 >> 6);
-
-      debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
-      if (bmp_c == 1) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (8-Bit)\n");
-      if (bmp_c == 2) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (24-Bit)\n");
-
-      // read BMP header
-      int bmp_width = 0;
-
-      switch (bmp_c) {
-        case 1:
-          precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 54+1024);
-          break;
-        case 2:
-          precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 54);
-          break;
-      }
-      if (bmp_c > 0) {
-        bmp_width = precomp_mgr.in[18] + (precomp_mgr.in[19] << 8) + (precomp_mgr.in[20] << 16) + (precomp_mgr.in[21] << 24);
-        if (bmp_c == 2) bmp_width *= 3;
-      }
-
-      uint64_t read_part, skip_part;
-      if ((bmp_c == 0) || ((bmp_width % 4) == 0)) {
-        // recompress directly to fout
-        read_part = rdres.uncompressed_stream_size;
-        skip_part = 0;
-      } else { // lines aligned to 4 byte, skip those bytes
-        // recompress directly to fout, but skipping bytes
-        read_part = bmp_width;
-        skip_part = (-bmp_width) & 3;
-      }
-      if (!try_reconstructing_deflate_skip(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, read_part, skip_part)) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_pdf(precomp_mgr, header1);
       break;
     }     
     case D_ZIP: { // ZIP recompression
