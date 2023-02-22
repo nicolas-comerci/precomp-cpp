@@ -930,62 +930,6 @@ bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OSt
   OwnOStream os(&fout);
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
-class OwnOStreamMultiPNG : public OutputStream {
-public:
-  OwnOStreamMultiPNG(OStreamLike* f,
-                      const size_t idat_count, 
-                      const uint32_t* idat_crcs, 
-                      const uint32_t* idat_lengths) 
-  : _f(f), _idat_count(idat_count), _idat_crcs(idat_crcs), _idat_lengths(idat_lengths)
-  , _idat_idx(0), _to_read(_idat_lengths[0])
-  {}
-
-  virtual size_t write(const unsigned char* buffer_, const size_t size_) {
-    if (_idat_idx >= _idat_count) {
-      return 0;
-    }
-    size_t written = 0;
-    size_t size = size_;
-    const unsigned char* buffer = buffer_;
-    while (size > _to_read) {
-      _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), _to_read);
-      written += _to_read;
-      size -= _to_read;
-      buffer += _to_read;
-      ++_idat_idx;
-      if (_idat_idx >= _idat_count) {
-        return written;
-      }
-      unsigned char crc_out[4] = {(unsigned char)(_idat_crcs[_idat_idx] >> 24), (unsigned char)(_idat_crcs[_idat_idx] >> 16), (unsigned char)(_idat_crcs[_idat_idx] >> 8), (unsigned char)(_idat_crcs[_idat_idx] >> 0)};
-      _f->write(reinterpret_cast<char*>(crc_out), 4);
-      _to_read = _idat_lengths[_idat_idx];
-      unsigned char len_out[4] = {(unsigned char)(_to_read >> 24), (unsigned char)(_to_read >> 16), (unsigned char)(_to_read >> 8), (unsigned char)(_to_read >> 0)};
-      _f->write(reinterpret_cast<char*>(len_out), 4);
-      _f->write("IDAT", 4);
-    }
-    _f->write(reinterpret_cast<char*>(const_cast<unsigned char*>(buffer)), size);
-    written += size;
-    _to_read -= size;
-    return written;
-  }
-private:
-  OStreamLike* _f;
-  const size_t _idat_count;
-  const uint32_t* _idat_crcs;
-  const uint32_t* _idat_lengths;
-  size_t _idat_idx, _to_read;
-};
-bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres,
-                                const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
-  std::vector<unsigned char> unpacked_output;
-  unpacked_output.resize(rdres.uncompressed_stream_size);
-  fin.read(reinterpret_cast<char*>(unpacked_output.data()), rdres.uncompressed_stream_size);
-  if ((int64_t)fin.gcount() != rdres.uncompressed_stream_size) {
-    return false;
-  }
-  OwnOStreamMultiPNG os(&fout, idat_count, idat_crcs, idat_lengths);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
-}
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
 void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
@@ -1964,61 +1908,11 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_PNG: { // PNG recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      // restore IDAT
-      ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
-
-      fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, header1, precomp_mgr.in, hdr_length, true);
-      fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
-      debug_sums(precomp_mgr, rdres);
-      debug_pos(precomp_mgr);
-
-      debug_deflate_reconstruct(rdres, "PNG", hdr_length, 0);
-
-      if (!try_reconstructing_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres)) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
-      debug_pos(precomp_mgr);
+      recompress_png(precomp_mgr, header1);
       break;
     }
     case D_MULTIPNG: { // PNG multi recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      // restore first IDAT
-      ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
-      
-      fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, header1, precomp_mgr.in, hdr_length, true);
-
-      // get IDAT count
-      int idat_count = fin_fget_vlint(*precomp_mgr.ctx->fin) + 1;
-
-      idat_crcs = (unsigned int*)(realloc(idat_crcs, idat_count * sizeof(unsigned int)));
-      idat_lengths = (unsigned int*)(realloc(idat_lengths, idat_count * sizeof(unsigned int)));
-
-      // get first IDAT length
-      idat_lengths[0] = fin_fget_vlint(*precomp_mgr.ctx->fin) - 2; // zLib header length
-
-      // get IDAT chunk lengths and CRCs
-      for (int i = 1; i < idat_count; i++) {
-        idat_crcs[i]    = fin_fget32(*precomp_mgr.ctx->fin);
-        idat_lengths[i] = fin_fget_vlint(*precomp_mgr.ctx->fin);
-      }
-
-      fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
-      debug_sums(precomp_mgr, rdres);
-      debug_pos(precomp_mgr);
-
-      debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
-
-      if (!try_reconstructing_deflate_multipng(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, idat_count, idat_crcs, idat_lengths)) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
-      debug_pos(precomp_mgr);
-      free(idat_lengths);
-      idat_lengths = NULL;
-      free(idat_crcs);
-      idat_crcs = NULL;
+      recompress_multipng(precomp_mgr, header1);
       break;
     }
     case D_GIF: { // GIF recompression
