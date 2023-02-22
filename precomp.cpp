@@ -47,7 +47,7 @@
 #include <filesystem>
 #include <set>
 
-#include "precomp_dll.h"
+#include "libprecomp.h"
 #include "precomp_io.h"
 #include "precomp_utils.h"
 #ifdef _MSC_VER
@@ -366,9 +366,7 @@ void log_handler(PrecompLoggingLevels level, char* msg) {
 }
 
 void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long long>& ignore_list) {
-  precomp_switches.ignore_list_ptr = static_cast<long long*>(malloc(ignore_list.size() * sizeof(long long)));
-  memcpy(precomp_switches.ignore_list_ptr, ignore_list.data(), ignore_list.size());
-  precomp_switches.ignore_list_count = ignore_list.size();
+  PrecompSwitchesSetIgnoreList(&precomp_switches, ignore_list.data(), ignore_list.size());
 }
 
 #ifndef COMFORT

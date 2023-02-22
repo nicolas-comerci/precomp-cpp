@@ -42,12 +42,10 @@ void print_to_log(PrecompLoggingLevels log_level, const char* format, Args... ar
 }
 
 class EXPORT Switches: public CSwitches {
-  using CSwitches::ignore_list_ptr;
-  using CSwitches::ignore_list_count;
   public:
     Switches();
     
-    std::set<long long> ignore_set();
+    std::set<long long> ignore_set;
 };
 
 class ResultStatistics: public CResultStatistics {
@@ -72,8 +70,8 @@ public:
 
   Precomp& precomp_owner; // The precomp instance that owns this context
 
-  std::set<long long>* intense_ignore_offsets = new std::set<long long>();
-  std::set<long long>* brute_ignore_offsets = new std::set<long long>();
+  std::set<long long> intense_ignore_offsets;
+  std::set<long long> brute_ignore_offsets;
 
   std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
@@ -176,8 +174,6 @@ public:
   virtual void dump_to_outfile(Precomp& precomp_mgr);
   virtual long long input_pos_add_offset() { return original_size - 1; }
 };
-
-void packjpg_mp3_dll_msg();
 
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
 

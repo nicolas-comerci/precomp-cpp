@@ -232,16 +232,9 @@ Switches::Switches() {
   use_bzip2 = true;
   level_switch_used = false;
 
-  ignore_list_ptr = nullptr;
-  ignore_list_count = 0;
-
   // preflate config
   preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
   preflate_verify = false;
-}
-
-std::set<long long> Switches::ignore_set() {
-  return std::set(ignore_list_ptr, ignore_list_ptr + ignore_list_count);
 }
 
 RecursionContext::RecursionContext(Precomp& instance): precomp_owner(instance) {
@@ -559,8 +552,6 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   precomp_mgr.ctx->anything_was_used = false;
   precomp_mgr.ctx->non_zlib_was_used = false;
 
-  auto ignore_set = precomp_mgr.switches.ignore_set();
-
   for (precomp_mgr.ctx->input_file_pos = 0; precomp_mgr.ctx->input_file_pos < precomp_mgr.ctx->fin_length; precomp_mgr.ctx->input_file_pos++) {
   bool compressed_data_found = false;
 
@@ -575,7 +566,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     precomp_mgr.ctx->cb++;
   }
 
-  ignore_this_pos = ignore_set.find(precomp_mgr.ctx->input_file_pos) != ignore_set.end();
+  ignore_this_pos = precomp_mgr.switches.ignore_set.find(precomp_mgr.ctx->input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
   if (!ignore_this_pos) {
 
@@ -831,18 +822,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
    if (intense_mode_is_active(precomp_mgr)) {
     if (!compressed_data_found) {
       bool ignore_this_position = false;
-      if (precomp_mgr.ctx->intense_ignore_offsets->size() > 0) {
-        auto first = precomp_mgr.ctx->intense_ignore_offsets->begin();
+      if (precomp_mgr.ctx->intense_ignore_offsets.size() > 0) {
+        auto first = precomp_mgr.ctx->intense_ignore_offsets.begin();
         while (*first < precomp_mgr.ctx->input_file_pos) {
-          precomp_mgr.ctx->intense_ignore_offsets->erase(first);
-          if (precomp_mgr.ctx->intense_ignore_offsets->size() == 0) break;
-          first = precomp_mgr.ctx->intense_ignore_offsets->begin();
+          precomp_mgr.ctx->intense_ignore_offsets.erase(first);
+          if (precomp_mgr.ctx->intense_ignore_offsets.size() == 0) break;
+          first = precomp_mgr.ctx->intense_ignore_offsets.begin();
         }
 
-        if (precomp_mgr.ctx->intense_ignore_offsets->size() > 0) {
+        if (precomp_mgr.ctx->intense_ignore_offsets.size() > 0) {
           if (*first == precomp_mgr.ctx->input_file_pos) {
             ignore_this_position = true;
-            precomp_mgr.ctx->intense_ignore_offsets->erase(first);
+            precomp_mgr.ctx->intense_ignore_offsets.erase(first);
           }
         }
       }
@@ -878,18 +869,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     if (brute_mode_is_active(precomp_mgr)) {
     if (!compressed_data_found) {
       bool ignore_this_position = false;
-      if (precomp_mgr.ctx->brute_ignore_offsets->size() > 0) {
-        auto first = precomp_mgr.ctx->brute_ignore_offsets->begin();
+      if (precomp_mgr.ctx->brute_ignore_offsets.size() > 0) {
+        auto first = precomp_mgr.ctx->brute_ignore_offsets.begin();
         while (*first < precomp_mgr.ctx->input_file_pos) {
-          precomp_mgr.ctx->brute_ignore_offsets->erase(first);
-          if (precomp_mgr.ctx->brute_ignore_offsets->size() == 0) break;
-          first = precomp_mgr.ctx->brute_ignore_offsets->begin();
+          precomp_mgr.ctx->brute_ignore_offsets.erase(first);
+          if (precomp_mgr.ctx->brute_ignore_offsets.size() == 0) break;
+          first = precomp_mgr.ctx->brute_ignore_offsets.begin();
         }
 
-        if (precomp_mgr.ctx->brute_ignore_offsets->size() > 0) {
+        if (precomp_mgr.ctx->brute_ignore_offsets.size() > 0) {
           if (*first == precomp_mgr.ctx->input_file_pos) {
             ignore_this_position = true;
-            precomp_mgr.ctx->brute_ignore_offsets->erase(first);
+            precomp_mgr.ctx->brute_ignore_offsets.erase(first);
           }
         }
       }
@@ -970,9 +961,6 @@ int compress_file(Precomp& precomp_mgr, float min_percent, float max_percent)
 }
 
 int decompress_file_impl(Precomp& precomp_mgr) {
-
-  long long fin_pos;
-
   precomp_mgr.ctx->comp_decomp_state = P_DECOMPRESS;
   precomp_mgr.enable_input_stream_otf_decompression();
 
@@ -982,7 +970,7 @@ int decompress_file_impl(Precomp& precomp_mgr) {
   std::string tempfile;
   std::string tempfile2;
 
-  fin_pos = precomp_mgr.ctx->fin->tellg();
+  long long fin_pos = precomp_mgr.ctx->fin->tellg();
 
 while (precomp_mgr.ctx->fin->good()) {
   tempfile = tempfile_base;
@@ -1299,7 +1287,6 @@ void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pjglib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
-
 }
 
 uintmax_t fileSize64(const char* filename, int* error_code) {
@@ -1379,9 +1366,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
 
-  precomp_mgr.ctx->intense_ignore_offsets = new std::set<long long>();
-  precomp_mgr.ctx->brute_ignore_offsets = new std::set<long long>();
-
   // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
   precomp_mgr.ctx->compression_otf_method = OTF_NONE;
 
@@ -1391,8 +1375,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
   tmp_r.success = ret_code == RETURN_SUCCESS;
 
-  delete precomp_mgr.ctx->intense_ignore_offsets;
-  delete precomp_mgr.ctx->brute_ignore_offsets;
   // TODO CHECK: Delete ctx?
 
   if (precomp_mgr.ctx->anything_was_used)
@@ -1545,6 +1527,9 @@ void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
   reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
 }
 CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
+void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count) {
+  reinterpret_cast<Switches*>(precomp_switches)->ignore_set = std::set(ignore_pos_list, ignore_pos_list + ignore_post_list_count);
+}
 CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
 CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
 lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }

@@ -278,8 +278,8 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
       debug_pos(precomp_mgr);
     }
     else {
-      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
+      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos - 2);
+      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }

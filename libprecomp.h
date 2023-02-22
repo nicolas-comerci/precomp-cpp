@@ -91,10 +91,6 @@ typedef struct {
 
   size_t preflate_meta_block_size;
   bool preflate_verify;
-
-  //byte positions to ignore (default: none)
-  long long* ignore_list_ptr;
-  int ignore_list_count;
 } CSwitches;
 
 typedef struct {
@@ -156,9 +152,13 @@ typedef struct {
   bool max_recursion_depth_reached;
 } CPrecomp;
 
+void packjpg_mp3_dll_msg();
+
 ExternC LIBPRECOMP CPrecomp* PrecompCreate();
 ExternC LIBPRECOMP void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
 ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
+// This COPIES the list into the Switches structure, so you are free to well, free the ignore_pos_list memory after setting it
+ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count);
 ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr);

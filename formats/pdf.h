@@ -210,8 +210,8 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, int pdf_he
       debug_pos(precomp_mgr);
     }
     else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
+      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos - 2);
+      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
