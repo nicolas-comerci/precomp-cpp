@@ -71,6 +71,7 @@
 #include "formats/deflate.h"
 #include "formats/zlib.h"
 #include "formats/zip.h"
+#include "formats/gzip.h"
 #include "formats/mp3.h"
 #include "formats/jpeg.h"
 #include "formats/gif.h"
@@ -1183,6 +1184,9 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
     // ZIP header?
     if (precomp_mgr.switches.use_zip && zip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+      precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+
       auto result = try_decompression_zip(precomp_mgr);
       precomp_mgr.ctx->compressed_data_found = result.success;
 
@@ -1204,84 +1208,27 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     }
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 31) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] == 139)) {
-        // check zLib header in GZip header
-        int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] & 15);
-        if ((compression_method == 8) &&
-           ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] & 224) == 0)  // reserved FLG bits must be zero
-          ) {
+      if (gzip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-          //((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] == 2) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] == 4)) { //XFL = 2 or 4
-          //  TODO: Can be 0 also, check if other values are used, too.
-          //
-          //  TODO: compressed data is followed by CRC-32 and uncompressed
-          //    size. Uncompressed size can be used to check if it is really
-          //    a GZ stream.
+        auto result = try_decompression_gzip(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
 
-          bool fhcrc = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] & 2) == 2;
-          bool fextra = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] & 4) == 4;
-          bool fname = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] & 8) == 8;
-          bool fcomment = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] & 16) == 16;
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-          int header_length = 10;
+          result.dump_to_outfile(precomp_mgr);
 
-          precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-          precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+          // start new uncompressed data
 
-          bool dont_compress = false;
-
-          if (fhcrc || fextra || fname || fcomment) {
-            int act_checkbuf_pos = 10;
-
-            if (fextra) {
-              int xlen = precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_checkbuf_pos] + (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_checkbuf_pos + 1] << 8);
-              if ((act_checkbuf_pos + xlen) > CHECKBUF_SIZE) {
-                dont_compress = true;
-              } else {
-                act_checkbuf_pos += 2;
-                header_length += 2;
-                act_checkbuf_pos += xlen;
-                header_length += xlen;
-              }
-            }
-            if ((fname) && (!dont_compress)) {
-              do {
-                act_checkbuf_pos ++;
-                dont_compress = (act_checkbuf_pos == CHECKBUF_SIZE);
-                header_length++;
-              } while ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
-            }
-            if ((fcomment) && (!dont_compress)) {
-              do {
-                act_checkbuf_pos ++;
-                dont_compress = (act_checkbuf_pos == CHECKBUF_SIZE);
-                header_length++;
-              } while ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_checkbuf_pos - 1] != 0) && (!dont_compress));
-            }
-            if ((fhcrc) && (!dont_compress)) {
-              act_checkbuf_pos += 2;
-              dont_compress = (act_checkbuf_pos > CHECKBUF_SIZE);
-              header_length += 2;
-            }
-          }
-
-          if (!dont_compress) {
-
-            precomp_mgr.ctx->input_file_pos += header_length; // skip GZip header
-
-            tempfile += "gzip";
-            PrecompTmpFile tmp_gzip;
-            tmp_gzip.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-            try_decompression_gzip(precomp_mgr, header_length, tmp_gzip);
-
-            precomp_mgr.ctx->cb += header_length;
-
-          }
-
-          if (!precomp_mgr.ctx->compressed_data_found) {
-            precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-            precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
-          }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
+        }
+        else {
+          precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
+          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
@@ -1848,19 +1795,7 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_GZIP: { // GZip recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      int64_t recursion_data_length;
-      precomp_mgr.ctx->fout->put(31);
-      precomp_mgr.ctx->fout->put(139);
-      tempfile += "gzip";
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, false, recursion_data_length, tempfile);
-
-      debug_deflate_reconstruct(rdres, "GZIP", hdr_length, recursion_data_length);
-
-      if (!ok) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_gzip(precomp_mgr, header1);
       break;
     }
     case D_PNG: { // PNG recompression
@@ -2351,12 +2286,6 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
   } while ((minsize == COMP_CHUNK) && (!endNow));
 
   return { rek_same_byte_count, use_penalty_bytes ? penalty_bytes: std::vector<char>()};
-}
-
-void try_decompression_gzip(Precomp& precomp_mgr, int gzip_header_length, PrecompTmpFile& tmpfile) {
-  try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
-                                 D_GZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 2, gzip_header_length - 2, false,
-                                 "in GZIP", tmpfile);
 }
 
 // JPG routines

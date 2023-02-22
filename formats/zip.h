@@ -1,7 +1,7 @@
 #ifndef PRECOMP_ZIP_HANDLER_H
 #define PRECOMP_ZIP_HANDLER_H
 #include "precomp_dll.h"
-#include "formats/zlib.h"
+#include "formats/deflate.h"
 
 bool zip_header_check(Precomp& precomp_mgr, unsigned char* checkbuf)
 {
@@ -32,9 +32,6 @@ deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr) {
   unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
   unsigned int extra_field_length = (*(checkbuf + 29) << 8) + *(checkbuf + 28);
   int header_length = 30 + filename_length + extra_field_length;
-
-  precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-  precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
   precomp_mgr.ctx->input_file_pos += header_length;
 
