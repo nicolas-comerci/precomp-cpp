@@ -190,8 +190,6 @@ int def_part_skip(std::istream& source, OStreamLike& dest, int level, int window
 void zerr(int ret);
 bool intense_mode_is_active(Precomp& precomp_mgr);
 bool brute_mode_is_active(Precomp& precomp_mgr);
-int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size);
-int def_bzip2(Precomp& precomp_mgr, std::istream& source, std::ostream& dest, int level);
 long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
 void write_decompressed_data(Precomp& precomp_mgr, OStreamLike& ostream, long long byte_count, const char* decompressed_file_name);
 void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name);
@@ -200,7 +198,6 @@ long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
 void start_uncompressed_data(RecursionContext& context);
 void end_uncompressed_data(Precomp& precomp_mgr);
-void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile);
 
 // helpers for try_decompression functions
 
@@ -211,7 +208,6 @@ int compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent
 int decompress_file(Precomp& precomp_mgr);
 int convert_file(Precomp& precomp_mgr);
 long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
-long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& file, int compression_level, long long& compressed_stream_size, PrecompTmpFile& tmpfile);
 void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
 void write_header(Precomp& precomp_mgr);
 void read_header(Precomp& precomp_mgr);
