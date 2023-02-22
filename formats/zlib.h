@@ -17,7 +17,7 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr) {
   if (check_inflate_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb + 2, -windowbits)) {
     precomp_mgr.ctx->input_file_pos += 2; // skip zLib header
 
-    result = try_decompression_deflate_type_internal(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
+    result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
       D_RAW, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 2, true,
       "(intense mode)", temp_files_tag() + "_original_zlib");
 

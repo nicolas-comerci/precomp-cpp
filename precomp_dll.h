@@ -94,8 +94,6 @@ public:
   long long saved_input_file_pos;
   long long saved_cb;
 
-  bool compressed_data_found;
-
   // Uncompressed data info
   long long uncompressed_pos;
   bool uncompressed_data_in_work;
@@ -183,69 +181,15 @@ void packjpg_mp3_dll_msg();
 
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
 
-int def(std::istream& source, OStreamLike& dest, int level, int windowbits, int memlevel);
-long long def_compare(std::istream& compfile, int level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decompressed_bytes_total, bool in_memory);
-int def_part(std::istream& source, OStreamLike& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out);
-int def_part_skip(std::istream& source, OStreamLike& dest, int level, int windowbits, int memlevel, long long stream_size_in, long long stream_size_out, int bmp_width);
-void zerr(int ret);
 bool intense_mode_is_active(Precomp& precomp_mgr);
 bool brute_mode_is_active(Precomp& precomp_mgr);
-long long file_recompress(std::istream& origfile, int compression_level, int windowbits, int memlevel, long long& decompressed_bytes_used, long long decomp_bytes_total, bool in_memory);
-void write_decompressed_data(Precomp& precomp_mgr, OStreamLike& ostream, long long byte_count, const char* decompressed_file_name);
-void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name);
 unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2);
 long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes);
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
-void start_uncompressed_data(RecursionContext& context);
-void end_uncompressed_data(Precomp& precomp_mgr);
 
 // helpers for try_decompression functions
 
 void init_decompression_variables(RecursionContext& context);
-
-void sort_comp_mem_levels();
-int compress_file(Precomp& precomp_mgr, float min_percent = 0, float max_percent = 100);
-int decompress_file(Precomp& precomp_mgr);
-int convert_file(Precomp& precomp_mgr);
-long long try_to_decompress(std::istream& file, int windowbits, long long& compressed_stream_size, bool& in_memory);
-void try_recompress(std::istream& origfile, int comp_level, int mem_level, int windowbits, long long& compressed_stream_size, long long decomp_bytes_total, bool in_memory);
-void write_header(Precomp& precomp_mgr);
-void read_header(Precomp& precomp_mgr);
-void convert_header(Precomp& precomp_mgr);
-std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode);
-void print64(long long i64);
-
-class zLibMTF {
-  struct MTFItem {
-    int Next, Previous;
-  };
-  alignas(16) MTFItem List[81];
-  int Root, Index;
-public:
-  zLibMTF() : Root(0), Index(0) {
-    for (int i = 0; i < 81; i++) {
-      List[i].Next = i + 1;
-      List[i].Previous = i - 1;
-    }
-    List[80].Next = -1;
-  }
-  inline int First() {
-    return Index = Root;
-  }
-  inline int Next() {
-    return (Index >= 0) ? Index = List[Index].Next : Index;
-  }
-  inline void Update() {
-    if (Index == Root) return;
-
-    List[List[Index].Previous].Next = List[Index].Next;
-    if (List[Index].Next >= 0)
-      List[List[Index].Next].Previous = List[Index].Previous;
-    List[Root].Previous = Index;
-    List[Index].Next = Root;
-    List[Root = Index].Previous = -1;
-  }
-};
 
 struct recompress_deflate_result {
   long long compressed_stream_size;
@@ -259,24 +203,13 @@ struct recompress_deflate_result {
   char zlib_window_bits;
 };
 
-void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type);
-void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres);
-void debug_pos(Precomp& precomp_mgr);
-
-int32_t fin_fget32_little_endian(std::istream& input);
 int32_t fin_fget32(IStreamLike& input);
 long long fin_fget_vlint(IStreamLike& input);
-void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result&, const unsigned char flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last);
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
-void fin_fget_uncompressed(const recompress_deflate_result&);
 void fout_fput32_little_endian(OStreamLike& output, int v);
-void fout_fput32(OStreamLike& output, int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
 char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres);
-void fout_fput_deflate_hdr(OStreamLike& output, const unsigned char type, const unsigned char flags, const recompress_deflate_result&, const unsigned char* hdr_data, const unsigned hdr_length, const bool inc_last);
-void fout_fput_recon_data(OStreamLike& output, const recompress_deflate_result&);
-void fout_fput_uncompressed(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 
 void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress = false);
 
@@ -289,5 +222,4 @@ struct recursion_result {
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
 recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, PrecompTmpFile& tmpfile);
 recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
-void fout_fput_deflate_rec(Precomp& precomp_mgr, const unsigned char type, const recompress_deflate_result&, const unsigned char* hdr, const unsigned hdr_length, const bool inc_last, const recursion_result& recres, PrecompTmpFile& tmpfile);
 #endif // PRECOMP_DLL_H

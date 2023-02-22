@@ -323,7 +323,6 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
       precomp_mgr.statistics.recompressed_base64_count++;
       print_to_log(PRECOMP_DEBUG_LOG, "Match: encoded to %lli bytes\n");
 
-      precomp_mgr.ctx->compressed_data_found = true;
       result.success = true;
 
       // check recursion

@@ -19,7 +19,7 @@ deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->input_file_pos += 10; // skip CWS and zLib header
 
-  result = try_decompression_deflate_type_internal(precomp_mgr, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count,
+  result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count,
     D_SWF, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 3, 7, true,
     "in SWF", temp_files_tag() + "_original_swf");
 

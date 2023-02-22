@@ -298,7 +298,6 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr) {
     print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, decompressed to %lli bytes\n", precomp_mgr.ctx->best_identical_bytes, precomp_mgr.ctx->best_identical_bytes_decomp);
 
     precomp_mgr.ctx->non_zlib_was_used = true;
-    precomp_mgr.ctx->compressed_data_found = true;
     result.success = true;
 
     // check recursion

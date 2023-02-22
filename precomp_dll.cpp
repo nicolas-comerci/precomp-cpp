@@ -138,15 +138,6 @@ void precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-
-zLibMTF MTF;
-
-int min_ident_size_intense_brute_mode = 64;
-
-unsigned char zlib_header[2];
-unsigned int* idat_lengths = NULL;
-unsigned int* idat_crcs = NULL;
-
 ResultStatistics::ResultStatistics(): CResultStatistics() {
   recompressed_streams_count = 0;
   recompressed_pdf_count = 0;
@@ -183,49 +174,6 @@ ResultStatistics::ResultStatistics(): CResultStatistics() {
   decompressed_bzip2_count = 0;
   decompressed_zlib_count = 0;    // intense mode
   decompressed_brute_count = 0;   // brute mode
-}
-
-CSwitches* CreateCSwitches() {
-  // We create out C++ class but return a pointer to the inherited C struct, that way C users can interact with the data but we still are able
-  // to use our C++ amenities like default values via constructor and member functions
-  return new Switches();
-}
-
-CPrecomp* PrecompCreate() { return new Precomp(); }
-void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
-  reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
-}
-CSwitches* PrecompGetSwitches(CPrecomp * precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
-CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
-CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
-lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }
-
-int PrecompPrecompress(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  return compress_file(*reinterpret_cast<Precomp*>(precomp_mgr), 0, 100);
-}
-
-int PrecompRecompress(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
-  return decompress_file(*internal_precomp_ptr);
-}
-
-int PrecompConvert(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
-}
-
-const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  if (seek_to_beg) internal_precomp_ptr->ctx->fin->seekg(0, std::ios_base::beg);
-  read_header(*internal_precomp_ptr);
-  return internal_precomp_ptr->output_file_name.c_str();
-}
-
-void PrecompConvertHeader(CPrecomp* precomp_mgr) {
-  convert_header(*reinterpret_cast<Precomp*>(precomp_mgr));
 }
 
 void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name) {
@@ -456,27 +404,6 @@ bool brute_mode_is_active(Precomp& precomp_mgr) {
   return false;
 }
 
-void write_decompressed_data(Precomp& precomp_mgr, OStreamLike& ostream, long long byte_count, const char* decompressed_file_name) {
-  WrappedFStream ftempout;
-  ftempout.open(decompressed_file_name, std::ios_base::in | std::ios_base::binary);
-  if (!ftempout.is_open()) throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
-
-  ftempout.seekg(0, std::ios_base::beg);
-
-  fast_copy(precomp_mgr, ftempout, ostream, byte_count);
-  ftempout.close();
-}
-
-void write_decompressed_data_io_buf(Precomp& precomp_mgr, long long byte_count, bool in_memory, const char* decompressed_file_name) {
-    if (in_memory) {
-      auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-      memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + byte_count);
-      fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, byte_count);
-    } else {
-      write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, byte_count, decompressed_file_name);
-    }
-}
-
 unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
@@ -559,16 +486,6 @@ long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1
   return same_byte_count;
 }
 
-void start_uncompressed_data(RecursionContext& context) {
-  context.uncompressed_length = 0;
-  context.uncompressed_pos = context.input_file_pos;
-
-  // uncompressed data
-  context.fout->put(0);
-
-  context.uncompressed_data_in_work = true;
-}
-
 void end_uncompressed_data(Precomp& precomp_mgr) {
 
   if (!precomp_mgr.ctx->uncompressed_data_in_work) return;
@@ -584,8 +501,6 @@ void end_uncompressed_data(Precomp& precomp_mgr) {
   precomp_mgr.ctx->uncompressed_data_in_work = false;
 }
 
-int best_windowbits = -1;
-
 void init_decompression_variables(RecursionContext& context) {
   context.identical_bytes = -1;
   context.best_identical_bytes = -1;
@@ -594,36 +509,33 @@ void init_decompression_variables(RecursionContext& context) {
   context.identical_bytes_decomp = -1;
 }
 
-void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type) {
-  if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
-  std::stringstream ss;
-  ss << "Possible zLib-Stream " << type << " found at position " << context.saved_input_file_pos << std::endl;
-  ss << "Compressed size: " << rdres.compressed_stream_size << std::endl;
-  ss << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
+void write_header(Precomp& precomp_mgr) {
+  // write the PCF file header, beware that this needs to be done before wrapping the output file with a CompressedOStreamBuffer
+  char* input_file_name_without_path = new char[precomp_mgr.input_file_name.length() + 1];
 
-  if (rdres.accepted) {
-    if (rdres.zlib_perfect) {
-      ss << "Detect ZLIB parameters: comp level " << rdres.zlib_comp_level << ", mem level " << rdres.zlib_mem_level << ", " << rdres.zlib_window_bits << "window bits" << std::endl;
-    } else {
-      ss << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << std::endl;
-    }
+  ostream_printf(*precomp_mgr.ctx->fout, "PCF");
+
+  // version number
+  precomp_mgr.ctx->fout->put(V_MAJOR);
+  precomp_mgr.ctx->fout->put(V_MINOR);
+  precomp_mgr.ctx->fout->put(V_MINOR2);
+
+  // compression-on-the-fly method used
+  precomp_mgr.ctx->fout->put(precomp_mgr.ctx->compression_otf_method);
+
+  // write input file name without path
+  const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
+  if (last_backslash != NULL) {
+    strcpy(input_file_name_without_path, last_backslash + 1);
+  }
+  else {
+    strcpy(input_file_name_without_path, precomp_mgr.input_file_name.c_str());
   }
 
-  print_to_log(PRECOMP_DEBUG_LOG, ss.str());
-}
+  ostream_printf(*precomp_mgr.ctx->fout, input_file_name_without_path);
+  precomp_mgr.ctx->fout->put(0);
 
-static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
-void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
-  if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
-  sum_compressed += rdres.compressed_stream_size;
-  sum_uncompressed += rdres.uncompressed_stream_size;
-  sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
-  sum_recon += rdres.recon_data.size();
-  print_to_log(PRECOMP_DEBUG_LOG, "deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
-         sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
-}
-void debug_pos(Precomp& precomp_mgr) {
-  print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
+  delete[] input_file_name_without_path;
 }
 
 int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
@@ -647,14 +559,10 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   precomp_mgr.ctx->anything_was_used = false;
   precomp_mgr.ctx->non_zlib_was_used = false;
 
-  std::string tempfile_base = temp_files_tag() + "_decomp_";
-  std::string tempfile;
   auto ignore_set = precomp_mgr.switches.ignore_set();
 
   for (precomp_mgr.ctx->input_file_pos = 0; precomp_mgr.ctx->input_file_pos < precomp_mgr.ctx->fin_length; precomp_mgr.ctx->input_file_pos++) {
-  tempfile = tempfile_base;
-
-  precomp_mgr.ctx->compressed_data_found = false;
+  bool compressed_data_found = false;
 
   bool ignore_this_pos = false;
 
@@ -677,7 +585,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
       auto result = try_decompression_zip(precomp_mgr);
-      precomp_mgr.ctx->compressed_data_found = result.success;
+      compressed_data_found = result.success;
 
       if (result.success) {
         end_uncompressed_data(precomp_mgr);
@@ -696,13 +604,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
       if (gzip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = try_decompression_gzip(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
 
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -722,13 +630,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
       if (pdf_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_pdf(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
 
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -748,10 +656,10 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
       if (png_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
         auto result = precompress_png(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
 
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -772,13 +680,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_gif)) { // no PNG header -> GIF header?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_gif)) { // no PNG header -> GIF header?
       if (gif_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_gif(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
@@ -797,13 +705,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
       if (jpeg_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_jpeg(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
@@ -822,13 +730,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
       if (mp3_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) { // frame start
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_mp3(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           // end uncompressed data
           end_uncompressed_data(precomp_mgr);
@@ -848,14 +756,14 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
       // CWS = Compressed SWF file
       if (swf_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = try_decompression_swf(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
@@ -872,13 +780,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_base64)) { // no SWF header -> Base64?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_base64)) { // no SWF header -> Base64?
       if (base64_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_base64(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
@@ -895,13 +803,13 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
     }
 
-    if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_bzip2)) { // no Base64 header -> bZip2?
+    if ((!compressed_data_found) && (precomp_mgr.switches.use_bzip2)) { // no Base64 header -> bZip2?
       if (bzip2_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
         precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = try_decompression_bzip2(precomp_mgr);
-        precomp_mgr.ctx->compressed_data_found = result.success;
+        compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
 
@@ -921,7 +829,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
    // nothing so far -> if intense mode is active, look for raw zLib header
    if (intense_mode_is_active(precomp_mgr)) {
-    if (!precomp_mgr.ctx->compressed_data_found) {
+    if (!compressed_data_found) {
       bool ignore_this_position = false;
       if (precomp_mgr.ctx->intense_ignore_offsets->size() > 0) {
         auto first = precomp_mgr.ctx->intense_ignore_offsets->begin();
@@ -945,8 +853,9 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
           auto result = try_decompression_zlib(precomp_mgr);
+          compressed_data_found = result.success;
           if (result.success) {
-            precomp_mgr.ctx->compressed_data_found = true;
+            compressed_data_found = true;
 
             end_uncompressed_data(precomp_mgr);
 
@@ -967,7 +876,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
    // nothing so far -> if brute mode is active, brute force for zLib streams
     if (brute_mode_is_active(precomp_mgr)) {
-    if (!precomp_mgr.ctx->compressed_data_found) {
+    if (!compressed_data_found) {
       bool ignore_this_position = false;
       if (precomp_mgr.ctx->brute_ignore_offsets->size() > 0) {
         auto first = precomp_mgr.ctx->brute_ignore_offsets->begin();
@@ -991,8 +900,9 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
         if (check_raw_deflate_stream_start(precomp_mgr)) {
           auto result = try_decompression_raw_deflate(precomp_mgr);
+          compressed_data_found = result.success;
           if (result.success) {
-            precomp_mgr.ctx->compressed_data_found = true;
+            compressed_data_found = true;
 
             end_uncompressed_data(precomp_mgr);
 
@@ -1004,7 +914,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           }
         }
 
-        if (!precomp_mgr.ctx->compressed_data_found) {
+        if (!compressed_data_found) {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
           precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
@@ -1014,9 +924,15 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
   }
 
-    if (!precomp_mgr.ctx->compressed_data_found) {
+    if (!compressed_data_found) {
       if (precomp_mgr.ctx->uncompressed_length == -1) {
-        start_uncompressed_data(*precomp_mgr.ctx);
+          precomp_mgr.ctx->uncompressed_length = 0;
+          precomp_mgr.ctx->uncompressed_pos = precomp_mgr.ctx->input_file_pos;
+
+          // uncompressed data
+          precomp_mgr.ctx->fout->put(0);
+
+          precomp_mgr.ctx->uncompressed_data_in_work = true;
       }
       precomp_mgr.ctx->uncompressed_length++;
       precomp_mgr.ctx->uncompressed_bytes_total++;
@@ -1204,34 +1120,6 @@ int convert_file(Precomp& precomp_mgr)
   return wrap_with_exception_catch([&]() { return convert_file_impl(precomp_mgr); });
 }
 
-void write_header(Precomp& precomp_mgr) {
-  // write the PCF file header, beware that this needs to be done before wrapping the output file with a CompressedOStreamBuffer
-  char* input_file_name_without_path = new char[precomp_mgr.input_file_name.length() + 1];
-
-  ostream_printf(*precomp_mgr.ctx->fout, "PCF");
-
-  // version number
-  precomp_mgr.ctx->fout->put(V_MAJOR);
-  precomp_mgr.ctx->fout->put(V_MINOR);
-  precomp_mgr.ctx->fout->put(V_MINOR2);
-
-  // compression-on-the-fly method used
-  precomp_mgr.ctx->fout->put(precomp_mgr.ctx->compression_otf_method);
-
-  // write input file name without path
-  const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
-  if (last_backslash != NULL) {
-    strcpy(input_file_name_without_path, last_backslash + 1);
-  } else {
-    strcpy(input_file_name_without_path, precomp_mgr.input_file_name.c_str());
-  }
-
-  ostream_printf(*precomp_mgr.ctx->fout, input_file_name_without_path);
-  precomp_mgr.ctx->fout->put(0);
-
-  delete[] input_file_name_without_path;
-}
-
 void read_header(Precomp& precomp_mgr) {
   if (precomp_mgr.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
@@ -1412,24 +1300,6 @@ void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 
-}
-
-std::fstream& tryOpen(const char* filename, std::ios_base::openmode mode) {
-  std::fstream fptr;
-  fptr.open(filename,mode);
-
-  if (fptr.is_open()) return fptr;
-
-  long long timeoutstart = get_time_ms();
-  while ((!fptr.is_open()) && ((get_time_ms() - timeoutstart) <= 15000)) {
-    fptr.open(filename,mode);
-  }
-  if (!fptr.is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Access denied for %s\n", filename));
-  }
-  print_to_log(PRECOMP_DEBUG_LOG, "Access problem for %s\n", filename);
-  print_to_log(PRECOMP_DEBUG_LOG, "Time for getting access: %li ms\n", (long)(get_time_ms() - timeoutstart));
-  return fptr;
 }
 
 uintmax_t fileSize64(const char* filename, int* error_code) {
@@ -1616,13 +1486,6 @@ void fout_fput32_little_endian(OStreamLike& output, int v) {
   output.put((v >> 24) % 256);
 }
 
-void fout_fput32(OStreamLike& output, int v) {
-  output.put((v >> 24) % 256);
-  output.put((v >> 16) % 256);
-  output.put((v >> 8) % 256);
-  output.put(v % 256);
-}
-
 void fout_fput32(OStreamLike& output, unsigned int v) {
   output.put((v >> 24) % 256);
   output.put((v >> 16) % 256);
@@ -1640,51 +1503,6 @@ void fout_fput_vlint(OStreamLike& output, unsigned long long v) {
 char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
   return 1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2);
 }
-void fout_fput_deflate_hdr(OStreamLike& output, const unsigned char type, const unsigned char flags,
-                           const recompress_deflate_result& rdres,
-                           const unsigned char* hdr, const unsigned hdr_length,
-                           const bool inc_last_hdr_byte) {
-  output.put(make_deflate_pcf_hdr_flags(rdres) + flags);
-  output.put(type); // PDF/PNG/...
-  if (rdres.zlib_perfect) {
-    output.put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
-  }
-  fout_fput_vlint(output, hdr_length);
-  if (!inc_last_hdr_byte) {
-    output.write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length);
-  } else {
-    output.write(reinterpret_cast<char*>(const_cast<unsigned char*>(hdr)), hdr_length - 1);
-    output.put(hdr[hdr_length - 1] + 1);
-  }
-}
-void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const unsigned char flags,
-                          unsigned char* hdr_data, unsigned& hdr_length, 
-                          const bool inc_last_hdr_byte) {
-  rdres.zlib_perfect = (flags & 2) == 0;
-  if (rdres.zlib_perfect) {
-    unsigned char zlib_params = input.get();
-    rdres.zlib_comp_level  = (flags & 0x3c) >> 2;
-    rdres.zlib_mem_level   = zlib_params & 0x0f;
-    rdres.zlib_window_bits = ((zlib_params >> 4) & 0x7) + 8;
-  }
-  hdr_length = fin_fget_vlint(input);
-  if (!inc_last_hdr_byte) {
-    input.read(reinterpret_cast<char*>(hdr_data), hdr_length);
-  } else {
-    input.read(reinterpret_cast<char*>(hdr_data), hdr_length - 1);
-    hdr_data[hdr_length - 1] = input.get() - 1;
-  }
-  output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
-}
-void fout_fput_recon_data(OStreamLike& output, const recompress_deflate_result& rdres) {
-  if (!rdres.zlib_perfect) {
-    fout_fput_vlint(output, rdres.recon_data.size());
-    output.write(reinterpret_cast<char*>(const_cast<unsigned char*>(rdres.recon_data.data())), rdres.recon_data.size());
-  }
-
-  fout_fput_vlint(output, rdres.compressed_stream_size);
-  fout_fput_vlint(output, rdres.uncompressed_stream_size);
-}
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {
     size_t sz = fin_fget_vlint(input);
@@ -1695,36 +1513,7 @@ void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
   rdres.compressed_stream_size = fin_fget_vlint(input);
   rdres.uncompressed_stream_size = fin_fget_vlint(input);
 }
-void fout_fput_uncompressed(Precomp& precomp_mgr, const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile) {
-    write_decompressed_data_io_buf(precomp_mgr, rdres.uncompressed_stream_size, rdres.uncompressed_in_memory, tmpfile.file_path.c_str());
-}
-void fin_fget_uncompressed(const recompress_deflate_result&) {
-}
-void fout_fput_deflate_rec(Precomp& precomp_mgr, const unsigned char type,
-                           const recompress_deflate_result& rdres,
-                           const unsigned char* hdr, const unsigned hdr_length, const bool inc_last,
-                           const recursion_result& recres, PrecompTmpFile& tmpfile) {
-  fout_fput_deflate_hdr(*precomp_mgr.ctx->fout, type, recres.success ? 128 : 0, rdres, hdr, hdr_length, inc_last);
-  fout_fput_recon_data(*precomp_mgr.ctx->fout, rdres);
-  
-  // write decompressed data
-  if (recres.success) {
-    fout_fput_vlint(*precomp_mgr.ctx->fout, recres.file_length);
-    write_decompressed_data(precomp_mgr, *precomp_mgr.ctx->fout, recres.file_length, recres.file_name.c_str());
-    remove(recres.file_name.c_str());
-  } else {
-    fout_fput_uncompressed(precomp_mgr, rdres, tmpfile);
-  }
-}
 
-int32_t fin_fget32_little_endian(std::istream& input) {
-  int32_t result = 0;
-  result += ((long)input.get() << 0);
-  result += ((long)input.get() << 8);
-  result += ((long)input.get() << 16);
-  result += ((long)input.get() << 24);
-  return result;
-}
 int32_t fin_fget32(IStreamLike& input) {
   int32_t result = 0;
   result += ((long)input.get() << 24);
@@ -1742,4 +1531,48 @@ long long fin_fget_vlint(IStreamLike& input) {
     o = (o + 1) << 7;
   }
   return v + o + (((long long)c) << s);
+}
+
+// C API STUFF
+CSwitches* CreateCSwitches() {
+  // We create our C++ class but return a pointer to the inherited C struct, that way C users can interact with the data but we still are able
+  // to use our C++ amenities like default values via constructor and member functions
+  return new Switches();
+}
+
+CPrecomp* PrecompCreate() { return new Precomp(); }
+void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
+  reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
+}
+CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
+CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
+CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
+lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }
+
+int PrecompPrecompress(CPrecomp* precomp_mgr) {
+  precomp_mgr->start_time = get_time_ms();
+  return compress_file(*reinterpret_cast<Precomp*>(precomp_mgr), 0, 100);
+}
+
+int PrecompRecompress(CPrecomp* precomp_mgr) {
+  precomp_mgr->start_time = get_time_ms();
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
+  return decompress_file(*internal_precomp_ptr);
+}
+
+int PrecompConvert(CPrecomp* precomp_mgr) {
+  precomp_mgr->start_time = get_time_ms();
+  return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
+}
+
+const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  if (seek_to_beg) internal_precomp_ptr->ctx->fin->seekg(0, std::ios_base::beg);
+  read_header(*internal_precomp_ptr);
+  return internal_precomp_ptr->output_file_name.c_str();
+}
+
+void PrecompConvertHeader(CPrecomp* precomp_mgr) {
+  convert_header(*reinterpret_cast<Precomp*>(precomp_mgr));
 }

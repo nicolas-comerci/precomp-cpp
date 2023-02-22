@@ -71,7 +71,7 @@ deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->input_file_pos += header_length; // skip GZip header
 
-  result = try_decompression_deflate_type_internal(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
+  result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
     D_GZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 2, header_length - 2, false,
     "in GZIP", temp_files_tag() + "_precomp_gzip");
 

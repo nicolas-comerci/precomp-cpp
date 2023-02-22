@@ -171,7 +171,40 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
   return std::move(result);
 }
 
-deflate_precompression_result try_decompression_deflate_type_internal(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
+void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type) {
+    if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
+    std::stringstream ss;
+    ss << "Possible zLib-Stream " << type << " found at position " << context.saved_input_file_pos << std::endl;
+    ss << "Compressed size: " << rdres.compressed_stream_size << std::endl;
+    ss << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
+
+    if (rdres.accepted) {
+        if (rdres.zlib_perfect) {
+            ss << "Detect ZLIB parameters: comp level " << rdres.zlib_comp_level << ", mem level " << rdres.zlib_mem_level << ", " << rdres.zlib_window_bits << "window bits" << std::endl;
+        } else {
+            ss << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << std::endl;
+        }
+    }
+
+    print_to_log(PRECOMP_DEBUG_LOG, ss.str());
+}
+
+static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
+void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
+    if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
+    sum_compressed += rdres.compressed_stream_size;
+    sum_uncompressed += rdres.uncompressed_stream_size;
+    sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
+    sum_recon += rdres.recon_data.size();
+    print_to_log(PRECOMP_DEBUG_LOG, "deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
+                 sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
+}
+
+void debug_pos(Precomp& precomp_mgr) {
+    print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
+}
+
+deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
   const unsigned char* hdr, const int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::unique_ptr<PrecompTmpFile>(new PrecompTmpFile());
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
@@ -249,25 +282,6 @@ deflate_precompression_result try_decompression_deflate_type_internal(Precomp& p
       if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets->insert(precomp_mgr.ctx->input_file_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
-  }
-  return result;
-}
-
-deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
-  const unsigned char* hdr, const int hdr_length, const bool inc_last, const char* debugname, PrecompTmpFile& tmpfile) {
-  tmpfile.close();
-
-  auto result = try_decompression_deflate_type_internal(precomp_mgr, dcounter, rcounter, type, hdr, hdr_length, inc_last, debugname, tmpfile.file_path);
-  if (result.success) {
-    precomp_mgr.ctx->compressed_data_found = true;
-
-    end_uncompressed_data(precomp_mgr);
-
-    result.dump_to_outfile(precomp_mgr);
-
-    // set input file pointer after recompressed data
-    precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-    precomp_mgr.ctx->cb += result.input_pos_add_offset();
   }
   return result;
 }
@@ -357,7 +371,7 @@ bool check_raw_deflate_stream_start(Precomp& precomp_mgr) {
 }
 
 deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr) {
-  return try_decompression_deflate_type_internal(precomp_mgr,
+  return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
     D_BRUTE, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 0, false,
     "(brute mode)", temp_files_tag() + "_decomp_brute");
@@ -368,6 +382,26 @@ bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamL
   OwnIStream is(&fin);
   bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
   return result;
+}
+
+void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const unsigned char flags,
+                          unsigned char* hdr_data, unsigned& hdr_length,
+                          const bool inc_last_hdr_byte) {
+    rdres.zlib_perfect = (flags & 2) == 0;
+    if (rdres.zlib_perfect) {
+        unsigned char zlib_params = input.get();
+        rdres.zlib_comp_level  = (flags & 0x3c) >> 2;
+        rdres.zlib_mem_level   = zlib_params & 0x0f;
+        rdres.zlib_window_bits = ((zlib_params >> 4) & 0x7) + 8;
+    }
+    hdr_length = fin_fget_vlint(input);
+    if (!inc_last_hdr_byte) {
+        input.read(reinterpret_cast<char*>(hdr_data), hdr_length);
+    } else {
+        input.read(reinterpret_cast<char*>(hdr_data), hdr_length - 1);
+        hdr_data[hdr_length - 1] = input.get() - 1;
+    }
+    output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
 
 void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {

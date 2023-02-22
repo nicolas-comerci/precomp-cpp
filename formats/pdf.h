@@ -145,7 +145,6 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, int pdf_he
 
     if (rdres.accepted) {
       result.success = true;
-      precomp_mgr.ctx->compressed_data_found = true;
 
       result.original_size = rdres.compressed_stream_size;
       result.precompressed_size = rdres.uncompressed_stream_size;
