@@ -2,12 +2,11 @@
 #define PRECOMP_ZLIB_HANDLER_H
 #include "precomp_dll.h"
 
-bool zlib_header_check(Precomp& precomp_mgr)
+bool zlib_header_check(unsigned char* checkbuf)
 {
-  unsigned char* checkbuf = &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb];
   bool looks_like_zlib_header = ((((*checkbuf << 8) + *(checkbuf+1)) % 31) == 0) && ((*(checkbuf + 1) & 32) == 0);  // FDICT must not be set
   if (!looks_like_zlib_header) return false;
-  int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] & 15);
+  int compression_method = (*checkbuf & 15);
   return compression_method == 8;
 }
 

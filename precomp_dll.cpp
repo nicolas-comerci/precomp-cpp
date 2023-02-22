@@ -74,6 +74,7 @@
 #include "formats/jpeg.h"
 #include "formats/gif.h"
 #include "formats/png.h"
+#include "formats/swf.h"
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -1561,31 +1562,24 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
     if ((!precomp_mgr.ctx->compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
       // CWS = Compressed SWF file
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] == 'C') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 1] == 'W') && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] == 'S')) {
-        // check zLib header
-        if (((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 9]) % 31) == 0) &&
-           ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 9] & 32) == 0)) { // FDICT must not be set
-          int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] & 15);
-          if (compression_method == 8) {
-            int windowbits = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 8] >> 4) + 8;
+      if (swf_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-            precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-            precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
+        auto result = try_decompression_swf(precomp_mgr);
+        precomp_mgr.ctx->compressed_data_found = result.success;
+        if (result.success) {
+          end_uncompressed_data(precomp_mgr);
 
-            precomp_mgr.ctx->input_file_pos += 10; // skip CWS and zLib header
+          result.dump_to_outfile(precomp_mgr);
 
-            tempfile += "swf";
-            PrecompTmpFile tmp_swf;
-            tmp_swf.open(tempfile, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-            try_decompression_swf(precomp_mgr, -windowbits, tmp_swf);
-
-            precomp_mgr.ctx->cb += 10;
-
-            if (!precomp_mgr.ctx->compressed_data_found) {
-              precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-              precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
-            }
-          }
+          // set input file pointer after recompressed data
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
+          precomp_mgr.ctx->cb += result.input_pos_add_offset();
+        }
+        else {
+          precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
+          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
@@ -1681,7 +1675,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
 
       if (!ignore_this_position) {
-        if (zlib_header_check(precomp_mgr)) {
+        if (zlib_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
           precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
           precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
@@ -1925,20 +1919,7 @@ while (precomp_mgr.ctx->fin->good()) {
       break;
     }
     case D_SWF: { // SWF recompression
-      recompress_deflate_result rdres;
-      unsigned hdr_length;
-      int64_t recursion_data_length;
-      precomp_mgr.ctx->fout->put('C');
-      precomp_mgr.ctx->fout->put('W');
-      precomp_mgr.ctx->fout->put('S');
-      tempfile += "swf";
-      bool ok = fin_fget_deflate_rec(precomp_mgr, rdres, header1, precomp_mgr.in, hdr_length, true, recursion_data_length, tempfile);
-
-      debug_deflate_reconstruct(rdres, "SWF", hdr_length, recursion_data_length);
-
-      if (!ok) {
-        throw PrecompError(ERR_DURING_RECOMPRESSION);
-      }
+      recompress_swf(precomp_mgr, header1);
       break;
     }
     case D_BASE64: { // Base64 recompression
@@ -2423,12 +2404,6 @@ void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 
-}
-
-void try_decompression_swf(Precomp& precomp_mgr, int windowbits, PrecompTmpFile& tmpfile) {
-  try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count,
-                                 D_SWF, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 3, 7, true,
-                                 "in SWF", tmpfile);
 }
 
 void try_decompression_bzip2(Precomp& precomp_mgr, int compression_level, PrecompTmpFile& tmpfile) {
