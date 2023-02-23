@@ -28,7 +28,7 @@ void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres);
 void debug_pos(Precomp& precomp_mgr);
 
 deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
-  const unsigned char* hdr, const int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename);
+  const unsigned char* hdr, const unsigned int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename);
 
 bool check_inflate_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned char* out_buf, int cb_pos, int windowbits, bool use_brute_parameters = false);
 

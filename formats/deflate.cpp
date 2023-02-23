@@ -196,7 +196,7 @@ void debug_pos(Precomp& precomp_mgr) {
 }
 
 deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
-  const unsigned char* hdr, const int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename) {
+  const unsigned char* hdr, const unsigned int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
   deflate_precompression_result result = deflate_precompression_result(type);
