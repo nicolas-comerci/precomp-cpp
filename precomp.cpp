@@ -32,31 +32,16 @@
   #define V_BIT "32-bit"
 #endif
 
-#include <stdio.h>
 #include <iostream>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
-#include <fstream>
-#include <sstream>
+#include <cstring>
+#include <cstdlib>
 #include <string>
 #include <array>
-#include <signal.h>
+#include <csignal>
 #include <random>
-#include <fcntl.h>
 #include <filesystem>
-#include <set>
 
-#ifdef _MSC_VER
-#include <io.h>
-#define ftruncate _chsize_s
-#endif
-
-#ifndef __unix
-#include <conio.h>
-#include <windows.h>
-#include <io.h>
-#else
+#ifdef __unix
 #include <time.h>
 #include <sys/time.h>
 #include <errno.h>
@@ -88,7 +73,7 @@ bool parseSwitch(bool& val, const char* c, const char* ref) {
   if (!parsePrefixText(c, ref)) {
     return false;
   }
-  int l = strlen(ref);
+  auto l = strlen(ref);
   if (c[l] == '+' && !c[l + 1]) {
     val = true;
     return true;
@@ -152,16 +137,15 @@ int64_t parseInt64UntilEnd(const char* c, const char* context, int too_big_error
 
 bool file_exists(const char* filename) {
   std::fstream fin;
-  bool retval = false;
 
   fin.open(filename, std::ios::in);
-  retval = fin.is_open();
+  bool retval = fin.is_open();
   fin.close();
 
   return retval;
 }
 
-void ctrl_c_handler(int sig) {
+[[noreturn]] void ctrl_c_handler(int sig) {
   print_to_console("\n\nCTRL-C detected\n");
   (void) signal(SIGINT, SIG_DFL);
 
@@ -189,16 +173,13 @@ void printf_time(long long t) {
   }
 }
 
-long long work_sign_start_time = get_time_ms();
 int work_sign_var = 0;
 static char work_signs[5] = "|/-\\";
 std::string next_work_sign() {
   work_sign_var = (work_sign_var + 1) % 4;
-  work_sign_start_time = get_time_ms();
   return make_cstyle_format_string("%c     ", work_signs[work_sign_var]);
 }
 
-float current_progress_percent = 0;
 std::string current_progress_txt;
 void delete_current_progress_text() {
   print_to_console(std::string(current_progress_txt.length(), '\b'));
@@ -208,7 +189,6 @@ long long sec_time;
 bool get_progress_txt(float percent) {
   if ((get_time_ms() - sec_time) < 250) return false;  // not enough time passed since last progress update, quit to not spam
 
-  current_progress_percent = percent;
   std::string new_percent_progress_txt = make_cstyle_format_string("%6.2f%% ", percent);
   std::string new_work_sign = next_work_sign();
 
@@ -221,7 +201,7 @@ bool get_progress_txt(float percent) {
 void print_results(CPrecomp& precomp_mgr, bool print_new_size) {
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
-    long long fout_length = std::filesystem::file_size(output_file_name.c_str());
+    auto fout_length = std::filesystem::file_size(output_file_name.c_str());
     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "     \n";
     print_to_console("100.00% - " + result_print);
   }
@@ -254,18 +234,12 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
         }
         return;
     }
-
-    int i, i_sort;
+    
     int level_count = 0;
     print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
     print_to_console("-zl");
 
-    bool first_one = true;
-    for (i = 0; i < 81; i++) {
-        i_sort = (i % 9) * 9 + (i / 9); // to get the displayed levels sorted
-    }
-
-    std::string disable_methods("");
+    std::string disable_methods;
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
       {precomp_switches.use_pdf, precomp_statistics->recompressed_pdf_count, precomp_statistics->decompressed_pdf_count, "p"},
       {precomp_switches.use_zip, precomp_statistics->recompressed_zip_count, precomp_statistics->decompressed_zip_count, "z"},
@@ -333,11 +307,6 @@ void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
   }
 
   if (!precomp_switches.level_switch_used) show_used_levels(precomp_mgr, precomp_switches);
-}
-
-void wait_for_key() {
-    print_to_console("\nPress any key to continue\n");
-    get_char_with_echo();
 }
 
 void log_handler(PrecompLoggingLevels level, char* msg) {
@@ -597,7 +566,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
           && !parseSwitch(precomp_switches.preflate_verify, argv[i] + 1, "pfverify")
           && !parseSwitch(precomp_switches.use_packjpg_fallback, argv[i] + 1, "packjpg")) {
           if (parsePrefixText(argv[i] + 1, "pfmeta")) {
-            int mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
+            size_t mbsize = parseIntUntilEnd(argv[i] + 7, "preflate meta block size");
             if (mbsize >= INT_MAX / 1024) {
               throw std::runtime_error(make_cstyle_format_string("preflate meta block size set too big\n"));
             }
@@ -796,7 +765,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
 
         // dot in output file name? If not, use .pcf extension
         const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
-        if (output_file_name.compare("stdout") != 0 && (dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (backslash_at_pos > dot_at_pos))) {
+        if (output_file_name != "stdout" && (dot_at_pos == nullptr) || ((backslash_at_pos != nullptr) && (backslash_at_pos > dot_at_pos))) {
           output_file_name += ".pcf";
           appended_pcf = true;
         }
@@ -843,7 +812,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       input_file_name = argv[i];
       std::istream* input_stream = nullptr;
 
-      if (input_file_name.compare("stdin") == 0) {
+      if (input_file_name == "stdin") {
         if (operation != P_RECOMPRESS) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
@@ -896,7 +865,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
           output_file_name = input_file_name;
           const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
           const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
-          if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
+          if ((dot_at_pos == nullptr) || ((backslash_at_pos != nullptr) && (dot_at_pos < backslash_at_pos))) {
             output_file_name += ".pcf";
           }
           else {
@@ -905,7 +874,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
               dot_at_pos - output_file_name.c_str()
             );
             // same as output file because input file had .pcf extension?
-            if (input_file_name.compare(output_file_name + ".pcf") == 0) {
+            if (input_file_name == output_file_name + ".pcf") {
               output_file_name += "_pcf.pcf";
             }
             else {

@@ -31,29 +31,18 @@
   #define V_BIT "32-bit"
 #endif
 
-#define NOMINMAX
+#define NOMINMAX  // This is to prevent min/max implementations from windows.h, so we can use std::min and std::max and so on, without problems
 
-#include <stdio.h>
+#include <cstdio>
 #include <iostream>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <array>
-#include <signal.h>
 #include <random>
 #include <fcntl.h>
 #include <filesystem>
 #include <set>
-#ifdef _MSC_VER
-#include <io.h>
-#define ftruncate _chsize_s
-#endif
 
 #ifndef __unix
-#include <conio.h>
 #include <windows.h>
 #include <io.h>
 #else
@@ -119,7 +108,7 @@ void precompression_result::dump_penaltybytes_to_outfile(Precomp& precomp_mgr) c
   }
 }
 
-void precompression_result::dump_stream_sizes_to_outfile(Precomp& precomp_mgr) {
+void precompression_result::dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const {
   fout_fput_vlint(*precomp_mgr.ctx->fout, original_size);
   fout_fput_vlint(*precomp_mgr.ctx->fout, precompressed_size);
 }
@@ -201,7 +190,7 @@ const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
 }
 
 //Switches constructor
-Switches::Switches() {
+Switches::Switches(): CSwitches() {
   compression_method = OTF_XZ_MT;
   compression_otf_max_memory = 2048;
   compression_otf_thread_count = std::thread::hardware_concurrency();
@@ -239,17 +228,17 @@ Switches::Switches() {
   preflate_verify = false;
 }
 
-RecursionContext::RecursionContext(Precomp& instance): precomp_owner(instance) {
+RecursionContext::RecursionContext(Precomp& instance): CRecursionContext(), precomp_owner(instance) {
   compression_otf_method = OTF_XZ_MT;
 }
 
 
 void RecursionContext::set_input_stream(std::istream* istream, bool take_ownership) {
-  this->fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(istream, take_ownership));
+  this->fin = std::make_unique<WrappedIStream>(istream, take_ownership);
 }
 
 void RecursionContext::set_input_stream(FILE* fhandle, bool take_ownership) {
-  this->fin = std::unique_ptr<FILEIStream>(new FILEIStream(fhandle, take_ownership));
+  this->fin = std::make_unique<FILEIStream>(fhandle, take_ownership);
 }
 
 void RecursionContext::set_output_stream(std::ostream* ostream, bool take_ownership) {
@@ -276,7 +265,7 @@ Precomp::Precomp(): CPrecomp() {
 void Precomp::set_input_stdin() {
   // Read binary to stdin
   SET_BINARY_MODE(STDIN);
-  auto new_fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
+  auto new_fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   new_fin->rdbuf(std::cin.rdbuf());
   this->get_original_context()->fin = std::move(new_fin);
 }
@@ -298,7 +287,7 @@ void Precomp::set_output_stdout() {
   // Read binary to stdin
   // Write binary to stdout
   SET_BINARY_MODE(STDOUT);
-  auto new_fout = std::unique_ptr<ObservableWrappedOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
+  auto new_fout = std::make_unique<ObservableWrappedOStream>(new std::ofstream(), true);
   new_fout->rdbuf(std::cout.rdbuf());
   this->get_original_context()->fout = std::move(new_fout);
 }
@@ -403,7 +392,7 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   long long same_byte_count = 0;
-  int size1, size2, minsize;
+  long long size1, size2, minsize;
   int i;
   bool endNow = false;
 
@@ -470,7 +459,7 @@ void write_header(Precomp& precomp_mgr) {
 
   // write input file name without path
   const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
-  if (last_backslash != NULL) {
+  if (last_backslash != nullptr) {
     strcpy(input_file_name_without_path, last_backslash + 1);
   }
   else {
@@ -774,15 +763,15 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
    if (intense_mode_is_active(precomp_mgr)) {
     if (!compressed_data_found) {
       bool ignore_this_position = false;
-      if (precomp_mgr.ctx->intense_ignore_offsets.size() > 0) {
+      if (!precomp_mgr.ctx->intense_ignore_offsets.empty()) {
         auto first = precomp_mgr.ctx->intense_ignore_offsets.begin();
         while (*first < precomp_mgr.ctx->input_file_pos) {
           precomp_mgr.ctx->intense_ignore_offsets.erase(first);
-          if (precomp_mgr.ctx->intense_ignore_offsets.size() == 0) break;
+          if (precomp_mgr.ctx->intense_ignore_offsets.empty()) break;
           first = precomp_mgr.ctx->intense_ignore_offsets.begin();
         }
 
-        if (precomp_mgr.ctx->intense_ignore_offsets.size() > 0) {
+        if (!precomp_mgr.ctx->intense_ignore_offsets.empty()) {
           if (*first == precomp_mgr.ctx->input_file_pos) {
             ignore_this_position = true;
             precomp_mgr.ctx->intense_ignore_offsets.erase(first);
@@ -821,15 +810,15 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     if (brute_mode_is_active(precomp_mgr)) {
     if (!compressed_data_found) {
       bool ignore_this_position = false;
-      if (precomp_mgr.ctx->brute_ignore_offsets.size() > 0) {
+      if (!precomp_mgr.ctx->brute_ignore_offsets.empty()) {
         auto first = precomp_mgr.ctx->brute_ignore_offsets.begin();
         while (*first < precomp_mgr.ctx->input_file_pos) {
           precomp_mgr.ctx->brute_ignore_offsets.erase(first);
-          if (precomp_mgr.ctx->brute_ignore_offsets.size() == 0) break;
+          if (precomp_mgr.ctx->brute_ignore_offsets.empty()) break;
           first = precomp_mgr.ctx->brute_ignore_offsets.begin();
         }
 
-        if (precomp_mgr.ctx->brute_ignore_offsets.size() > 0) {
+        if (!precomp_mgr.ctx->brute_ignore_offsets.empty()) {
           if (*first == precomp_mgr.ctx->input_file_pos) {
             ignore_this_position = true;
             precomp_mgr.ctx->brute_ignore_offsets.erase(first);
@@ -1019,9 +1008,9 @@ int decompress_file(Precomp& precomp_mgr)
 }
 
 int convert_file_impl(Precomp& precomp_mgr) {
-  int bytes_read;
+  long long bytes_read;
   unsigned char convbuf[COPY_BUF_SIZE];
-  int conv_bytes = -1;
+  long long int conv_bytes = -1;
 
   precomp_mgr.ctx->comp_decomp_state = P_CONVERT;
   precomp_mgr.enable_input_stream_otf_decompression();
@@ -1122,7 +1111,7 @@ void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.in[0] = precomp_mgr.conversion_to_method;
   precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 1);
 
-  std::string header_filename = "";
+  std::string header_filename;
   char c;
   do {
     c = precomp_mgr.ctx->fin->get();
@@ -1136,7 +1125,7 @@ void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, lon
   if (bytecount == 0) return;
 
   long long i;
-  int remaining_bytes = (bytecount % COPY_BUF_SIZE);
+  auto remaining_bytes = (bytecount % COPY_BUF_SIZE);
   long long maxi = (bytecount / COPY_BUF_SIZE);
 
   for (i = 1; i <= maxi; i++) {
@@ -1267,7 +1256,7 @@ void print_to_terminal(const char* fmt, ...) {
 
 void recursion_push(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
-  precomp_mgr.ctx = std::unique_ptr<RecursionContext>(new RecursionContext(precomp_mgr));
+  precomp_mgr.ctx = std::make_unique<RecursionContext>(precomp_mgr);
 }
 
 void recursion_pop(Precomp& precomp_mgr) {
@@ -1468,12 +1457,6 @@ long long fin_fget_vlint(IStreamLike& input) {
 }
 
 // C API STUFF
-CSwitches* CreateCSwitches() {
-  // We create our C++ class but return a pointer to the inherited C struct, that way C users can interact with the data but we still are able
-  // to use our C++ amenities like default values via constructor and member functions
-  return new Switches();
-}
-
 CPrecomp* PrecompCreate() { return new Precomp(); }
 void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
   reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);

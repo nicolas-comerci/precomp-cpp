@@ -3,6 +3,7 @@
 
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
+#include <memory>
 #include <thread>
 #endif
 
@@ -66,7 +67,7 @@ constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 class Precomp;
 class RecursionContext: public CRecursionContext {
 public:
-  RecursionContext(Precomp& instance);
+  explicit RecursionContext(Precomp& instance);
 
   Precomp& precomp_owner; // The precomp instance that owns this context
 
@@ -75,7 +76,7 @@ public:
 
   std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
 
-  std::unique_ptr<IStreamLike> fin = std::unique_ptr<WrappedIStream>(new WrappedIStream(new std::ifstream(), true));
+  std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   void set_input_stream(std::istream* istream, bool take_ownership = true);
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
   std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
@@ -126,8 +127,8 @@ public:
 
   Switches switches;
   ResultStatistics statistics;
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::unique_ptr<lzma_init_mt_extra_parameters>(new lzma_init_mt_extra_parameters());
-  std::unique_ptr<RecursionContext> ctx = std::unique_ptr<RecursionContext>(new RecursionContext(*this));
+  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::make_unique<lzma_init_mt_extra_parameters>();
+  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(*this);
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
   std::string input_file_name;
@@ -158,10 +159,10 @@ class precompression_result
 protected:
   virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
   void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
-  void dump_stream_sizes_to_outfile(Precomp& precomp_mgr);
+  void dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const;
   virtual void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
 public:
-  precompression_result(SupportedFormats format) : success(false), format(format) {}
+  explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
 
   bool success;
   char format;
@@ -212,7 +213,7 @@ struct recursion_result {
   bool success;
   std::string file_name;
   long long file_length;
-  std::shared_ptr<std::ifstream> frecurse = std::shared_ptr<std::ifstream>(new std::ifstream());
+  std::shared_ptr<std::ifstream> frecurse = std::make_shared<std::ifstream>();
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
 recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, PrecompTmpFile& tmpfile);
