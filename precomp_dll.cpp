@@ -198,6 +198,11 @@ void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* outp
   internal_precomp_ptr->set_output_stream(fhandle);
 }
 
+const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  return internal_precomp_ptr->output_file_name.c_str();
+}
+
 //Switches constructor
 Switches::Switches() {
   compression_method = OTF_XZ_MT;
@@ -1551,11 +1556,16 @@ int PrecompConvert(CPrecomp* precomp_mgr) {
   return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
 }
 
-const char* PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
+int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   if (seek_to_beg) internal_precomp_ptr->ctx->fin->seekg(0, std::ios_base::beg);
-  read_header(*internal_precomp_ptr);
-  return internal_precomp_ptr->output_file_name.c_str();
+  try {
+    read_header(*internal_precomp_ptr);
+  }
+  catch (const PrecompError& err) {
+    return err.error_code;
+  }
+  return 0;
 }
 
 void PrecompConvertHeader(CPrecomp* precomp_mgr) {

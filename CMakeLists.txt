@@ -180,10 +180,6 @@ target_link_libraries(dlltest PRIVATE precomp_dll_shared)
 add_executable(precomp ${LIBPRECOMP_HDR} ${PRECOMP_SRC} ${LZMA_SRC} )
 target_link_libraries(precomp PRIVATE precomp_dll_static)
 
-add_executable(precompf ${LIBPRECOMP_HDR} ${PRECOMP_SRC} ${LZMA_SRC} )
-target_compile_definitions(precompf PRIVATE -DCOMFORT)
-target_link_libraries(precompf PRIVATE precomp_dll_static)
-
 if (UNIX)
   target_link_libraries(precomp Threads::Threads)
 endif()

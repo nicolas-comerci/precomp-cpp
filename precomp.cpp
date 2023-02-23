@@ -242,13 +242,8 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
             }
         } else {
             if ((!precomp_mgr.max_recursion_depth_reached) && (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth)) {
-#ifdef COMFORT
-                print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
-          print_to_console("Maximal_Recursion_Depth=");
-#else
                 print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
                 print_to_console("-d");
-#endif
                 print_to_console("%i\n", precomp_mgr.max_recursion_depth_used);
             }
         }
@@ -260,13 +255,8 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
 
     int i, i_sort;
     int level_count = 0;
-#ifdef COMFORT
-    print_to_console("\nYou can speed up Precomp for THIS FILE with these INI parameters:\n");
-    print_to_console("zLib_Levels=");
-#else
     print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
     print_to_console("-zl");
-#endif
 
     bool first_one = true;
     for (i = 0; i < 81; i++) {
@@ -290,21 +280,13 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
         if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
     }
     if ( disable_methods.length() > 0 ) {
-#ifdef COMFORT
-        print_to_console("\nCompression_Types_Disable=%s",disable_methods.c_str());
-#else
         print_to_console(" -t-%s",disable_methods.c_str());
-#endif
     }
 
     if (precomp_mgr.max_recursion_depth_reached) {
         print_to_console("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth);
     } else if (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth) {
-#ifdef COMFORT
-        print_to_console("\nMaximal_Recursion_Depth=");
-#else
         print_to_console(" -d");
-#endif
         print_to_console("%i", precomp_mgr.max_recursion_depth_used);
     }
 
@@ -369,7 +351,6 @@ void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long l
   PrecompSwitchesSetIgnoreList(&precomp_switches, ignore_list.data(), ignore_list.size());
 }
 
-#ifndef COMFORT
 int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
   auto precomp_otf_xz_extra_params = PrecompGetXzParameters(&precomp_mgr);
@@ -402,6 +383,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   bool lzma_filters_set = false;
   bool long_help = false;
   bool preserve_extension = false;
+  bool comfort_mode = false;
 
   std::vector<long long> ignore_list;
 
@@ -708,10 +690,22 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
         case 'L': // lzma2 multithreaded
           precomp_context->compression_otf_method = OTF_XZ_MT;
           break;
+        case 'O': // comfort mode?
+          if (
+            strlen(argv[i]) == 8 &&
+            toupper(argv[i][3]) == 'M' &&
+            toupper(argv[i][4]) == 'F' &&
+            toupper(argv[i][5]) == 'O' &&
+            toupper(argv[i][6]) == 'R' &&
+            toupper(argv[i][7]) == 'T'
+          ) {
+            comfort_mode = true;
+          }
+          break;
         default:
           throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression method %c\n", argv[i][2]));
         }
-        if (argv[i][3] != 0) { // Extra Parameters?
+        if (argv[i][3] != 0 && !comfort_mode) { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
@@ -866,6 +860,35 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       PrecompSetInputStream(&precomp_mgr, input_stream, input_file_name.c_str());
 
       // output file given? If not, use input filename with .pcf extension
+      if (operation == P_DECOMPRESS || comfort_mode) {
+        // if .pcf was appended, remove it
+        if (appended_pcf) {
+          output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
+        }
+
+        auto err_code = PrecompReadHeader(&precomp_mgr, false);
+        if (err_code == 0) {
+          // successfully read PCF header, if already recompressing doesn't matter, but if in comfort_mode we set it to perform recompression
+          operation = P_DECOMPRESS;
+
+          auto header_output_filename = PrecompGetOutputFilename(&precomp_mgr);
+          if (output_file_name.empty()) {
+            if (comfort_mode) {
+              // append output filename to the executable directory
+              std::string exec_dir = std::filesystem::current_path().string();
+              output_file_name = exec_dir;
+              output_file_name += PATH_DELIM;
+              output_file_name += header_output_filename;
+            } else {
+              output_file_name = header_output_filename;
+            }
+          }
+        }
+        else if (operation == P_DECOMPRESS) {
+          // Not in comfort mode, we needed to read the header for recompression to be possible, but that failed
+          throw std::runtime_error(libprecomp_error_msg(err_code));
+        }
+      }
       if ((!output_file_given) && (operation == P_COMPRESS)) {
         if (!preserve_extension) {
           output_file_name = input_file_name;
@@ -910,6 +933,8 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
     else {
       print_to_console("Common switches (and their <default values>):\n");
     }
+    print_to_console("  comfort      Read input stream for a PCF header and recompress original stream if found\n");
+    print_to_console("               (ignoring any compression parameters), if not precompress the stream instead\n");
     print_to_console("  r            \"Recompress\" PCF file (restore original file)\n");
     print_to_console("  o[filename]  Write output to [filename] <[input_file].pcf or file in header>\n");
     print_to_console("  e            preserve original extension of input name for output name <off>\n");
@@ -973,17 +998,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
     exit(1);
   }
 
-  if (operation == P_DECOMPRESS) {
-    // if .pcf was appended, remove it
-    if (appended_pcf) {
-      output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
-    }
-    auto header_output_filename = PrecompReadHeader(&precomp_mgr, false);
-    if (output_file_name.empty()) output_file_name = header_output_filename;
-  }
-
   std::ostream* output_stream;
-  bool take_ownership_output_stream = false;
   if (output_file_given && output_file_name == "stdout") {
     output_stream = &std::cout;
   }
@@ -1010,7 +1025,6 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
     }
     output_stream = fout;
-    take_ownership_output_stream = true;
   }
   PrecompSetOutStream(&precomp_mgr, output_stream, output_file_name.c_str());
 
@@ -1045,1012 +1059,6 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
 
   return operation;
 }
-#else
-int init_comfort(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
-  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
-  auto precomp_otf_xz_extra_params = PrecompGetXzParameters(&precomp_mgr);
-
-  int i, j;
-  int operation = P_COMPRESS;
-  bool parse_ini_file = true;
-  bool min_ident_size_set = false;
-  bool recursion_depth_set = false;
-  bool level_switch = false;
-  bool lzma_max_memory_set = false;
-  bool lzma_thread_count_set = false;
-  bool lzma_filters_set = false;
-  bool preserve_extension = false;
-
-  print_to_console("\n");
-  if (V_MINOR2 == 0) {
-    print_to_console("Precomp Comfort v%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_OS, V_BIT, V_STATE);
-  }
-  else {
-    print_to_console("Precomp Comfort v%i.%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_MINOR2, V_OS, V_BIT, V_STATE);
-  }
-  print_to_console(" - %s\n", V_MSG);
-  print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n\n");
-
-  std::vector<long long> ignore_list;
-
-  // parse parameters (should be input file only)
-  if (argc == 1) {
-    throw std::runtime_error(make_cstyle_format_string(
-      "Usage:\n"
-      "Drag and drop a file on the executable to precompress/restore it.\n"
-      "Edit INI file for parameters.\n"
-    ));
-  }
-  if (argc > 2) {
-    throw std::runtime_error(libprecomp_error_msg(ERR_MORE_THAN_ONE_INPUT_FILE));
-  }
-  else {
-    input_file_name = argv[1];
-
-    precomp_context->fin_length = std::filesystem::file_size(input_file_name.c_str());
-
-    auto fin = new std::ifstream();
-    fin->open(input_file_name.c_str(), std::ios_base::in | std::ios_base::binary);
-    if (!fin->is_open()) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: Input file \"%s\" doesn't exist\n", input_file_name.c_str()));
-    }
-    PrecompSetInputStream(&precomp_mgr, fin, input_file_name.c_str());
-
-    try {
-      auto header_output_filename = PrecompReadHeader(&precomp_mgr, true);
-      operation = P_DECOMPRESS;
-      // append output filename to the executable directory
-      std::string exec_dir = std::filesystem::current_path().string();
-      output_file_name = exec_dir;
-      output_file_name += PATH_DELIM;
-      output_file_name += header_output_filename;
-    } catch (const PrecompError& err) {
-      if (!(err.error_code == ERR_NO_PCF_HEADER || err.error_code == ERR_PCF_HEADER_INCOMPATIBLE_VERSION)) throw;
-    }
-  }
-
-  // precomf.ini in EXE directory?
-  std::string precomf_ini_path = std::filesystem::current_path().string();
-  precomf_ini_path += PATH_DELIM;
-  precomf_ini_path += "precomf.ini";
-  print_to_console("INI file: %s\n", precomf_ini_path.c_str());
-
-  if (!file_exists(precomf_ini_path.c_str())) {
-    print_to_console("INI file not found. Create it (y/n)?");
-    char ch = get_char_with_echo();
-    print_to_console("\n");
-    if ((ch != 'Y') && (ch != 'y')) {
-      wait_for_key();
-      exit(0);
-    }
-    else {
-      std::fstream fnewini;
-      fnewini.open(precomf_ini_path.c_str(), std::ios_base::out);
-      std::stringstream title;
-      title << ";; Precomp Comfort v" << V_MAJOR << "." << V_MINOR << "." << V_MINOR2 << " " << V_OS << " " << V_BIT << " - " << V_STATE << " version - INI file\n";
-      ostream_printf(fnewini, title.str());
-      ostream_printf(fnewini, ";; Use a semicolon (;) for comments\n\n");
-      ostream_printf(fnewini, ";; Compression method to use\n");
-      ostream_printf(fnewini, ";; 0 = none, 1 = bZip2, 2 = lzma2 multi-threaded\n");
-      ostream_printf(fnewini, "Compression_Method=2\n");
-      ostream_printf(fnewini, ";; Maximal memory (in MiB) for LZMA compression method\n");
-      ostream_printf(fnewini, "LZMA_Maximal_Memory=2048\n");
-      ostream_printf(fnewini, ";; Thread count for LZMA compression method\n");
-      ostream_printf(fnewini, ";; 0 = auto-detect\n");
-      ostream_printf(fnewini, "LZMA_Thread_Count=0\n");
-      ostream_printf(fnewini, ";; LZMA filters to use (up to 3 of the them can be combined)\n");
-      ostream_printf(fnewini, ";; X = x86, P = PowerPC, I = IA-64, A = ARM, T = ARM-Thumb\n");
-      ostream_printf(fnewini, ";; S = SPARC, D = delta (must be followed by distance 1..256))\n");
-      ostream_printf(fnewini, ";; The default is to disable all filters\n");
-      ostream_printf(fnewini, "; LZMA_Filters=XPIATSD2\n\n");
-      ostream_printf(fnewini, ";; Fast mode (on/off)\n");
-      ostream_printf(fnewini, "Fast_Mode=off\n\n");
-      ostream_printf(fnewini, ";; Intense mode (on/off)\n");
-      ostream_printf(fnewini, "Intense_Mode=off\n\n");
-      ostream_printf(fnewini, ";; Brute mode (on/off)\n");
-      ostream_printf(fnewini, "Brute_Mode=off\n\n");
-      ostream_printf(fnewini, ";; Preserve Input's file extension (on/off)\n");
-      ostream_printf(fnewini, "Preserve_Extension=off\n\n");
-      ostream_printf(fnewini, ";; Wrap BMP header around PDF images (on/off)\n");
-      ostream_printf(fnewini, "PDF_BMP_Mode=off\n\n");
-      ostream_printf(fnewini, ";; Recompress progressive JPGs only (on/off)\n");
-      ostream_printf(fnewini, "JPG_progressive_only=off\n\n");
-      ostream_printf(fnewini, ";; MJPEG recompression (on/off)\n");
-      ostream_printf(fnewini, "MJPEG_recompression=on\n\n");
-      ostream_printf(fnewini, ";; Minimal identical byte size\n");
-      ostream_printf(fnewini, "JPG_brunsli=on\n\n");
-      ostream_printf(fnewini, ";; Prefer brunsli to packJPG for JPG streams (on/off)");
-      ostream_printf(fnewini, "JPG_brotli=off\n\n");
-      ostream_printf(fnewini, ";; Use brotli to compress metadata in JPG streams (on/off)");
-      ostream_printf(fnewini, "JPG_packjpg=on\n\n");
-      ostream_printf(fnewini, ";; Use packJPG for JPG streams (fallback if brunsli fails) (on/off)");
-      ostream_printf(fnewini, "Minimal_Size=4\n\n");
-      ostream_printf(fnewini, ";; Verbose mode (on/off)\n");
-      ostream_printf(fnewini, "Verbose=off\n\n");
-      ostream_printf(fnewini, ";; Compression types to use\n");
-      ostream_printf(fnewini, ";; P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG, S = SWF\n");
-      ostream_printf(fnewini, ";; M = MIME Base64, B = bZip2, 3 = MP3\n");
-      ostream_printf(fnewini, "; Compression_Types_Enable=PZGNFJSMB3\n");
-      ostream_printf(fnewini, "; Compression_Types_Disable=PZGNFJSMB3\n\n");
-      ostream_printf(fnewini, ";; zLib levels to use\n");
-      ostream_printf(fnewini, "; zLib_Levels=\n");
-      ostream_printf(fnewini, ";; Maximal recursion depth to use\n");
-      ostream_printf(fnewini, "Maximal_Recursion_Depth=10\n\n");
-      ostream_printf(fnewini, ";; Use this to ignore streams at certain positions in the file\n");
-      ostream_printf(fnewini, ";; Separate positions with commas (,) or use multiple Ignore_Positions\n");
-      ostream_printf(fnewini, "; Ignore_Positions=0\n");
-      precomp_switches.min_ident_size = 4;
-      min_ident_size_set = true;
-      precomp_switches.compression_otf_max_memory = 2048;
-      lzma_max_memory_set = true;
-      lzma_thread_count_set = true;
-      parse_ini_file = false;
-    }
-  }
-
-  if (parse_ini_file) {
-    // parse INI file
-    bool print_ignore_positions_message = true;
-    bool compression_type_line_used = false;
-
-    std::ifstream ini_file(precomf_ini_path.c_str());
-    std::string line;
-    std::string parName, valuestr;
-    std::string::iterator it;
-    char param[256], value[256];
-
-    while (getline(ini_file, line)) {
-      std::string::size_type semicolon_at_pos = line.find(";", 0);
-      if (semicolon_at_pos != std::string::npos) {
-        line.erase(semicolon_at_pos, line.length() - semicolon_at_pos);
-      }
-
-      // valid line must contain an equal sign (=)
-      std::string::size_type equal_at_pos = line.find("=", 0);
-      if (line.empty()) {
-        equal_at_pos = std::string::npos;
-      }
-      if (equal_at_pos != std::string::npos) {
-
-        std::stringstream ss;
-        ss << line;
-        // get parameter name
-        getline(ss, parName, '=');
-        // remove spaces
-        for (it = parName.begin(); it != parName.end(); it++) {
-          if (*it == ' ') {
-            parName.erase(it);
-            if (parName.empty()) break;
-            it = parName.begin();
-          }
-          else {
-            *it = tolower(*it);
-          }
-        }
-        if (!parName.empty()) {
-          it = parName.begin();
-          if (*it == ' ') {
-            parName.erase(it);
-          }
-          else {
-            *it = tolower(*it);
-          }
-        }
-        memset(param, '\0', 256);
-        parName.copy(param, 256);
-
-        // get value
-        getline(ss, valuestr);
-        // remove spaces
-        for (it = valuestr.begin(); it != valuestr.end(); it++) {
-          if (*it == ' ') {
-            valuestr.erase(it);
-            if (valuestr.empty()) break;
-            it = valuestr.begin();
-          }
-          else {
-            *it = tolower(*it);
-          }
-        }
-        if (!valuestr.empty()) {
-          it = valuestr.begin();
-          if (*it == ' ') {
-            valuestr.erase(it);
-          }
-          else {
-            *it = tolower(*it);
-          }
-        }
-        memset(value, '\0', 256);
-        valuestr.copy(value, 256);
-
-        if (strcmp(param, "") != 0) {
-          bool valid_param = false;
-
-          if (strcmp(param, "minimal_size") == 0) {
-            if (min_ident_size_set) {
-              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_MIN_SIZE_ONCE));
-            }
-            unsigned int ident_size = 0;
-            unsigned int multiplicator = 1;
-            for (j = (strlen(value) - 1); j >= 0; j--) {
-              ident_size += ((unsigned int)(value[j]) - '0') * multiplicator;
-              if ((multiplicator * 10) < multiplicator) {
-                throw std::runtime_error(libprecomp_error_msg(ERR_IDENTICAL_BYTE_SIZE_TOO_BIG));
-              }
-              multiplicator *= 10;
-            }
-            precomp_switches.min_ident_size = ident_size;
-            min_ident_size_set = true;
-
-            print_to_console("INI: Set minimal identical byte size to %i\n", precomp_switches.min_ident_size);
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "verbose") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled verbose mode\n");
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled verbose mode\n");
-              PRECOMP_VERBOSITY_LEVEL = PRECOMP_DEBUG_LOG;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid verbose value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "compression_method") == 0) {
-            if (strcmp(value, "0") == 0) {
-              print_to_console("INI: Using no compression method\n");
-              precomp_context->compression_otf_method = OTF_NONE;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "1") == 0) {
-              print_to_console("INI: Using bZip2 compression method\n");
-              precomp_context->compression_otf_method = OTF_BZIP2;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "2") == 0) {
-              print_to_console("INI: Using lzma2 multithreaded compression method\n");
-              precomp_context->compression_otf_method = OTF_XZ_MT;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression method value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "lzma_maximal_memory") == 0) {
-            if (lzma_max_memory_set) {
-              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_MEMORY_ONCE));
-            }
-            unsigned int multiplicator = 1;
-            for (j = (strlen(value) - 1); j >= 0; j--) {
-              precomp_switches.compression_otf_max_memory += ((unsigned int)(value[j]) - '0') * multiplicator;
-              if ((multiplicator * 10) < multiplicator) {
-                throw std::runtime_error("Somehow the OTF max memory amount set caused an overflow during parsing");
-              }
-              multiplicator *= 10;
-            }
-            lzma_max_memory_set = true;
-
-            if (precomp_switches.compression_otf_max_memory > 0) {
-              print_to_console("INI: Set LZMA maximal memory to %i MiB\n", (int)precomp_switches.compression_otf_max_memory);
-            }
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "lzma_thread_count") == 0) {
-            if (lzma_thread_count_set) {
-              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_THREAD_ONCE));
-            }
-            unsigned int multiplicator = 1;
-            for (j = (strlen(value) - 1); j >= 0; j--) {
-              precomp_switches.compression_otf_thread_count += ((unsigned int)(value[j]) - '0') * multiplicator;
-              if ((multiplicator * 10) < multiplicator) {
-                throw std::runtime_error("Somehow the OTF thread count set caused an overflow during parsing");
-              }
-              multiplicator *= 10;
-            }
-            lzma_thread_count_set = true;
-
-            if (precomp_switches.compression_otf_thread_count > 0) {
-              print_to_console("INI: Set LZMA thread count to %i\n", precomp_switches.compression_otf_thread_count);
-            }
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "lzma_filters") == 0) {
-            if (lzma_filters_set) {
-              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_LZMA_FILTERS_ONCE));
-            }
-
-            for (j = 0; j < (int)strlen(value); j++) {
-              switch (toupper(value[j])) {
-              case 'X':
-                precomp_otf_xz_extra_params->enable_filter_x86 = true;
-                break;
-              case 'P':
-                precomp_otf_xz_extra_params->enable_filter_powerpc = true;
-                break;
-              case 'I':
-                precomp_otf_xz_extra_params->enable_filter_ia64 = true;
-                break;
-              case 'A':
-                precomp_otf_xz_extra_params->enable_filter_arm = true;
-                break;
-              case 'T':
-                precomp_otf_xz_extra_params->enable_filter_armthumb = true;
-                break;
-              case 'S':
-                precomp_otf_xz_extra_params->enable_filter_sparc = true;
-                break;
-              case 'D':
-              {
-                j++;
-                char nextchar = value[j];
-                if ((nextchar < '0') || (nextchar > '9')) {
-                  throw std::runtime_error(make_cstyle_format_string(
-                    "ERROR: LZMA delta filter must be followed by a distance (%d..%d)\n",
-                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
-                  );
-                }
-                precomp_otf_xz_extra_params->enable_filter_delta = true;
-                while ((value[j] > '0') && (value[j] < '9')) {
-                  precomp_otf_xz_extra_params->filter_delta_distance *= 10;
-                  precomp_otf_xz_extra_params->filter_delta_distance += (value[j] - '0');
-                  j++;
-                }
-                if (precomp_otf_xz_extra_params->filter_delta_distance < LZMA_DELTA_DIST_MIN
-                  || precomp_otf_xz_extra_params->filter_delta_distance > LZMA_DELTA_DIST_MAX) {
-                  throw std::runtime_error(make_cstyle_format_string(
-                    "ERROR: LZMA delta filter distance must be in range %d..%d\n",
-                    LZMA_DELTA_DIST_MIN, LZMA_DELTA_DIST_MAX)
-                  );
-                }
-                j--;
-                break;
-              }
-              default:
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown LZMA filter type \"%c\"\n", value[j]));
-              }
-              otf_xz_filter_used_count++;
-              if (otf_xz_filter_used_count > 3) {
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Only up to 3 LZMA filters can be used at the same time\n"));
-              }
-            }
-
-            lzma_filters_set = true;
-            valid_param = true;
-          }
-
-          if (strcmp(param, "fast_mode") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled fast mode\n");
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled fast mode\n");
-              precomp_switches.fast_mode = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid fast mode value: %s\n", value));
-            }
-          }
-          // future note: params should be in lowercase for comparisons here only
-          if (strcmp(param, "preserve_extension") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Not preserve extension\n");
-              preserve_extension = false;
-            }
-            else if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Preserve extension\n");
-              preserve_extension = true;
-            }
-            else {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid Preserve extension mode: %s\n", value));
-            }
-            valid_param = true;
-          }
-
-          if (strcmp(param, "intense_mode") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled intense mode\n");
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled intense mode\n");
-              precomp_switches.intense_mode = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid intense mode value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "brute_mode") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled brute mode\n");
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled brute mode\n");
-              precomp_switches.brute_mode = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brute mode value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "pdf_bmp_mode") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled PDF BMP mode\n");
-              precomp_switches.pdf_bmp_mode = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled PDF BMP mode\n");
-              precomp_switches.pdf_bmp_mode = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid PDF BMP mode value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "jpg_progressive_only") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled progressive only JPG mode\n");
-              precomp_switches.prog_only = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled progressive only JPG mode\n");
-              precomp_switches.prog_only = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid progressive only JPG mode value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "mjpeg_recompression") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled MJPEG recompression\n");
-              precomp_switches.use_mjpeg = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled MJPEG recompression\n");
-              precomp_switches.use_mjpeg = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid MJPEG recompression value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "jpg_brunsli") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled brunsli for JPG commpression\n");
-              precomp_switches.use_brunsli = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled brunsli for JPG compression\n");
-              precomp_switches.use_brunsli = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brunsli compression value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "jpg_brotli") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled brotli for JPG metadata compression\n");
-              precomp_switches.use_brotli = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled brotli for JPG metadata compression\n");
-              precomp_switches.use_brotli = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid brotli for metadata compression value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "jpg_packjpg") == 0) {
-            if (strcmp(value, "off") == 0) {
-              print_to_console("INI: Disabled packJPG for JPG compression\n");
-              precomp_switches.use_brotli = false;
-              valid_param = true;
-            }
-
-            if (strcmp(value, "on") == 0) {
-              print_to_console("INI: Enabled packJPG for JPG compression\n");
-              precomp_switches.use_brotli = true;
-              valid_param = true;
-            }
-
-            if (!valid_param) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid packJPG for JPG compression value: %s\n", value));
-            }
-          }
-
-          if (strcmp(param, "compression_types_enable") == 0) {
-            if (compression_type_line_used) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Both Compression_types_enable and Compression_types_disable used.\n"));
-            }
-            compression_type_line_used = true;
-
-            precomp_switches.use_pdf = false;
-            precomp_switches.use_zip = false;
-            precomp_switches.use_gzip = false;
-            precomp_switches.use_png = false;
-            precomp_switches.use_gif = false;
-            precomp_switches.use_jpg = false;
-            precomp_switches.use_mp3 = false;
-            precomp_switches.use_swf = false;
-            precomp_switches.use_base64 = false;
-            precomp_switches.use_bzip2 = false;
-
-            for (j = 0; j < (int)strlen(value); j++) {
-              switch (toupper(value[j])) {
-              case 'P': // PDF
-                precomp_switches.use_pdf = true;
-                break;
-              case 'Z': // ZIP
-                precomp_switches.use_zip = true;
-                break;
-              case 'G': // GZip
-                precomp_switches.use_gzip = true;
-                break;
-              case 'N': // PNG
-                precomp_switches.use_png = true;
-                break;
-              case 'F': // GIF
-                precomp_switches.use_gif = true;
-                break;
-              case 'J': // JPG
-                precomp_switches.use_jpg = true;
-                break;
-              case '3': // MP3
-                precomp_switches.use_mp3 = true;
-                break;
-              case 'S': // SWF
-                precomp_switches.use_swf = true;
-                break;
-              case 'M': // MIME Base64
-                precomp_switches.use_base64 = true;
-                break;
-              case 'B': // bZip2
-                precomp_switches.use_bzip2 = true;
-                break;
-              default:
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
-              }
-            }
-
-            if (precomp_switches.use_pdf) {
-              print_to_console("INI: PDF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: PDF compression disabled\n");
-            }
-
-            if (precomp_switches.use_zip) {
-              print_to_console("INI: ZIP compression enabled\n");
-            }
-            else {
-              print_to_console("INI: ZIP compression disabled\n");
-            }
-
-            if (precomp_switches.use_gzip) {
-              print_to_console("INI: GZip compression enabled\n");
-            }
-            else {
-              print_to_console("INI: GZip compression disabled\n");
-            }
-
-            if (precomp_switches.use_png) {
-              print_to_console("INI: PNG compression enabled\n");
-            }
-            else {
-              print_to_console("INI: PNG compression disabled\n");
-            }
-
-            if (precomp_switches.use_gif) {
-              print_to_console("INI: GIF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: GIF compression disabled\n");
-            }
-
-            if (precomp_switches.use_jpg) {
-              print_to_console("INI: JPG compression enabled\n");
-            }
-            else {
-              print_to_console("INI: JPG compression disabled\n");
-            }
-
-            if (precomp_switches.use_mp3) {
-              print_to_console("INI: MP3 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: MP3 compression disabled\n");
-            }
-
-            if (precomp_switches.use_swf) {
-              print_to_console("INI: SWF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: SWF compression disabled\n");
-            }
-
-            if (precomp_switches.use_base64) {
-              print_to_console("INI: Base64 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: Base64 compression disabled\n");
-            }
-
-            if (precomp_switches.use_bzip2) {
-              print_to_console("INI: bZip2 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: bZip2 compression disabled\n");
-            }
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "compression_types_disable") == 0) {
-            if (compression_type_line_used) {
-              throw std::runtime_error(make_cstyle_format_string("ERROR: Both Compression_types_enable and Compression_types_disable used.\n"));
-            }
-            compression_type_line_used = true;
-
-            precomp_switches.use_pdf = true;
-            precomp_switches.use_zip = true;
-            precomp_switches.use_gzip = true;
-            precomp_switches.use_png = true;
-            precomp_switches.use_gif = true;
-            precomp_switches.use_jpg = true;
-            precomp_switches.use_mp3 = true;
-            precomp_switches.use_swf = true;
-            precomp_switches.use_base64 = true;
-            precomp_switches.use_bzip2 = true;
-
-            for (j = 0; j < (int)strlen(value); j++) {
-              switch (toupper(value[j])) {
-              case 'P': // PDF
-                precomp_switches.use_pdf = false;
-                break;
-              case 'Z': // ZIP
-                precomp_switches.use_zip = false;
-                break;
-              case 'G': // GZip
-                precomp_switches.use_gzip = false;
-                break;
-              case 'N': // PNG
-                precomp_switches.use_png = false;
-                break;
-              case 'F': // GIF
-                precomp_switches.use_gif = false;
-                break;
-              case 'J': // JPG
-                precomp_switches.use_jpg = false;
-                break;
-              case '3': // MP3
-                precomp_switches.use_mp3 = false;
-                break;
-              case 'S': // SWF
-                precomp_switches.use_swf = false;
-                break;
-              case 'M': // MIME Base64
-                precomp_switches.use_base64 = false;
-                break;
-              case 'B': // bZip2
-                precomp_switches.use_bzip2 = false;
-                break;
-              default:
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid compression type %c\n", value[j]));
-              }
-            }
-
-            if (precomp_switches.use_pdf) {
-              print_to_console("INI: PDF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: PDF compression disabled\n");
-            }
-
-            if (precomp_switches.use_zip) {
-              print_to_console("INI: ZIP compression enabled\n");
-            }
-            else {
-              print_to_console("INI: ZIP compression disabled\n");
-            }
-
-            if (precomp_switches.use_gzip) {
-              print_to_console("INI: GZip compression enabled\n");
-            }
-            else {
-              print_to_console("INI: GZip compression disabled\n");
-            }
-
-            if (precomp_switches.use_png) {
-              print_to_console("INI: PNG compression enabled\n");
-            }
-            else {
-              print_to_console("INI: PNG compression disabled\n");
-            }
-
-            if (precomp_switches.use_gif) {
-              print_to_console("INI: GIF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: GIF compression disabled\n");
-            }
-
-            if (precomp_switches.use_jpg) {
-              print_to_console("INI: JPG compression enabled\n");
-            }
-            else {
-              print_to_console("INI: JPG compression disabled\n");
-            }
-
-            if (precomp_switches.use_mp3) {
-              print_to_console("INI: MP3 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: MP3 compression disabled\n");
-            }
-
-            if (precomp_switches.use_swf) {
-              print_to_console("INI: SWF compression enabled\n");
-            }
-            else {
-              print_to_console("INI: SWF compression disabled\n");
-            }
-
-            if (precomp_switches.use_base64) {
-              print_to_console("INI: Base64 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: Base64 compression disabled\n");
-            }
-
-            if (precomp_switches.use_bzip2) {
-              print_to_console("INI: bZip2 compression enabled\n");
-            }
-            else {
-              print_to_console("INI: bZip2 compression disabled\n");
-            }
-
-            valid_param = true;
-          }
-
-          // zLib levels
-          if (strcmp(param, "zlib_levels") == 0) {
-            level_switch = true;
-
-            for (j = 0; j < ((int)strlen(value)); j += 3) {
-              if ((j + 2) < (int)strlen(value)) {
-                if (value[j + 2] != ',') {
-                  throw std::runtime_error("ERROR: zLib levels have to be separated with commas\n");
-                }
-              }
-              if ((j + 1) >= (int)strlen(value)) {
-                throw std::runtime_error("ERROR: Last zLib level is incomplete\n");
-              }
-              int comp_level_to_use = (char(value[j]) - '1');
-              int mem_level_to_use = (char(value[j + 1]) - '1');
-              if (((comp_level_to_use >= 0) && (comp_level_to_use <= 8))
-                && ((mem_level_to_use >= 0) && (mem_level_to_use <= 8))) {
-              }
-              else {
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid zlib level %c%c\n", value[j], value[j + 1]));
-              }
-            }
-
-            print_to_console("INI: Set zLib levels\n");
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "maximal_recursion_depth") == 0) {
-            if (recursion_depth_set) {
-              throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_RECURSION_DEPTH_ONCE));
-            }
-
-            unsigned int max_recursion_d = 0;
-            unsigned int multiplicator = 1;
-            for (j = (strlen(value) - 1); j >= 0; j--) {
-              max_recursion_d += ((unsigned int)(value[j]) - '0') * multiplicator;
-              if ((multiplicator * 10) < multiplicator) {
-                throw std::runtime_error(libprecomp_error_msg(ERR_RECURSION_DEPTH_TOO_BIG));
-              }
-              multiplicator *= 10;
-            }
-            precomp_mgr.max_recursion_depth = max_recursion_d;
-            recursion_depth_set = true;
-
-            print_to_console("INI: Set maximal recursion depth to %i\n", precomp_mgr.max_recursion_depth);
-
-            valid_param = true;
-          }
-
-          if (strcmp(param, "ignore_positions") == 0) {
-
-            long long act_ignore_pos = -1;
-
-            for (j = 0; j < (int)strlen(value); j++) {
-              switch (value[j]) {
-              case '0':
-              case '1':
-              case '2':
-              case '3':
-              case '4':
-              case '5':
-              case '6':
-              case '7':
-              case '8':
-              case '9':
-                if (act_ignore_pos == -1) {
-                  act_ignore_pos = (value[j] - '0');
-                }
-                else {
-                  if ((act_ignore_pos * 10) < act_ignore_pos) {
-                    throw std::runtime_error(libprecomp_error_msg(ERR_IGNORE_POS_TOO_BIG));
-                  }
-                  act_ignore_pos = (act_ignore_pos * 10) + (value[j] - '0');
-                }
-                break;
-              case ',':
-                if (act_ignore_pos != -1) {
-                  ignore_list.push_back(act_ignore_pos);
-                  act_ignore_pos = -1;
-                }
-                break;
-              case ' ':
-                break;
-              default:
-                throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid char in ignore_positions: %c\n", value[j]));
-              }
-            }
-            if (act_ignore_pos != -1) {
-              ignore_list.push_back(act_ignore_pos);
-            }
-
-            if (print_ignore_positions_message) {
-              print_to_console("INI: Set ignore positions\n");
-              print_ignore_positions_message = false;
-            }
-
-            valid_param = true;
-          }
-
-          if (!valid_param) {
-            throw std::runtime_error(make_cstyle_format_string("ERROR: Invalid INI parameter: %s\n", param));
-          }
-        }
-      }
-    }
-    ini_file.close();
-  }
-
-  if (operation == P_COMPRESS) {
-    if (!preserve_extension) {
-      output_file_name = input_file_name;
-      const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
-      const char* dot_at_pos = strrchr(output_file_name.c_str(), '.');
-      if ((dot_at_pos == NULL) || ((backslash_at_pos != NULL) && (dot_at_pos < backslash_at_pos))) {
-        output_file_name += ".pcf";
-      }
-      else {
-        output_file_name = std::string(
-          output_file_name.c_str(),
-          dot_at_pos - output_file_name.c_str()
-        );
-        // same as output file because input file had .pcf extension?
-        if (input_file_name.compare(output_file_name + ".pcf") == 0) {
-          output_file_name += "_pcf.pcf";
-        }
-        else {
-          output_file_name += ".pcf";
-        }
-      }
-    }
-    else {
-      output_file_name = input_file_name + ".pcf";
-    }
-  }
-
-  if (file_exists(output_file_name.c_str())) {
-    print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name.c_str());
-    char ch = get_char_with_echo();
-    if ((ch != 'Y') && (ch != 'y')) {
-      print_to_console("\n");
-      wait_for_key();
-      exit(0);
-    }
-    else {
-      print_to_console("\n\n");
-    }
-  }
-  else {
-    print_to_console("\n");
-  }
-
-  auto fout = new std::ofstream();
-  fout->open(output_file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-  if (!fout->is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Can't create output file \"%s\"\n", output_file_name.c_str()));
-  }
-  PrecompSetOutStream(&precomp_mgr, fout, output_file_name.c_str());
-
-  print_to_console("Input file: %s\n", input_file_name.c_str());
-  print_to_console("Output file: %s\n\n", output_file_name.c_str());
-  if (PRECOMP_VERBOSITY_LEVEL >= PRECOMP_DEBUG_LOG) {
-    if (min_ident_size_set) {
-      print_to_console("\n");
-      print_to_console("Minimal ident size set to %i bytes\n", precomp_switches.min_ident_size);
-    }
-    if (!ignore_list.empty()) {
-      print_to_console("\n");
-      print_to_console("Ignore position list:\n");
-      for (auto ignore_pos : ignore_list) {
-        std::cout << ignore_pos << std::endl;
-      }
-      print_to_console("\n");
-    }
-  }
-
-  if (level_switch) {
-
-    precomp_switches.level_switch_used = true;
-
-  }
-
-  packjpg_mp3_dll_msg();
-  setSwitchesIgnoreList(precomp_switches, ignore_list);
-
-  return operation;
-}
-#endif
 
 int main(int argc, char* argv[])
 {
@@ -2058,9 +1066,9 @@ int main(int argc, char* argv[])
   CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
   PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
     auto new_progress_txt = get_progress_txt(percent);
-  if (!new_progress_txt) return;
-  print_to_console(current_progress_txt);
-    });
+    if (!new_progress_txt) return;
+    print_to_console(current_progress_txt);
+  });
   PrecompSetLoggingCallback(&log_handler);
   int return_errorlevel = 0;
 
@@ -2068,11 +1076,7 @@ int main(int argc, char* argv[])
   (void)signal(SIGINT, ctrl_c_handler);
 
   try {
-#ifndef COMFORT
     int op = init(*precomp_mgr, *precomp_switches, argc, argv);
-#else
-    int op = init_comfort(*precomp_mgr, *precomp_switches, argc, argv);
-#endif
     switch (op) {
 
     case P_COMPRESS:
@@ -2121,10 +1125,6 @@ int main(int argc, char* argv[])
     print_to_console("\n");
     return_errorlevel = return_errorlevel == 0 ? 1 : return_errorlevel;
   }
-
-#ifdef COMFORT
-  wait_for_key();
-#endif
 
   return return_errorlevel;
 }
