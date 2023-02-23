@@ -63,9 +63,6 @@
 #include <unistd.h>
 #endif
 
-#include "contrib/zlib/zlib.h"
-#include "contrib/preflate/preflate.h"
-
 #include "precomp_dll.h"
 
 #include "formats/deflate.h"

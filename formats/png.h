@@ -3,6 +3,8 @@
 #include "precomp_dll.h"
 #include "formats/deflate.h"
 
+#include "contrib/preflate/preflate.h"
+
 bool png_header_check(unsigned char* checkbuf)
 {
   return memcmp(checkbuf, "IDAT", 4) == 0;

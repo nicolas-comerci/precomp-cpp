@@ -347,50 +347,6 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr) {
   return result;
 }
 
-size_t fread_skip(unsigned char* ptr, size_t size, size_t count, IStreamLike& stream, unsigned int frs_offset, unsigned int frs_line_len, unsigned int frs_skip_len) {
-  size_t bytes_read = 0;
-  unsigned int read_tmp;
-  unsigned char frs_skipbuf[4];
-
-  do {
-    if ((count - bytes_read) >= (frs_line_len - frs_offset)) {
-      if ((frs_line_len - frs_offset) > 0) {
-        stream.read(reinterpret_cast<char*>(ptr + bytes_read), size * (frs_line_len - frs_offset));
-        read_tmp = stream.gcount();
-        if (read_tmp == 0) return bytes_read;
-        bytes_read += read_tmp;
-      }
-      // skip padding bytes
-      stream.read(reinterpret_cast<char*>(frs_skipbuf), size * frs_skip_len);
-      read_tmp = stream.gcount();
-      if (read_tmp == 0) return bytes_read;
-      frs_offset = 0;
-    }
-    else {
-      stream.read(reinterpret_cast<char*>(ptr + bytes_read), size * (count - bytes_read));
-      read_tmp = stream.gcount();
-      if (read_tmp == 0) return bytes_read;
-      bytes_read += read_tmp;
-      frs_offset += read_tmp;
-    }
-  } while (bytes_read < count);
-
-  return bytes_read;
-}
-
-bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
-  std::vector<unsigned char> unpacked_output;
-  unpacked_output.resize(rdres.uncompressed_stream_size);
-  unsigned int frs_offset = 0;
-  unsigned int frs_skip_len = skip_part;
-  unsigned int frs_line_len = read_part;
-  if ((int64_t)fread_skip(unpacked_output.data(), 1, rdres.uncompressed_stream_size, fin, frs_offset, frs_line_len, frs_skip_len) != rdres.uncompressed_stream_size) {
-    return false;
-  }
-  OwnOStream os(&fout);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
-}
-
 void recompress_pdf(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
