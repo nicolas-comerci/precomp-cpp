@@ -1,14 +1,12 @@
 #ifndef PRECOMP_IO_H
 #define PRECOMP_IO_H
-#include "precomp_utils.h"
-
-#include "contrib/bzip2/bzlib.h"
-#include "contrib/liblzma/precomp_xz.h"
 
 #include <memory>
 #include <fstream>
 #include <functional>
 #include <map>
+
+#include "precomp_xz_params.h"
 
 #ifndef __unix
 #define PATH_DELIM '\\'
@@ -28,7 +26,7 @@
 // Interface for the things in common that something that behaves like a std::istream or std::ostream has to have
 class StreamLikeCommon {
 public:
-  virtual ~StreamLikeCommon() {}
+  virtual ~StreamLikeCommon() = default;
 
   virtual bool eof() = 0;
   virtual bool good() = 0;
@@ -61,10 +59,7 @@ protected:
   bool owns_wrapped_stream;
 
   // Protected constructor to make the class "abstract" (done this way because there is no method we can make pure virtual as destructor needs to handle ptr ownership)
-  WrappedStream(T* stream, bool owns_wrapped_stream) {
-    wrapped_stream = stream;
-    this->owns_wrapped_stream = owns_wrapped_stream;
-  }
+  WrappedStream(T* stream, bool take_stream_ownership): wrapped_stream(stream), owns_wrapped_stream(take_stream_ownership) { }
 
 public:
   ~WrappedStream() override {
@@ -78,7 +73,7 @@ public:
 
   bool is_owns_wrapped_stream() { return owns_wrapped_stream; }
 
-  // Careful! I am not writting safeguards for this, if you attempt to use this after release you will get a nullptr dereference and you get to keep the pieces!
+  // Careful! I am not writing safeguards for this, if you attempt to use this after release you will get a nullptr dereference, and you get to keep the pieces!
   T* release() {
     owns_wrapped_stream = false;
     auto ptr_copy = wrapped_stream;
@@ -96,33 +91,20 @@ public:
 
 class WrappedOStream: public WrappedStream<std::ostream>, public OStreamLike {
 public:
-  WrappedOStream(std::ostream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
+  WrappedOStream(std::ostream* stream, bool take_ownership);
 
-  ~WrappedOStream() override {}
+  ~WrappedOStream() override;
 
-  bool eof() override { return WrappedStream::eof(); }
-  bool good() override { return WrappedStream::good(); }
-  bool bad() override { return WrappedStream::bad(); }
-  void clear() override { WrappedStream::clear(); }
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
 
-  WrappedOStream& write(const char* buf, std::streamsize count) override {
-    wrapped_stream->write(buf, count);
-    return *this;
-  }
-
-  WrappedOStream& put(char chr) override {
-    wrapped_stream->put(chr);
-    return *this;
-  }
-
-  void flush() override { wrapped_stream->flush(); }
-
-  std::ostream::pos_type tellp() override { return wrapped_stream->tellp(); }
-
-  WrappedOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
-    wrapped_stream->seekp(offset, dir);
-    return *this;
-  }
+  WrappedOStream& write(const char* buf, std::streamsize count) override;
+  WrappedOStream& put(char chr) override;
+  void flush() override;
+  std::ostream::pos_type tellp() override;
+  WrappedOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 
 void fseek64(FILE* file_ptr, unsigned long long pos, std::ios_base::seekdir dir);
@@ -131,37 +113,19 @@ class FILEOStream : public OStreamLike {
   FILE* file_ptr;
   bool take_ownership;
 public:
-  FILEOStream(FILE* file, bool take_ownership) : file_ptr(file), take_ownership(take_ownership) { }
-  ~FILEOStream() override {
-    if (!take_ownership) return;
-    std::fclose(file_ptr);
-  }
+  FILEOStream(FILE* file, bool take_ownership);
+  ~FILEOStream() override;
 
-  bool eof() override { return std::feof(file_ptr); }
-  bool good() override { return !std::feof(file_ptr) && !std::ferror(file_ptr); }
-  bool bad() override { return std::ferror(file_ptr); }
-  void clear() override {
-    std::clearerr(file_ptr);
-  }
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
 
-  FILEOStream& write(const char* buf, std::streamsize count) override {
-    std::fwrite(buf, sizeof(const char), count, file_ptr);
-    return *this;
-  }
-
-  FILEOStream& put(char chr) override
-  {
-    std::fputc(chr, file_ptr);
-    return *this;
-  }
-
-  void flush() override { std::fflush(file_ptr); }
-  std::ostream::pos_type tellp() override { return std::ftell(file_ptr); }
-  FILEOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override
-  {
-    fseek64(file_ptr, offset, dir);
-    return *this;
-  }
+  FILEOStream& write(const char* buf, std::streamsize count) override;
+  FILEOStream& put(char chr) override;
+  void flush() override;
+  std::ostream::pos_type tellp() override;
+  FILEOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 
 class FILEIStream: public IStreamLike {
@@ -169,72 +133,35 @@ class FILEIStream: public IStreamLike {
   bool take_ownership;
   size_t _gcount;
 public:
-  FILEIStream(FILE* file, bool take_ownership): file_ptr(file), take_ownership(take_ownership), _gcount(0) { }
-  ~FILEIStream() override {
-    if (!take_ownership) return;
-    std::fclose(file_ptr);
-  }
+  FILEIStream(FILE* file, bool take_ownership);
+  ~FILEIStream() override;
 
-  bool eof() override { return std::feof(file_ptr); }
-  bool good() override { return !std::feof(file_ptr) && !std::ferror(file_ptr); }
-  bool bad() override { return std::ferror(file_ptr); }
-  void clear() override {
-    std::clearerr(file_ptr);
-  }
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
 
-  FILEIStream& read(char* buff, std::streamsize count) override {
-    _gcount = std::fread(buff, sizeof(char), count, file_ptr);
-    return *this;
-  }
-
-  std::istream::int_type get() override {
-    _gcount = 1;
-    auto chr = std::fgetc(file_ptr);
-    if (chr == EOF) {
-      chr = std::istream::traits_type::eof();
-    }
-    return chr;
-  }
-  std::streamsize gcount() override { return _gcount; }
-
-  FILEIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
-    fseek64(file_ptr, offset, dir);
-    return *this;
-  }
-
-  std::istream::pos_type tellg() override { return std::ftell(file_ptr); }
+  FILEIStream& read(char* buff, std::streamsize count) override;
+  std::istream::int_type get() override;
+  std::streamsize gcount() override;
+  FILEIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+  std::istream::pos_type tellg() override;
 };
 
 class WrappedIStream : public WrappedStream<std::istream>, public IStreamLike {
 public:
-  WrappedIStream(std::istream* stream, bool take_ownership): WrappedStream(stream, take_ownership) { }
+  WrappedIStream(std::istream* stream, bool take_ownership);
 
-  bool eof() override { return WrappedStream::eof(); }
-  bool good() override { return WrappedStream::good(); }
-  bool bad() override { return WrappedStream::bad(); }
-  void clear() override { WrappedStream::clear(); }
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
 
-  WrappedIStream& read(char* buff, std::streamsize count) override {
-    wrapped_stream->read(buff, count);
-    return *this;
-  }
-
-  std::istream::int_type get() override { return wrapped_stream->get(); }
-
-  std::streamsize gcount() override { return wrapped_stream->gcount(); }
-
-  WrappedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
-    // istreams don't allow seeking once eof/failbit is set, which happens if we read a file to the end.
-    // This behaves more like std::fseek by just clearing the eof and failbit to allow the seek operation to happen.
-    if (bad()) {
-      throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
-    }
-    clear();
-    wrapped_stream->seekg(offset, dir);
-    return *this;
-  }
-
-  std::istream::pos_type tellg() override { return wrapped_stream->tellg(); }
+  WrappedIStream& read(char* buff, std::streamsize count) override;
+  std::istream::int_type get() override;
+  std::streamsize gcount() override;
+  WrappedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+  std::istream::pos_type tellg() override;
 };
 
 // With this we can get notified whenever we write to the ostream, useful for registering callbacks to update progress without littering our code with calls for it
@@ -248,16 +175,10 @@ public:
     seekp_method
   };
 
-  void register_observer(observable_methods method, std::function<void()> callback) {
-    method_observers[method] = callback;
-  }
+  void register_observer(observable_methods method, std::function<void()> callback);
 protected:
   std::map<observable_methods, std::function<void()>> method_observers = { {write_method, {}} };
-
-  void notify_observer(observable_methods method) {
-    auto observer_callback = method_observers[method];
-    if (observer_callback) observer_callback();
-  }
+  void notify_observer(observable_methods method);
 };
 
 class ObservableOStream: public OStreamLike, public ObservableStreamBase {
@@ -268,29 +189,11 @@ protected:
   virtual std::ostream::pos_type internal_tellp() = 0;
   virtual void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) = 0;
 public:
-  ObservableOStream& write(const char* buf, std::streamsize count) override {
-    internal_write(buf, count);
-    notify_observer(write_method);
-    return *this;
-  }
-  ObservableOStream& put(char chr) override {
-    internal_put(chr);
-    notify_observer(put_method);
-    return *this;
-  }
-  void flush() override {
-    internal_flush();
-    notify_observer(flush_method);
-  }
-  std::ostream::pos_type tellp() override {
-    notify_observer(tellp_method);
-    return internal_tellp();    
-  }
-  ObservableOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
-    internal_seekp(offset, dir);
-    notify_observer(seekp_method);
-    return *this;
-  }
+  ObservableOStream& write(const char* buf, std::streamsize count) override;
+  ObservableOStream& put(char chr) override;
+  void flush() override;
+  std::ostream::pos_type tellp() override;
+  ObservableOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 
 template <typename T>
@@ -315,13 +218,8 @@ public:
 using ObservableWrappedOStream = ObservableOStreamIMPL<WrappedOStream>;
 using ObservableFILEOStream = ObservableOStreamIMPL<FILEOStream>;
 
-class ObservableIStream : public WrappedIStream {
-public:
-  ObservableIStream(std::istream* stream, bool take_ownership): WrappedIStream(stream, take_ownership) { }
-};
-
-int ostream_printf(OStreamLike& out, std::string str);
-int ostream_printf(std::ostream& out, std::string str);
+size_t ostream_printf(OStreamLike& out, const std::string& str);
+size_t ostream_printf(std::ostream& out, const std::string& str);
 
 template <typename T>
 class WrappedIOStream: public WrappedOStream, public WrappedIStream {
@@ -329,12 +227,12 @@ protected:
   std::unique_ptr<T> wrapped_iostream;
 
 public:
-  WrappedIOStream(T* stream):
+  explicit WrappedIOStream(T* stream):
     WrappedOStream(stream, false), WrappedIStream(stream, false), wrapped_iostream(stream) { }
 
   WrappedIOStream(): WrappedIOStream(new T()) { }
 
-  WrappedIOStream(std::streambuf* sbuff): WrappedIOStream(new T(sbuff)) { }
+  explicit WrappedIOStream(std::streambuf* sbuff): WrappedIOStream(new T(sbuff)) { }
 
   ~WrappedIOStream() override = default;
 
@@ -349,39 +247,22 @@ public:
   std::string file_path;
   std::ios_base::openmode mode;
 
-  WrappedFStream(): WrappedIOStream() { }
-
-  WrappedFStream(std::fstream* stream): WrappedIOStream(stream) {}
-
+  WrappedFStream();
   ~WrappedFStream() override = default;
 
-  virtual void open(std::string file_path, std::ios_base::openmode mode) {
-    this->file_path = file_path;
-    this->mode = mode;
-    wrapped_iostream->open(file_path, mode);
-  }
-
-  virtual bool is_open() { return wrapped_iostream->is_open(); }
-
-  virtual void close() { wrapped_iostream->close(); }
+  virtual void open(std::string file_path, std::ios_base::openmode mode);
+  virtual bool is_open();
+  virtual void close();
 
   // Some extra members that are not wrapped from the fstream
-  void reopen() {
-    if (wrapped_iostream->is_open()) wrapped_iostream->close();
-    open(file_path, mode);
-  }
-  long long filesize();
+  void reopen();
   void resize(long long size);
 };
 
 class PrecompTmpFile: public WrappedFStream {
 public:
-  PrecompTmpFile() : WrappedFStream() {}
-
-  ~PrecompTmpFile() override {
-    WrappedFStream::close();
-    std::remove(file_path.c_str());
-  }
+  PrecompTmpFile();
+  ~PrecompTmpFile() override;
 };
 
 class memiostream: public WrappedIOStream<std::iostream>
@@ -391,55 +272,18 @@ class memiostream: public WrappedIOStream<std::iostream>
   public:
     std::vector<char> memvector;
     membuf() = delete;
-    membuf(char* begin, char* end, bool copy)
-    {
-      if (copy) {
-        auto length = end - begin;
-        memvector = std::vector(begin, end);
-        this->setg(memvector.data(), memvector.data(), memvector.data() + length);
-        this->setp(memvector.data(), memvector.data() + length);
-      } else
-      {
-        this->setg(begin, begin, end);
-        this->setp(begin, end);
-      }
-    }
+    membuf(char* begin, char* end, bool copy);
 
-    pos_type seekoff(off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override
-    {
-      if (dir == std::ios_base::cur) {
-        gbump(off);
-        pbump(off);
-      }
-      else if (dir == std::ios_base::end) {
-        setg(eback(), egptr() + off, egptr());
-        setg(pbase(), epptr() + off, epptr());
-      }
-      else if (dir == std::ios_base::beg) {
-        setg(eback(), eback() + off, egptr());
-        setg(pbase(), pbase() + off, epptr());
-      }
-      return gptr() - eback();
-    }
-
-    pos_type seekpos(pos_type sp, std::ios_base::openmode which) override
-    {
-      return seekoff(sp - pos_type(off_type(0)), std::ios_base::beg, which);
-    }
+    std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
+    std::streambuf::pos_type seekpos(std::streambuf::pos_type sp, std::ios_base::openmode which) override;
   };
 
   std::unique_ptr<membuf> m_buf;
-  memiostream(membuf* buf): WrappedIOStream(buf), m_buf(std::unique_ptr<membuf>(buf)) {}
+  explicit memiostream(membuf* buf);
 
 public:
-  static memiostream make(unsigned char* begin, unsigned char* end) {
-    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), false);
-    return {membuf_ptr};
-  }
-  static std::unique_ptr<memiostream> make_copy(unsigned char* begin, unsigned char* end) {
-    auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), true);
-    return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
-  }
+  static memiostream make(unsigned char* begin, unsigned char* end);
+  static std::unique_ptr<memiostream> make_copy(unsigned char* begin, unsigned char* end);
 };
 
 class CompressedOStreamBuffer;
@@ -450,289 +294,85 @@ enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzm
 
 int lzma_max_memory_default();
 
-class CompressedIStreamBuffer: public std::streambuf
-{
+class CompressedIStreamBuffer: public std::streambuf {
 public:
   std::unique_ptr<std::istream> wrapped_istream;
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_dec;
 
-  CompressedIStreamBuffer(std::istream& istream): wrapped_istream(&istream) { }
-  CompressedIStreamBuffer(std::unique_ptr<std::istream>&& istream): wrapped_istream(std::move(istream)) { }
+  explicit CompressedIStreamBuffer(std::unique_ptr<std::istream>&& istream);
 
-  pos_type seekoff(off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override {
-    return wrapped_istream->rdbuf()->pubseekoff(offset, dir, mode);
-  }
+  std::streambuf::pos_type seekoff(std::streambuf::off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override;
 };
 
+// forward declare of bz_stream, but because it's a C typedef struct on implementation we will make a class that public inherits from it
+class precomp_bz_stream;
 class Bz2IStreamBuffer: public CompressedIStreamBuffer
 {
 public:
-  std::unique_ptr<bz_stream> otf_bz2_stream_d;
+  std::unique_ptr<precomp_bz_stream> otf_bz2_stream_d;
 
-  Bz2IStreamBuffer(std::istream& istream): CompressedIStreamBuffer(istream) {
-    init();
-  }
+  explicit Bz2IStreamBuffer(std::unique_ptr<std::istream>&& istream);
 
-  Bz2IStreamBuffer(std::unique_ptr<std::istream>&& istream): CompressedIStreamBuffer(std::move(istream)){
-    init();
-  }
+  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream);
 
-  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
-    auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
-    auto bz2_streambuf = new Bz2IStreamBuffer(std::move(istream));
-    new_fin->rdbuf(bz2_streambuf);
-    return new_fin;
-  }
+  void init();
 
-  void init() {
-    otf_in = std::make_unique<char[]>(CHUNK);
-    otf_dec = std::make_unique<char[]>(CHUNK * 10);
-    otf_bz2_stream_d = std::unique_ptr<bz_stream>(new bz_stream());
-    otf_bz2_stream_d->bzalloc = NULL;
-    otf_bz2_stream_d->bzfree = NULL;
-    otf_bz2_stream_d->opaque = NULL;
-    otf_bz2_stream_d->avail_in = 0;
-    otf_bz2_stream_d->next_in = NULL;
-    if (BZ2_bzDecompressInit(otf_bz2_stream_d.get(), 0, 0) != BZ_OK) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 init failed\n"));
-    }
+  ~Bz2IStreamBuffer() override;
 
-    setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
-  }
-
-  ~Bz2IStreamBuffer() override {
-    (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
-  }
-
-  int underflow() override {
-    if (gptr() < egptr())
-      return *gptr();
-
-    int ret;
-
-    this->otf_bz2_stream_d->avail_out = CHUNK*10;
-    this->otf_bz2_stream_d->next_out = otf_dec.get();
-
-    bool stream_eof = false;
-    do {
-
-      if (this->otf_bz2_stream_d->avail_in == 0) {
-        wrapped_istream->read(otf_in.get(), CHUNK);
-        this->otf_bz2_stream_d->avail_in = wrapped_istream->gcount();
-        this->otf_bz2_stream_d->next_in = otf_in.get();
-        if (this->otf_bz2_stream_d->avail_in == 0) break;
-      }
-
-      ret = BZ2_bzDecompress(otf_bz2_stream_d.get());
-      if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
-        (void)BZ2_bzDecompressEnd(otf_bz2_stream_d.get());
-        throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 stream corrupted - return value %i\n", ret));
-      }
-
-      if (ret == BZ_STREAM_END) stream_eof = true;
-
-    } while (this->otf_bz2_stream_d->avail_out > 0 && ret != BZ_STREAM_END);
-
-    std::streamsize amt_read = CHUNK * 10 - this->otf_bz2_stream_d->avail_out;
-    setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
-    if (amt_read == 0 && stream_eof) return EOF;
-    return static_cast<unsigned char>(*gptr());
-  }
+  int underflow() override;
 };
 
+class precomp_lzma_stream;
 class XzIStreamBuffer: public CompressedIStreamBuffer
 {
 public:
-  std::unique_ptr<lzma_stream> otf_xz_stream_d;
+  std::unique_ptr<precomp_lzma_stream> otf_xz_stream_d;
 
-  XzIStreamBuffer(std::unique_ptr<std::istream>&& istream): CompressedIStreamBuffer(std::move(istream)) {
-    init();
-  }
+  explicit XzIStreamBuffer(std::unique_ptr<std::istream>&& istream);
 
-  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream) {
-    auto new_fin = std::unique_ptr<std::istream>(new std::ifstream());
-    auto xz_streambuf = new XzIStreamBuffer(std::move(istream));
-    new_fin->rdbuf(xz_streambuf);
-    return new_fin;
-  }
+  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream);
 
-  void init() {
-    otf_in = std::make_unique<char[]>(CHUNK);
-    otf_dec = std::make_unique<char[]>(CHUNK * 10);
-    otf_xz_stream_d = std::unique_ptr<lzma_stream>(new lzma_stream());
-    if (!init_decoder(otf_xz_stream_d.get())) {
-      throw std::runtime_error("ERROR: liblzma init failed\n");
-    }
+  void init();
 
-    setg(otf_dec.get(), otf_dec.get(), otf_dec.get());
-  }
+  ~XzIStreamBuffer() override;
 
-  ~XzIStreamBuffer() override {
-    lzma_end(otf_xz_stream_d.get());
-  }
-
-  int underflow() override {
-    if (gptr() < egptr())
-      return *gptr();
-
-    otf_xz_stream_d->avail_out = CHUNK * 10;
-    otf_xz_stream_d->next_out = (uint8_t*)otf_dec.get();
-
-    bool stream_eof = false;
-    do {
-      if ((otf_xz_stream_d->avail_in == 0) && !wrapped_istream->eof()) {
-        otf_xz_stream_d->next_in = (uint8_t*)otf_in.get();
-        wrapped_istream->read(otf_in.get(), CHUNK);
-        otf_xz_stream_d->avail_in = wrapped_istream->gcount();
-
-        if (wrapped_istream->bad()) {
-          throw std::runtime_error("ERROR: Could not read input file\n");
-        }
-      }
-
-      lzma_ret ret = lzma_code(otf_xz_stream_d.get(), LZMA_RUN);
-
-      if (ret == LZMA_STREAM_END) {
-        stream_eof = true;
-        break;
-      }
-
-      if (ret != LZMA_OK) {
-        const char* msg;
-        switch (ret) {
-        case LZMA_MEM_ERROR:
-          msg = "Memory allocation failed";
-          break;
-        case LZMA_FORMAT_ERROR:
-          msg = "Wrong file format";
-          break;
-        case LZMA_OPTIONS_ERROR:
-          msg = "Unsupported compression options";
-          break;
-        case LZMA_DATA_ERROR:
-        case LZMA_BUF_ERROR:
-          msg = "Compressed file is corrupt";
-          break;
-        default:
-          msg = "Unknown error, possibly a bug";
-          break;
-        }
-
-        throw std::runtime_error(make_cstyle_format_string("ERROR: liblzma error: %s (error code %u)\n", msg, ret));
-      }
-    } while (otf_xz_stream_d->avail_out > 0);
-
-    std::streamsize amt_read = CHUNK * 10 - otf_xz_stream_d->avail_out;
-    setg(otf_dec.get(), otf_dec.get(), otf_dec.get() + amt_read);
-    if (amt_read == 0 && stream_eof) return EOF;
-    return static_cast<unsigned char>(*gptr());
-  }
+  int underflow() override;
 };
 
 WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, bool take_ownership);
 
-class CompressedOStreamBuffer : public std::streambuf
-{
+class CompressedOStreamBuffer : public std::streambuf {
 public:
   std::unique_ptr<std::ostream> wrapped_ostream;
   bool is_stream_eof = false;
   std::unique_ptr<char[]> otf_in;
   std::unique_ptr<char[]> otf_out;
 
-  CompressedOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream): wrapped_ostream(std::move(wrapped_ostream))
-  {
-    otf_in = std::make_unique<char[]>(CHUNK);
-    otf_out = std::make_unique<char[]>(CHUNK);
-  }
+  explicit CompressedOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream);
 
-  pos_type seekoff(off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override {
-    return wrapped_ostream->rdbuf()->pubseekoff(offset, dir, mode);
-  }
+  std::streambuf::pos_type seekoff(std::streambuf::off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override;
 
   virtual int sync(bool final_byte) = 0;
-  int sync() override { return sync(false); }
+  int sync() override;
 
-  void set_stream_eof() {
-    if (is_stream_eof) return;
-    // uncompressed data of length 0 ends compress-on-the-fly data
-    for (int i = 0; i < 9; i++) {
-      overflow(0);
-    }
-    sync(true);
-    is_stream_eof = true;
-  }
+  void set_stream_eof();
 
-  int overflow(int c) override {
-    if (c == EOF) {
-      set_stream_eof();
-      return c;
-    }
-
-    if (pptr() == epptr()) {
-      sync();
-    }
-    *pptr() = c;
-    pbump(1);
-
-    return c;
-  }
+  int overflow(int c) override;
 };
 
 class Bz2OStreamBuffer : public CompressedOStreamBuffer
 {
 public:
-  std::unique_ptr<bz_stream, std::function<void(bz_stream*)>> otf_bz2_stream_c;
+  std::unique_ptr<precomp_bz_stream, std::function<void(precomp_bz_stream*)>> otf_bz2_stream_c;
 
-  Bz2OStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream) :
-    CompressedOStreamBuffer(std::move(wrapped_ostream))
-  {
-    init();
-  }
+  explicit Bz2OStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream);
 
   static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
 
-  void init() {
-    otf_bz2_stream_c = std::unique_ptr<bz_stream, std::function<void(bz_stream*)>>(
-      new bz_stream(),
-      [](bz_stream* ptr) {
-        BZ2_bzCompressEnd(ptr);
-      }
-    );
-    otf_bz2_stream_c->bzalloc = NULL;
-    otf_bz2_stream_c->bzfree = NULL;
-    otf_bz2_stream_c->opaque = NULL;
-    if (BZ2_bzCompressInit(otf_bz2_stream_c.get(), 9, 0, 0) != BZ_OK) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 init failed\n"));
-    }
+  void init();
 
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
-  }
-
-  int sync(bool final_byte) override {
-    int flush, ret;
-
-    flush = final_byte ? BZ_FINISH : BZ_RUN;
-
-    otf_bz2_stream_c->avail_in = pptr() - pbase();
-    otf_bz2_stream_c->next_in = otf_in.get();
-    do {
-      otf_bz2_stream_c->avail_out = CHUNK;
-      otf_bz2_stream_c->next_out = otf_out.get();
-      ret = BZ2_bzCompress(otf_bz2_stream_c.get(), flush);
-      unsigned have = CHUNK - otf_bz2_stream_c->avail_out;
-      this->wrapped_ostream->write(otf_out.get(), have);
-      if (this->wrapped_ostream->bad()) {
-        throw PrecompError(ERR_DISK_FULL);
-      }
-    } while (otf_bz2_stream_c->avail_out == 0);
-    if (ret < 0) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: bZip2 compression failed - return value %i\n", ret));
-    }
-
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
-    return 0;
-  }
+  int sync(bool final_byte) override;
 };
 
 class XzOStreamBuffer : public CompressedOStreamBuffer
@@ -740,7 +380,7 @@ class XzOStreamBuffer : public CompressedOStreamBuffer
 public:
   uint64_t compression_otf_max_memory;
   unsigned int compression_otf_thread_count;
-  std::unique_ptr<lzma_stream, std::function<void(lzma_stream*)>> otf_xz_stream_c;
+  std::unique_ptr<precomp_lzma_stream, std::function<void(precomp_lzma_stream*)>> otf_xz_stream_c;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
 
   XzOStreamBuffer(
@@ -748,11 +388,7 @@ public:
     uint64_t compression_otf_max_memory,
     unsigned int compression_otf_thread_count,
     std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params
-  ) :
-    CompressedOStreamBuffer(std::move(wrapped_ostream)), compression_otf_max_memory(compression_otf_max_memory), compression_otf_thread_count(compression_otf_thread_count)
-  {
-    init(std::move(otf_xz_extra_params));
-  }
+  );
 
   static std::unique_ptr<std::ostream> from_ostream(
     std::unique_ptr<std::ostream>&& ostream,
@@ -761,76 +397,9 @@ public:
     unsigned int compression_otf_thread_count
   );
 
-  void init(std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params) {
-    this->otf_xz_extra_params = std::move(otf_xz_extra_params);
-    otf_xz_stream_c = std::unique_ptr<lzma_stream, std::function<void(lzma_stream*)>>(
-      new lzma_stream(),
-      [](lzma_stream* ptr) {
-        lzma_end(ptr);
-      }
-    );
-    uint64_t memory_usage = 0;
-    uint64_t block_size = 0;
-    uint64_t max_memory = this->compression_otf_max_memory * 1024 * 1024LL;
-    int threads = this->compression_otf_thread_count;
+  void init(std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params);
 
-    if (max_memory == 0) {
-      max_memory = lzma_max_memory_default() * 1024 * 1024LL;
-    }
-    if (threads == 0) {
-      threads = auto_detected_thread_count();
-    }
-
-    if (!init_encoder_mt(otf_xz_stream_c.get(), threads, max_memory, memory_usage, block_size, *this->otf_xz_extra_params)) {
-      throw std::runtime_error(make_cstyle_format_string("ERROR: xz Multi-Threaded init failed\n"));
-    }
-
-    std::string plural = "";
-    if (threads > 1) {
-      plural = "s";
-    }
-
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
-  }
-
-  int sync(bool final_byte) override {
-    lzma_action action = final_byte ? LZMA_FINISH : LZMA_RUN;
-    lzma_ret ret;
-
-    otf_xz_stream_c->avail_in = pptr() - pbase();
-    otf_xz_stream_c->next_in = (uint8_t*)otf_in.get();
-    do {
-      otf_xz_stream_c->avail_out = CHUNK;
-      otf_xz_stream_c->next_out = (uint8_t*)otf_out.get();
-      ret = lzma_code(otf_xz_stream_c.get(), action);
-      unsigned have = CHUNK - otf_xz_stream_c->avail_out;
-      this->wrapped_ostream->write(otf_out.get(), have);
-      if (this->wrapped_ostream->bad()) {
-        throw PrecompError(ERR_DISK_FULL);
-      }
-      if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-        const char* msg;
-        switch (ret) {
-        case LZMA_MEM_ERROR:
-          msg = "Memory allocation failed";
-          break;
-
-        case LZMA_DATA_ERROR:
-          msg = "File size limits exceeded";
-          break;
-
-        default:
-          msg = "Unknown error, possibly a bug";
-          break;
-        }
-
-        throw std::runtime_error(make_cstyle_format_string("ERROR: liblzma error: %s (error code %u)\n", msg, ret));
-      }
-    } while (otf_xz_stream_c->avail_in > 0 || otf_xz_stream_c->avail_out != CHUNK || final_byte && ret != LZMA_STREAM_END);
-
-    setp(otf_in.get(), otf_in.get() + CHUNK - 1);
-    return 0;
-  }
+  int sync(bool final_byte) override;
 };
 
 WrappedOStream wrap_ostream_otf_compression(

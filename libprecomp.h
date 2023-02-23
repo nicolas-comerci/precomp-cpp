@@ -46,8 +46,8 @@ extern PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL; // (default: PRECOMP_NORMAL
 ExternC LIBPRECOMP void PrecompSetLoggingCallback(void(*callback)(PrecompLoggingLevels, char*));
 
 #define P_NONE 0
-#define P_COMPRESS 1
-#define P_DECOMPRESS 2
+#define P_PRECOMPRESS 1
+#define P_RECOMPRESS 2
 #define P_CONVERT 3
 
 ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);

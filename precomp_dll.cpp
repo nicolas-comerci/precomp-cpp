@@ -538,7 +538,7 @@ void write_header(Precomp& precomp_mgr) {
 
 int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percent) {
 
-  precomp_mgr.ctx->comp_decomp_state = P_COMPRESS;
+  precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
   if (precomp_mgr.recursion_depth == 0) write_header(precomp_mgr);
   precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.ctx->compression_otf_method);
 
@@ -966,7 +966,7 @@ int compress_file(Precomp& precomp_mgr, float min_percent, float max_percent)
 }
 
 int decompress_file_impl(Precomp& precomp_mgr) {
-  precomp_mgr.ctx->comp_decomp_state = P_DECOMPRESS;
+  precomp_mgr.ctx->comp_decomp_state = P_RECOMPRESS;
   precomp_mgr.enable_input_stream_otf_decompression();
 
   std::string tmp_tag = temp_files_tag();

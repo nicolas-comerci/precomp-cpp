@@ -1,16 +1,15 @@
 #ifndef PRECOMP_UTILS_H
 #define PRECOMP_UTILS_H
 #include <cassert>
-#include <optional>
 #include <string>
 
 
 std::string temp_files_tag();
 
-int auto_detected_thread_count();
+unsigned int auto_detected_thread_count();
 
-// This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyways
-void print_to_console(std::string format);
+// This is to be able to print to the console during stdout mode, as prints would get mixed with actual data otherwise, and not be displayed anyway
+void print_to_console(const std::string& format);
 
 template< typename... Args >
 std::string make_cstyle_format_string(const char* format, Args... args) {
@@ -56,15 +55,12 @@ constexpr auto ERR_DURING_RECOMPRESSION = 19;
 constexpr auto ERR_NO_PCF_HEADER = 20;
 constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = 21;
 
-std::string temp_files_tag();
-
-class PrecompError: public std::exception
-{
+class PrecompError: public std::exception {
 public:
   int error_code;
   std::string extra_info;
 
-  PrecompError(int error_code, std::string extra_info = "") : error_code(error_code), extra_info(extra_info) {}
+  explicit PrecompError(int error_code, std::string extra_info = "");
 };
 
 std::string precomp_error_msg(int error_nr, const char* extra_info = nullptr);

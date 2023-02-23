@@ -26,7 +26,7 @@
 #endif
 
 std::string temp_files_tag() {
-  // Generate a random 8digit tag for the temp files of a recursion level so they don't overwrite each other
+  // Generate a random 8digit tag for the temp files of a recursion level, so they don't overwrite each other
   static std::random_device rd;
   static std::mt19937 gen(rd());
   static std::uniform_int_distribution<> dis(0, 15);
@@ -39,8 +39,8 @@ std::string temp_files_tag() {
   return ss.str();
 }
 
-int auto_detected_thread_count() {
-  int threads = std::thread::hardware_concurrency();
+unsigned int auto_detected_thread_count() {
+  auto threads = std::thread::hardware_concurrency();
   if (threads == 0) threads = 2;
 
   return threads;
@@ -50,7 +50,7 @@ int auto_detected_thread_count() {
 int ttyfd = -1;
 #endif
 
-void print_to_console(std::string format) {
+void print_to_console(const std::string& format) {
 #ifdef _WIN32
   for (char chr : format) {
     putch(chr);
@@ -115,6 +115,8 @@ std::string precomp_error_msg(int error_nr, const char* extra_info) {
     return "Unknown error";
   }
 }
+
+PrecompError::PrecompError(int error_code, std::string extra_info) : error_code(error_code), extra_info(std::move(extra_info)) {}
 
 // get current time in ms
 long long get_time_ms() {

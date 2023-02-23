@@ -47,9 +47,6 @@
 #include <filesystem>
 #include <set>
 
-#include "libprecomp.h"
-#include "precomp_io.h"
-#include "precomp_utils.h"
 #ifdef _MSC_VER
 #include <io.h>
 #define ftruncate _chsize_s
@@ -65,6 +62,11 @@
 #include <errno.h>
 #include <unistd.h>
 #endif
+
+#include "precomp_io.h"
+#include "precomp_utils.h"
+
+#include "contrib/liblzma/api/lzma.h"
 
 std::string input_file_name;
 std::string output_file_name;
@@ -373,7 +375,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   bool valid_syntax = false;
   bool input_file_given = false;
   bool output_file_given = false;
-  int operation = P_COMPRESS;
+  int operation = P_PRECOMPRESS;
   bool parse_on = true;
   bool level_switch = false;
   bool min_ident_size_set = false;
@@ -741,7 +743,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       }
       case 'R':
       {
-        operation = P_DECOMPRESS;
+        operation = P_RECOMPRESS;
         if (argv[i][2] != 0) { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
@@ -842,7 +844,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       std::istream* input_stream = nullptr;
 
       if (input_file_name.compare("stdin") == 0) {
-        if (operation != P_DECOMPRESS) {
+        if (operation != P_RECOMPRESS) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Reading from stdin or writing to stdout only supported for recompressing.\n"));
         }
         input_stream = &std::cin;
@@ -860,7 +862,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       PrecompSetInputStream(&precomp_mgr, input_stream, input_file_name.c_str());
 
       // output file given? If not, use input filename with .pcf extension
-      if (operation == P_DECOMPRESS || comfort_mode) {
+      if (operation == P_RECOMPRESS || comfort_mode) {
         // if .pcf was appended, remove it
         if (appended_pcf) {
           output_file_name = output_file_name.substr(0, output_file_name.length() - 4);
@@ -869,7 +871,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
         auto err_code = PrecompReadHeader(&precomp_mgr, false);
         if (err_code == 0) {
           // successfully read PCF header, if already recompressing doesn't matter, but if in comfort_mode we set it to perform recompression
-          operation = P_DECOMPRESS;
+          operation = P_RECOMPRESS;
 
           auto header_output_filename = PrecompGetOutputFilename(&precomp_mgr);
           if (output_file_name.empty()) {
@@ -884,12 +886,12 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
             }
           }
         }
-        else if (operation == P_DECOMPRESS) {
+        else if (operation == P_RECOMPRESS) {
           // Not in comfort mode, we needed to read the header for recompression to be possible, but that failed
           throw std::runtime_error(libprecomp_error_msg(err_code));
         }
       }
-      if ((!output_file_given) && (operation == P_COMPRESS)) {
+      if ((!output_file_given) && (operation == P_PRECOMPRESS)) {
         if (!preserve_extension) {
           output_file_name = input_file_name;
           const char* backslash_at_pos = strrchr(output_file_name.c_str(), PATH_DELIM);
@@ -1079,13 +1081,13 @@ int main(int argc, char* argv[])
     int op = init(*precomp_mgr, *precomp_switches, argc, argv);
     switch (op) {
 
-    case P_COMPRESS:
+    case P_PRECOMPRESS:
     {
       return_errorlevel = PrecompPrecompress(precomp_mgr.get());
       break;
     }
 
-    case P_DECOMPRESS:
+    case P_RECOMPRESS:
     {
       return_errorlevel = PrecompRecompress(precomp_mgr.get());
       break;
@@ -1101,13 +1103,13 @@ int main(int argc, char* argv[])
 
     switch (op) {
 
-    case P_COMPRESS:
+    case P_PRECOMPRESS:
     {
       print_results(*precomp_mgr, true);
       print_statistics(*precomp_mgr, *precomp_switches);
       break;
     }
-    case P_DECOMPRESS:
+    case P_RECOMPRESS:
     {
       print_results(*precomp_mgr, false);
       break;

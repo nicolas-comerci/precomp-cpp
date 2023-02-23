@@ -2,6 +2,8 @@
 #define PRECOMP_BZip2_HANDLER_H
 #include "precomp_dll.h"
 
+#include "contrib/bzip2/bzlib.h"
+
 bool bzip2_header_check(unsigned char* checkbuf) {
   // BZhx = header, x = compression level/blocksize (1-9)
   return (*checkbuf == 'B') && (*(checkbuf + 1) == 'Z') && (*(checkbuf + 2) == 'h');
