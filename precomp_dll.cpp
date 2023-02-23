@@ -1287,7 +1287,7 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
 void packjpg_mp3_dll_msg() {
   print_to_log(PRECOMP_NORMAL_LOG, "Using packJPG for JPG recompression, packMP3 for MP3 recompression.\n");
   print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pjglib_version_info());
-  print_to_log(PRECOMP_NORMAL_LOG, "%s\n", pmplib_version_info());
+  print_to_log(PRECOMP_NORMAL_LOG, "%s\n", packmp3_version_info());
   print_to_log(PRECOMP_NORMAL_LOG, "More about packJPG and packMP3 here: http://www.matthiasstirner.com\n\n");
 }
 
