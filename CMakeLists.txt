@@ -167,7 +167,7 @@ set(DLLTEST_SRC "${SRCDIR}/dlltest.c")
 
 set(FORMAT_HANDLERS_SRC "")
 add_stem2file(FORMAT_HANDLERS_SRC "${SRCDIR}/formats/%STEM%.cpp" 
-              "deflate;png;zip;zlib;")
+              "deflate;png;swf;zip;zlib;")
 include_directories(AFTER "${SRCDIR}/formats")
 
 add_library(precomp_dll_shared SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
