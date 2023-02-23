@@ -431,56 +431,6 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
   return same_byte_count;
 }
 
-unsigned char input_bytes1[DEF_COMPARE_CHUNK];
-
-long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1, unsigned char* input_bytes2, long long pos1, long long bytecount, long long& total_same_byte_count, long long& total_same_byte_count_penalty, long long& rek_same_byte_count, long long& rek_same_byte_count_penalty, long long& rek_penalty_bytes_len, long long& local_penalty_bytes_len, bool& use_penalty_bytes) {
-  int same_byte_count = 0;
-  int size1;
-  int i;
-
-  unsigned long long old_pos = file1.tellg();
-  file1.seekg(pos1, std::ios_base::beg);
-
-  file1.read(reinterpret_cast<char*>(input_bytes1), bytecount);
-  size1 = file1.gcount();
-
-  for (i = 0; i < size1; i++) {
-    if (input_bytes1[i] == input_bytes2[i]) {
-      same_byte_count++;
-      total_same_byte_count_penalty++;
-    } else {
-      total_same_byte_count_penalty -= 5; // 4 bytes = position, 1 byte = new byte
-
-      // stop, if local_penalty_bytes_len gets too big
-      if ((local_penalty_bytes_len + 5) >= MAX_PENALTY_BYTES) {
-        break;
-      }
-
-      local_penalty_bytes_len += 5;
-      // position
-      context.local_penalty_bytes[local_penalty_bytes_len-5] = (total_same_byte_count >> 24) % 256;
-      context.local_penalty_bytes[local_penalty_bytes_len-4] = (total_same_byte_count >> 16) % 256;
-      context.local_penalty_bytes[local_penalty_bytes_len-3] = (total_same_byte_count >> 8) % 256;
-      context.local_penalty_bytes[local_penalty_bytes_len-2] = total_same_byte_count % 256;
-      // new byte
-      context.local_penalty_bytes[local_penalty_bytes_len-1] = input_bytes1[i];
-    }
-    total_same_byte_count++;
-
-    if (total_same_byte_count_penalty > rek_same_byte_count_penalty) {
-      use_penalty_bytes = true;
-      rek_penalty_bytes_len = local_penalty_bytes_len;
-
-      rek_same_byte_count = total_same_byte_count;
-      rek_same_byte_count_penalty = total_same_byte_count_penalty;
-    }
-  }
-
-  file1.seekg(old_pos, std::ios_base::beg);
-
-  return same_byte_count;
-}
-
 void end_uncompressed_data(Precomp& precomp_mgr) {
 
   if (!precomp_mgr.ctx->uncompressed_data_in_work) return;
