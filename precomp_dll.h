@@ -202,7 +202,7 @@ struct recompress_deflate_result {
 int32_t fin_fget32(IStreamLike& input);
 long long fin_fget_vlint(IStreamLike& input);
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
-void fout_fput32_little_endian(OStreamLike& output, int v);
+void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
 char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres);

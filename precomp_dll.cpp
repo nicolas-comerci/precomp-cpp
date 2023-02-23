@@ -1463,7 +1463,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   return tmp_r;
 }
 
-void fout_fput32_little_endian(OStreamLike& output, int v) {
+void fout_fput32_little_endian(OStreamLike& output, unsigned int v) {
   output.put(v % 256);
   output.put((v >> 8) % 256);
   output.put((v >> 16) % 256);
