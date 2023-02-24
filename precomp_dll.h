@@ -54,11 +54,15 @@ public:
   ResultStatistics();
 };
 
-constexpr auto IN_BUF_SIZE = 65536; //input buffer
-constexpr auto DIV3CHUNK = 262143; // DIV3CHUNK is a bit smaller/larger than CHUNK, so that DIV3CHUNK mod 3 = 0
+//input buffer
+constexpr auto IN_BUF_SIZE = 65536;
+// DIV3CHUNK is a bit smaller/larger than CHUNK, so that DIV3CHUNK mod 3 = 0
+constexpr auto DIV3CHUNK = 262143;
+// CHECKBUF is a subsection of the IN_BUF, from the current position onwards, format support modules should only read this section of the IN_BUF
 constexpr auto CHECKBUF_SIZE = 4096;
 constexpr auto COPY_BUF_SIZE = 512;
-constexpr auto FAST_COPY_WORK_SIGN_DIST = 64; // update work sign after (FAST_COPY_WORK_SIGN_DIST * COPY_BUF_SIZE) bytes
+// update work sign after (FAST_COPY_WORK_SIGN_DIST * COPY_BUF_SIZE) bytes
+constexpr auto FAST_COPY_WORK_SIGN_DIST = 64;
 constexpr auto COMP_CHUNK = 512;
 constexpr auto PENALTY_BYTES_TOLERANCE = 160;
 constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;

@@ -16,7 +16,7 @@ else()
   endif()
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 if (UNIX)
   set(CMAKE_C_STANDARD 99)
   set(THREADS_PREFER_PTHREAD_FLAG ON)

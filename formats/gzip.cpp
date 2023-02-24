@@ -3,7 +3,7 @@
 bool gzip_header_check(Precomp& precomp_mgr, const unsigned char* checkbuf) {
   if ((*checkbuf == 31) && (*(checkbuf + 1) == 139)) {
     // check zLib header in GZip header
-    int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 2] & 15);
+    int compression_method = (*(checkbuf + 2) & 15);
     // reserved FLG bits must be zero
     if ((compression_method == 8) && ((*(checkbuf + 3) & 224) == 0)) return true;
   }
