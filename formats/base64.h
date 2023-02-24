@@ -23,6 +23,6 @@ bool base64_header_check(const unsigned char* checkbuf);
 
 base64_precompression_result precompress_base64(Precomp& precomp_mgr);
 
-void recompress_base64(Precomp& precomp_mgr, unsigned char precomp_hdr_flags);
+void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_B64_HANDLER_H

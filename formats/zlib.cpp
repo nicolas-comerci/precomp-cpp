@@ -23,6 +23,6 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr) {
   return result;
 }
 
-void recompress_zlib(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_zlib(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   recompress_deflate(precomp_mgr, precomp_hdr_flags, true, temp_files_tag() + "_recomp_zlib", "raw zLib");
 }

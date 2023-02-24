@@ -7,6 +7,6 @@ bool gzip_header_check(Precomp& precomp_mgr, const unsigned char* checkbuf);
 
 deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr);
 
-void recompress_gzip(Precomp& precomp_mgr, unsigned char precomp_hdr_flags);
+void recompress_gzip(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_GZIP_HANDLER_H

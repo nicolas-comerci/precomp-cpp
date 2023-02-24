@@ -1,8 +1,9 @@
 #include "bzip2.h"
 
-#include <memory>
-
 #include "contrib/bzip2/bzlib.h"
+
+#include <cstddef>
+#include <memory>
 
 bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 void bzip2_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
@@ -350,12 +351,12 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr) {
 
     // write compressed data header (bZip2)
 
-    int header_byte = 1;
+    std::byte header_byte{ 0b1 };
     if (precomp_mgr.ctx->best_penalty_bytes_len != 0) {
-      header_byte += 2;
+      header_byte |= std::byte{ 0b10 };
     }
     if (r.success) {
-      header_byte += 128;
+      header_byte |= std::byte{ 0b10000000 };
     }
     result.flags = header_byte;
 
@@ -448,13 +449,13 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
   return BZ_OK;
 }
 
-void recompress_bzip2(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
 
   unsigned char header2 = precomp_mgr.ctx->fin->get();
 
-  bool penalty_bytes_stored = ((precomp_hdr_flags & 2) == 2);
-  bool recursion_used = ((precomp_hdr_flags & 128) == 128);
+  bool penalty_bytes_stored = (precomp_hdr_flags & std::byte{ 0b10 }) == std::byte{ 0b10 };
+  bool recursion_used = (precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
   int level = header2;
 
   print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", level);
@@ -506,9 +507,9 @@ void recompress_bzip2(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
     long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
     int pb_pos = 0;
     for (int pbc = 0; pbc < precomp_mgr.ctx->penalty_bytes_len; pbc += 5) {
-      pb_pos = ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc]) << 24;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 1]) << 16;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 2]) << 8;
+      pb_pos = (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc] << 24;
+      pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 1] << 16;
+      pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 2] << 8;
       pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 3];
 
       precomp_mgr.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);

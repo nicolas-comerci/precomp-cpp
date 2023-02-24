@@ -166,7 +166,7 @@ public:
 
   bool success;
   char format;
-  char flags = 0;
+  std::byte flags{ 0 };
   std::vector<char> penalty_bytes;
   long long original_size = -1;
   long long precompressed_size = -1;
@@ -205,7 +205,6 @@ void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
 void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
-char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres);
 
 void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress = false);
 

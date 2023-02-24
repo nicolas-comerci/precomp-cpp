@@ -8,6 +8,6 @@ bool jpeg_header_check(const unsigned char* checkbuf);
 
 precompression_result precompress_jpeg(Precomp& precomp_mgr);
 
-void recompress_jpg(Precomp& precomp_mgr, unsigned char flags);
+void recompress_jpg(Precomp& precomp_mgr, std::byte flags);
 
 #endif //PRECOMP_JPEG_HANDLER_H

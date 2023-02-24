@@ -1,5 +1,6 @@
 #include "pdf.h"
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 
@@ -170,14 +171,14 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned i
       // write compressed data header (PDF) without 12 first bytes
       //   (/FlateDecode)
 
-      unsigned char bmp_c = 0;
+      std::byte bmp_c{ 0 };
       if (result.bmp_header_type == BMP_HEADER_8BPP) {
         // 8 Bit, Bit 7,6 = 01
-        bmp_c = 64;
+        bmp_c = std::byte{ 0b01000000 };
       }
       else if (result.bmp_header_type == BMP_HEADER_24BPP) {
         // 24 Bit, Bit 7,6 = 10
-        bmp_c = 128;
+        bmp_c = std::byte{ 0b10000000 };
       }
 
       result.flags = bmp_c;
@@ -335,7 +336,7 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr) {
   return result;
 }
 
-void recompress_pdf(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   // restore PDF header
@@ -343,7 +344,7 @@ void recompress_pdf(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
   fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, false);
   debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
 
-  int bmp_c = (precomp_hdr_flags >> 6);
+  int bmp_c = static_cast<int>(precomp_hdr_flags & std::byte{ 0b11000000 });
   if (bmp_c == 1) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (8-Bit)\n");
   if (bmp_c == 2) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (24-Bit)\n");
 

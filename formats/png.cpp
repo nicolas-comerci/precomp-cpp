@@ -242,7 +242,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
   return result;
 }
 
-void recompress_png(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_png(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   // restore IDAT
   ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
   recompress_deflate(precomp_mgr, precomp_hdr_flags, true, temp_files_tag() + "_recomp_png", "PNG");
@@ -301,7 +301,7 @@ bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin,
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-void recompress_multipng(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_multipng(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   // restore first IDAT
   ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
 

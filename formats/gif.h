@@ -17,6 +17,6 @@ bool gif_header_check(const unsigned char* checkbuf);
 
 gif_precompression_result precompress_gif(Precomp& precomp_mgr);
 
-void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2);
+void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string& tempfile, std::string& tempfile2);
 
 #endif // PRECOMP_GIF_HANDLER_H

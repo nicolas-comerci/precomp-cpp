@@ -163,7 +163,7 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long mp3
       result.precompressed_stream = std::move(tmpfile);
     }
 
-    result.flags = 1; // no penalty bytes
+    result.flags = std::byte{ 0b1 }; // no penalty bytes
   }
   else {
     print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");

@@ -94,7 +94,7 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
-  precomp_mgr.ctx->fout->put(flags);
+  precomp_mgr.ctx->fout->put(static_cast<char>(flags));
   precomp_mgr.ctx->fout->put(format);
 }
 
@@ -917,9 +917,9 @@ while (precomp_mgr.ctx->fin->good()) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
-  unsigned char header1 = precomp_mgr.ctx->fin->get();
+  std::byte header1 = static_cast<std::byte>(precomp_mgr.ctx->fin->get());
   if (!precomp_mgr.ctx->fin->good()) break;
-  if (header1 == 0) { // uncompressed data
+  if (header1 == std::byte{ 0 }) { // uncompressed data
     long long uncompressed_data_length;
     uncompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
 
@@ -1422,9 +1422,6 @@ void fout_fput_vlint(OStreamLike& output, unsigned long long v) {
     v = (v >> 7) - 1;
   }
   output.put(v);
-}
-char make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
-  return 1 + (rdres.zlib_perfect ? rdres.zlib_comp_level << 2 : 2);
 }
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
   if (!rdres.zlib_perfect) {

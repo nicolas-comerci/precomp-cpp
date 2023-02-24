@@ -39,7 +39,7 @@ deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr) {
   return result;
 }
 
-void recompress_zip(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_zip(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   precomp_mgr.ctx->fout->put('P');
   precomp_mgr.ctx->fout->put('K');
   precomp_mgr.ctx->fout->put(3);

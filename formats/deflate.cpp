@@ -1,10 +1,15 @@
 #include "deflate.h"
 
+#include "contrib/preflate/preflate.h"
+#include "contrib/zlib/zlib.h"
+
+#include <cstddef>
 #include <memory>
 #include <sstream>
 
-#include "contrib/preflate/preflate.h"
-#include "contrib/zlib/zlib.h"
+std::byte make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
+  return std::byte{ 0b1 } | (rdres.zlib_perfect ? static_cast<std::byte>(rdres.zlib_comp_level) << 2 : std::byte{ 0b10 });
+}
 
 void deflate_precompression_result::dump_recon_data_to_outfile(Precomp& precomp_mgr) {
   if (!rdres.zlib_perfect) {
@@ -15,7 +20,7 @@ void deflate_precompression_result::dump_recon_data_to_outfile(Precomp& precomp_
 deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
 void deflate_precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
-  precomp_mgr.ctx->fout->put(make_deflate_pcf_hdr_flags(rdres) + flags);
+  precomp_mgr.ctx->fout->put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags));
   precomp_mgr.ctx->fout->put(format);
   if (rdres.zlib_perfect) {
     precomp_mgr.ctx->fout->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
@@ -242,7 +247,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       debug_pos(precomp_mgr);
 
-      result.flags = r.success ? 128 : 0;
+      result.flags = r.success ? std::byte{ 0b10000000 } : std::byte{ 0 };
       result.inc_last_hdr_byte = inc_last;
       result.zlib_header = std::vector(hdr, hdr + hdr_length);
       if (r.success) {
@@ -419,15 +424,15 @@ bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OSt
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const unsigned char flags,
+void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
   unsigned char* hdr_data, unsigned& hdr_length,
   const bool inc_last_hdr_byte) {
-  rdres.zlib_perfect = (flags & 2) == 0;
+  rdres.zlib_perfect = (flags & std::byte{ 0b10 }) == std::byte{ 0 };
   if (rdres.zlib_perfect) {
-    unsigned char zlib_params = input.get();
-    rdres.zlib_comp_level = (flags & 0x3c) >> 2;
-    rdres.zlib_mem_level = zlib_params & 0x0f;
-    rdres.zlib_window_bits = ((zlib_params >> 4) & 0x7) + 8;
+    const auto zlib_params = static_cast<std::byte>(input.get());
+    rdres.zlib_comp_level = static_cast<char>((flags & std::byte{ 0b00111100 }) >> 2);
+    rdres.zlib_mem_level = static_cast<char>(zlib_params & std::byte{ 0b00001111 });
+    rdres.zlib_window_bits = static_cast<char>(static_cast<int>(zlib_params & std::byte{ 0b01110000 }) + 8);
   }
   hdr_length = fin_fget_vlint(input);
   if (!inc_last_hdr_byte) {
@@ -440,7 +445,7 @@ void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_de
   output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
 
-void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const unsigned char flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
+void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
   fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, flags, hdr, hdr_length, inc_last);
   fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
 
@@ -469,7 +474,7 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
 
-void recompress_deflate(Precomp& precomp_mgr, unsigned char precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
+void recompress_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   int64_t recursion_data_length = 0;
@@ -477,7 +482,7 @@ void recompress_deflate(Precomp& precomp_mgr, unsigned char precomp_hdr_flags, b
   fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, incl_last_hdr_byte);
 
   // write decompressed data
-  if (precomp_hdr_flags & 128) {
+  if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
     PrecompTmpFile tmpfile;
     tmpfile.open(filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -502,6 +507,6 @@ void recompress_deflate(Precomp& precomp_mgr, unsigned char precomp_hdr_flags, b
   }
 }
 
-void recompress_raw_deflate(Precomp& precomp_mgr, unsigned char precomp_hdr_flags) {
+void recompress_raw_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   recompress_deflate(precomp_mgr, precomp_hdr_flags, false, temp_files_tag() + "_recomp_deflate", "brute mode");
 }

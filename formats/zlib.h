@@ -7,6 +7,6 @@ bool zlib_header_check(const unsigned char* checkbuf);
 
 deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr);
 
-void recompress_zlib(Precomp& precomp_mgr, unsigned char precomp_hdr_flags);
+void recompress_zlib(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_ZLIB_HANDLER_H

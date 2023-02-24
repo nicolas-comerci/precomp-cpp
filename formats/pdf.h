@@ -26,6 +26,6 @@ public:
 
 pdf_precompression_result precompress_pdf(Precomp& precomp_mgr);
 
-void recompress_pdf(Precomp& precomp_mgr, unsigned char precomp_hdr_flags);
+void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_PDF_HANDLER_H

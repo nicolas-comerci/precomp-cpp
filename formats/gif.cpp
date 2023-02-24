@@ -2,6 +2,8 @@
 
 #include "contrib/giflib/precomp_gif.h"
 
+#include <cstddef>
+
 gif_precompression_result::gif_precompression_result() : precompression_result(D_GIF) {}
 void gif_precompression_result::dump_gif_diff_to_outfile(Precomp& precomp_mgr) {
   // store diff bytes
@@ -377,13 +379,13 @@ bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
 
-void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::string& tempfile, std::string& tempfile2)
+void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string& tempfile, std::string& tempfile2)
 {
   unsigned char block_size = 255;
 
-  bool penalty_bytes_stored = ((header1 & 2) == 2);
-  if ((header1 & 4) == 4) block_size = 254;
-  bool recompress_success_needed = ((header1 & 128) == 128);
+  const bool penalty_bytes_stored = ((header1 & std::byte{ 0b10 }) == std::byte{ 0b10 });
+  if ((header1 & std::byte{ 0b100 }) == std::byte{ 0b100 }) block_size = 254;
+  const bool recompress_success_needed = ((header1 & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 });
 
   GifDiffStruct gDiff;
 
@@ -402,8 +404,8 @@ void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::st
     precomp_mgr.ctx->fin->read(precomp_mgr.ctx->penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes_len);
   }
 
-  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  const long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  const long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
 
@@ -439,7 +441,7 @@ void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::st
     }
   }
 
-  long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
+  const long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
 
   {
     PrecompTmpFile frecomp;
@@ -453,7 +455,7 @@ void try_recompression_gif(Precomp& precomp_mgr, unsigned char& header1, std::st
   if (penalty_bytes_stored) {
     precomp_mgr.ctx->fout->flush();
 
-    long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
+    const long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
 
     int pb_pos = 0;
     for (int pbc = 0; pbc < precomp_mgr.ctx->penalty_bytes_len; pbc += 5) {
@@ -549,11 +551,11 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr) {
         result.success = true;
 
         // write compressed data header (GIF)
-        unsigned char add_bits = 0;
-        if (!penalty_bytes.empty()) add_bits += 2;
-        if (block_size == 254) add_bits += 4;
-        if (recompress_success_needed) add_bits += 128;
-        result.flags = 1 + add_bits;
+        std::byte add_bits {0};
+        if (!penalty_bytes.empty()) add_bits |= std::byte{0b10};
+        if (block_size == 254) add_bits |= std::byte{0b100};
+        add_bits |= std::byte{0b10000000};
+        result.flags = std::byte{0b1} | add_bits;
 
         result.gif_diff = std::vector(gDiff.GIFDiff, gDiff.GIFDiff + gDiff.GIFDiffIndex);
 
