@@ -282,9 +282,9 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
   return result;
 }
 
-bool check_inflate_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned char* out_buf, int cb_pos, int windowbits, bool use_brute_parameters) {
+bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, unsigned char* out_buf, int windowbits, bool use_brute_parameters) {
   // first check BTYPE bits, skip 11 ("reserved (error)")
-  int btype = (in_buf[cb_pos] & 0x07) >> 1;
+  int btype = (*checkbuf_span.data() & 0x07) >> 1;
   if (btype == 3) return false;
   // skip BTYPE = 00 ("uncompressed") only in brute mode, because these can be useful for recursion
   // and often occur in combination with static/dynamic BTYPE blocks
@@ -297,10 +297,11 @@ bool check_inflate_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned 
     // did this before)
     int histogram[256];
     memset(&histogram[0], 0, sizeof(histogram));
-    int maximum = 0, used = 0, offset = cb_pos;
-    for (int i = 0; i < 4; i++, offset += 64) {
+    int maximum = 0, used = 0;
+    auto data_ptr = checkbuf_span.data();
+    for (int i = 0; i < 4; i++, data_ptr += 64) {
       for (int j = 0; j < 64; j++) {
-        int* freq = &histogram[in_buf[offset + j]];
+        int* freq = &histogram[*(data_ptr + j)];
         used += ((*freq) == 0);
         maximum += (++(*freq)) > maximum;
       }
@@ -326,7 +327,7 @@ bool check_inflate_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned 
   precomp_mgr.call_progress_callback();
 
   strm.avail_in = 2048;
-  strm.next_in = in_buf + cb_pos;
+  strm.next_in = checkbuf_span.data();
 
   /* run inflate() on input until output buffer not full */
   do {
@@ -362,14 +363,14 @@ bool check_inflate_result(Precomp& precomp_mgr, unsigned char* in_buf, unsigned 
   return false;
 }
 
-bool check_raw_deflate_stream_start(Precomp& precomp_mgr) {
-  return check_inflate_result(precomp_mgr, precomp_mgr.ctx->in_buf, precomp_mgr.out, precomp_mgr.ctx->cb, -15, true);
+bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+  return check_inflate_result(precomp_mgr, checkbuf_span, precomp_mgr.out, -15, true);
 }
 
-deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr) {
+deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
   return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
-    D_BRUTE, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb, 0, false,
+    D_BRUTE, checkbuf_span.data(), 0, false,
     "(brute mode)", temp_files_tag() + "_decomp_brute");
 }
 

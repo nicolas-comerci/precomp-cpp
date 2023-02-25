@@ -93,9 +93,7 @@ public:
 
   long long input_file_pos;
   unsigned char in_buf[IN_BUF_SIZE];
-  int cb; // "checkbuf"
   long long saved_input_file_pos;
-  long long saved_cb;
 
   // Uncompressed data info
   long long uncompressed_pos;
@@ -173,11 +171,12 @@ public:
   std::byte flags{ 0 };
   std::vector<char> penalty_bytes;
   long long original_size = -1;
+  long long input_pos_extra_add = 0;  // this is so we can skip headers and stuff like that as well as the precompressed stream, after the module is done
   long long precompressed_size = -1;
   std::unique_ptr<IStreamLike> precompressed_stream;
 
   virtual void dump_to_outfile(Precomp& precomp_mgr);
-  virtual long long input_pos_add_offset() { return original_size - 1; }
+  virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
 };
 
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here

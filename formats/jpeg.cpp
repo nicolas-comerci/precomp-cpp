@@ -16,7 +16,8 @@ const char* packjpg_version_info() {
   return pjglib_version_info();
 }
 
-bool jpeg_header_check(const unsigned char* checkbuf) {
+bool jpeg_header_check(const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
   return
     *checkbuf == 0xFF && *(checkbuf + 1) == 0xD8 &&
@@ -313,11 +314,11 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   return result;
 }
 
-precompression_result precompress_jpeg(Precomp& precomp_mgr) {
+precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
   precompression_result result = precompression_result(D_JPG);
   bool done = false, found = false;
-  bool hasQuantTable = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xDB);
-  bool progressive_flag = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] == 0xC2);
+  bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
+  bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);
   precomp_mgr.ctx->input_file_pos += 2;
 
   do {

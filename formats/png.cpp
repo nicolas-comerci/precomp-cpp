@@ -4,8 +4,8 @@
 
 #include "contrib/preflate/preflate.h"
 
-bool png_header_check(unsigned char* checkbuf) {
-  return memcmp(checkbuf, "IDAT", 4) == 0;
+bool png_header_check(std::span<unsigned char> checkbuf) {
+  return memcmp(checkbuf.data(), "IDAT", 4) == 0;
 }
 
 png_precompression_result::png_precompression_result() : deflate_precompression_result(D_PNG) {}
@@ -56,7 +56,7 @@ long long png_precompression_result::input_pos_add_offset() {
     // add IDAT chunk overhead
     idat_add_offset += idat_pairs_written_count * 12;
   }
-  return original_size + idat_add_offset - 1;
+  return deflate_precompression_result::input_pos_add_offset() + idat_add_offset;
 }
 
 void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
@@ -152,9 +152,6 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
   std::vector<unsigned int> idat_crcs;
   idat_crcs.reserve(100 * sizeof(unsigned int));
 
-  precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-  precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
-
   int idat_count = 0;
   bool zlib_header_correct = false;
 
@@ -235,10 +232,12 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
   }
   idat_lengths[0] += 2;
 
-  precomp_mgr.ctx->input_file_pos += 6;
-  auto result = try_decompression_png_multi(precomp_mgr, tmp_png, idat_count, idat_lengths, idat_crcs, zlib_header);
-  precomp_mgr.ctx->cb += 6;
+  precomp_mgr.ctx->input_file_pos += 6; // skip PNG header
 
+  auto result = try_decompression_png_multi(precomp_mgr, tmp_png, idat_count, idat_lengths, idat_crcs, zlib_header);
+
+  precomp_mgr.ctx->input_file_pos -= 6; // restore input pos
+  result.input_pos_extra_add = 6;
   return result;
 }
 

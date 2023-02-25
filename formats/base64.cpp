@@ -4,7 +4,8 @@
 #include <cstring>
 #include <memory>
 
-bool base64_header_check(const unsigned char* checkbuf) {
+bool base64_header_check(const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   if ((*(checkbuf + 1) == 'o') && (*(checkbuf + 2) == 'n') && (*(checkbuf + 3) == 't') && (*(checkbuf + 4) == 'e')) {
     unsigned char cte_detect[33];
     for (int i = 0; i < 33; i++) {
@@ -150,7 +151,8 @@ void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& fi
   } while ((remaining_bytes > 0) && (avail_in > 0));
 }
 
-base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int base64_header_length) {
+base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_decomp_base64", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -319,7 +321,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
       }
 
       result.flags = header_byte;
-      result.base64_header = std::vector(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb], &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb] + base64_header_length);
+      result.base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
 
       result.original_size = precomp_mgr.ctx->identical_bytes;
       result.precompressed_size = precomp_mgr.ctx->identical_bytes_decomp;
@@ -344,18 +346,19 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
   return result;
 }
 
-base64_precompression_result precompress_base64(Precomp& precomp_mgr) {
+base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();
   // search for double CRLF, all between is "header"
   int base64_header_length = 33;
   bool found_double_crlf = false;
   do {
-    if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length] == 13) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length + 1] == 10)) {
-      if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length + 2] == 13) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length + 3] == 10)) {
+    if ((*(checkbuf + base64_header_length) == 13) && (*(checkbuf + base64_header_length + 1) == 10)) {
+      if ((*(checkbuf + base64_header_length + 2) == 13) && (*(checkbuf + base64_header_length + 3) == 10)) {
         found_double_crlf = true;
         base64_header_length += 4;
         // skip additional CRLFs
-        while ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length] == 13) && (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + base64_header_length + 1] == 10)) {
+        while ((*(checkbuf + base64_header_length) == 13) && (*(checkbuf + base64_header_length + 1) == 10)) {
           base64_header_length += 2;
         }
         break;
@@ -367,9 +370,10 @@ base64_precompression_result precompress_base64(Precomp& precomp_mgr) {
   if (found_double_crlf) {
     precomp_mgr.ctx->input_file_pos += base64_header_length; // skip "header"
 
-    result = try_decompression_base64(precomp_mgr, base64_header_length);
+    result = try_decompression_base64(precomp_mgr, base64_header_length, checkbuf_span);
 
-    precomp_mgr.ctx->cb += base64_header_length;
+    precomp_mgr.ctx->input_file_pos -= base64_header_length; // restore pos
+    result.input_pos_extra_add += base64_header_length;
   }
   return result;
 }

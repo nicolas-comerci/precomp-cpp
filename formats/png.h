@@ -3,7 +3,9 @@
 #include "precomp_dll.h"
 #include "formats/deflate.h"
 
-bool png_header_check(unsigned char* checkbuf);
+#include <span>
+
+bool png_header_check(std::span<unsigned char> checkbuf);
 
 class png_precompression_result: public deflate_precompression_result {
 protected:

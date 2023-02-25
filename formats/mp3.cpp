@@ -10,8 +10,8 @@ const char* packmp3_version_info() {
   return pmplib_version_info();
 }
 
-bool mp3_header_check(const unsigned char* checkbuf) {
-  return *checkbuf == 0xFF && (*(checkbuf + 1) & 0xE0) == 0xE0;
+bool mp3_header_check(const std::span<unsigned char> checkbuf_span) {
+  return *checkbuf_span.data() == 0xFF && (*(checkbuf_span.data() + 1) & 0xE0) == 0xE0;
 }
 
 class mp3_suppression_vars {

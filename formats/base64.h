@@ -2,6 +2,8 @@
 #define PRECOMP_B64_HANDLER_H
 #include "precomp_dll.h"
 
+#include <span>
+
 class base64_precompression_result : public precompression_result {
 public:
   std::vector<unsigned char> base64_header;
@@ -19,9 +21,9 @@ public:
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-bool base64_header_check(const unsigned char* checkbuf);
+bool base64_header_check(const std::span<unsigned char> checkbuf_span);
 
-base64_precompression_result precompress_base64(Precomp& precomp_mgr);
+base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
 
 void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

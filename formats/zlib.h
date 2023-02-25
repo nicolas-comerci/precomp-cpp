@@ -3,9 +3,11 @@
 #include "precomp_dll.h"
 #include "deflate.h"
 
-bool zlib_header_check(const unsigned char* checkbuf);
+#include <span>
 
-deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr);
+bool zlib_header_check(const std::span<unsigned char> checkbuf_span);
+
+deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
 
 void recompress_zlib(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

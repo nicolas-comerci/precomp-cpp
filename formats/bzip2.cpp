@@ -19,7 +19,8 @@ void bzip2_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-bool bzip2_header_check(const unsigned char* checkbuf) {
+bool bzip2_header_check(const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   // BZhx = header, x = compression level/blocksize (1-9)
   return (*checkbuf == 'B') && (*(checkbuf + 1) == 'Z') && (*(checkbuf + 2) == 'h');
 }
@@ -303,8 +304,8 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& file, long 
   return r;
 }
 
-bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr) {
-  int compression_level = precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + 3] - '0';
+bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+  int compression_level = *(checkbuf_span.data() + 3) - '0';
   bzip2_precompression_result result = bzip2_precompression_result(compression_level);
 
   if ((compression_level < 1) || (compression_level > 9)) return result;

@@ -105,7 +105,8 @@ bool recompress_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFi
   return recompress_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool gif_header_check(const unsigned char* checkbuf) {
+bool gif_header_check(const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   return
     *checkbuf == 'G' && *(checkbuf + 1) == 'I' && *(checkbuf + 2) == 'F' &&
     *(checkbuf + 3) == '8' && (*(checkbuf + 4) == '7' || *(checkbuf + 4) == '9') && *(checkbuf + 5) == 'a';
@@ -474,7 +475,7 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
   GifDiffFree(&gDiff);
 }
 
-gif_precompression_result precompress_gif(Precomp& precomp_mgr) {
+gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
   gif_precompression_result result = gif_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile{ new PrecompTmpFile() };
   tmpfile->open(temp_files_tag() + "_decomp_gif", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -482,7 +483,7 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr) {
   unsigned char version[5];
 
   for (int i = 0; i < 5; i++) {
-    version[i] = precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + i];
+    version[i] = *(checkbuf_span.data() + i);
   }
 
   unsigned char block_size = 255;

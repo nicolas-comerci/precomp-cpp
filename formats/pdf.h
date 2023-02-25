@@ -3,13 +3,15 @@
 #include "precomp_dll.h"
 #include "deflate.h"
 
+#include <span>
+
 enum BMP_HEADER_TYPE {
   BMP_HEADER_NONE = 0,
   BMP_HEADER_8BPP = 1,
   BMP_HEADER_24BPP = 2
 };
 
-bool pdf_header_check(unsigned char* checkbuf);
+bool pdf_header_check(std::span<unsigned char> checkbuf_span);
 
 class pdf_precompression_result: public deflate_precompression_result {
 public:
@@ -24,7 +26,7 @@ public:
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr);
+pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span);
 
 void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

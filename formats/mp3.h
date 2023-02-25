@@ -2,9 +2,11 @@
 #define PRECOMP_MP3_HANDLER_H
 #include "precomp_dll.h"
 
+#include <span>
+
 const char* packmp3_version_info();
 
-bool mp3_header_check(const unsigned char* checkbuf);
+bool mp3_header_check(const std::span<unsigned char> checkbuf_span);
 
 precompression_result precompress_mp3(Precomp& precomp_mgr);
 

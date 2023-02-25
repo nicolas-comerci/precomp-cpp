@@ -4,8 +4,8 @@
 #include <cstring>
 #include <memory>
 
-bool pdf_header_check(unsigned char* checkbuf) {
-  return memcmp(checkbuf, "/FlateDecode", 12) == 0;
+bool pdf_header_check(std::span<unsigned char> checkbuf_span) {
+  return memcmp(checkbuf_span.data(), "/FlateDecode", 12) == 0;
 }
 
 pdf_precompression_result::pdf_precompression_result(unsigned int img_width, unsigned int img_height)
@@ -109,7 +109,7 @@ void pdf_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
+pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
   pdf_precompression_result result = pdf_precompression_result(img_width, img_height);
   precomp_mgr.ctx->input_file_pos += pdf_header_length; // skip PDF part
 
@@ -183,7 +183,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned i
 
       result.flags = bmp_c;
       result.inc_last_hdr_byte = false;
-      result.zlib_header = std::vector(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 12, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + pdf_header_length);
+      result.zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
 
       // write decompressed data
       unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
@@ -205,17 +205,19 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned i
     }
   }
 
-  precomp_mgr.ctx->cb += pdf_header_length;
+  precomp_mgr.ctx->input_file_pos -= pdf_header_length; // restore input pos
+  result.input_pos_extra_add += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
   return result;
 }
 
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr) {
+pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   pdf_precompression_result result = pdf_precompression_result(0, 0);
   long long act_search_pos = 12;
   bool found_stream = false;
   do {
-    if (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos] == 's') {
-      if (memcmp(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + act_search_pos, "stream", 6) == 0) {
+    if (*(checkbuf + act_search_pos) == 's') {
+      if (memcmp(checkbuf + act_search_pos, "stream", 6) == 0) {
         found_stream = true;
         break;
       }
@@ -311,23 +313,23 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr) {
     }
   }
 
-  if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 6] == 13) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 6] == 10)) {
-    if ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] == 13) || (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] == 10)) {
+  if ((*(checkbuf + act_search_pos + 6) == 13) || (*(checkbuf + act_search_pos + 6) == 10)) {
+    if ((*(checkbuf + act_search_pos + 7) == 13) || (*(checkbuf + act_search_pos + 7) == 10)) {
       // seems to be two byte EOL - zLib Header present?
-      if (((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 9]) % 31) == 0) &&
-        ((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 9] & 32) == 0)) { // FDICT must not be set
-        int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8] & 15);
+      if (((((*(checkbuf + act_search_pos + 8) << 8) + *(checkbuf + act_search_pos + 9)) % 31) == 0) &&
+        ((*(checkbuf + act_search_pos + 9) & 32) == 0)) { // FDICT must not be set
+        int compression_method = (*(checkbuf + act_search_pos + 8) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, act_search_pos + 10, width_val, height_val, bpc_val);
+          return try_decompression_pdf(precomp_mgr, checkbuf, act_search_pos + 10, width_val, height_val, bpc_val);
         }
       }
     }
     else {
       // seems to be one byte EOL - zLib Header present?
-      if ((((precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] << 8) + precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 8]) % 31) == 0) {
-        int compression_method = (precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb + act_search_pos + 7] & 15);
+      if ((((*(checkbuf + act_search_pos + 7) << 8) + *(checkbuf + act_search_pos + 8)) % 31) == 0) {
+        int compression_method = (*(checkbuf + act_search_pos + 7) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, act_search_pos + 9, width_val, height_val, bpc_val);
+          return try_decompression_pdf(precomp_mgr, checkbuf, act_search_pos + 9, width_val, height_val, bpc_val);
         }
       }
     }

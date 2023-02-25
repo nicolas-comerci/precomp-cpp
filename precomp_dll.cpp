@@ -66,6 +66,7 @@
 #include "formats/png.h"
 #include "formats/swf.h"
 #include "formats/base64.h"
+#include <span>
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -488,7 +489,7 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
-  precomp_mgr.ctx->cb = -1;
+  std::span<unsigned char> checkbuf;
 
   precomp_mgr.ctx->anything_was_used = false;
   precomp_mgr.ctx->non_zlib_was_used = false;
@@ -502,21 +503,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
     precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
     in_buf_pos = precomp_mgr.ctx->input_file_pos;
-    precomp_mgr.ctx->cb = 0;
-  } else {
-    precomp_mgr.ctx->cb++;
   }
+  checkbuf = std::span(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->input_file_pos - in_buf_pos], CHECKBUF_SIZE);
 
   ignore_this_pos = precomp_mgr.switches.ignore_set.find(precomp_mgr.ctx->input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
   if (!ignore_this_pos) {
 
     // ZIP header?
-    if (precomp_mgr.switches.use_zip && zip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+    if (precomp_mgr.switches.use_zip && zip_header_check(precomp_mgr, checkbuf)) {
       precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-      precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-      auto result = try_decompression_zip(precomp_mgr);
+      auto result = try_decompression_zip(precomp_mgr, checkbuf);
       compressed_data_found = result.success;
 
       if (result.success) {
@@ -528,20 +526,17 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
         // set input file pointer after recompressed data
         precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-        precomp_mgr.ctx->cb += result.input_pos_add_offset();
       }
       else {
         precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-        precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
-      if (gzip_header_check(precomp_mgr, &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (gzip_header_check(precomp_mgr, checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = try_decompression_gzip(precomp_mgr);
+        auto result = try_decompression_gzip(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
 
         if (result.success) {
@@ -553,21 +548,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
-      if (pdf_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
+      if (pdf_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = precompress_pdf(precomp_mgr);
+        auto result = precompress_pdf(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
 
         if (result.success) {
@@ -579,17 +571,17 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
-      if (png_header_check(precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb)) {
+      if (png_header_check(checkbuf)) {
+        precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
+
         auto result = precompress_png(precomp_mgr);
         compressed_data_found = result.success;
 
@@ -602,22 +594,19 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
 
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_gif)) { // no PNG header -> GIF header?
-      if (gif_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (gif_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = precompress_gif(precomp_mgr);
+        auto result = precompress_gif(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -628,21 +617,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
-      if (jpeg_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (jpeg_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = precompress_jpeg(precomp_mgr);
+        auto result = precompress_jpeg(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -653,19 +639,16 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
-      if (mp3_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) { // frame start
+      if (mp3_header_check(checkbuf)) { // frame start
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
         auto result = precompress_mp3(precomp_mgr);
         compressed_data_found = result.success;
@@ -679,22 +662,19 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
       // CWS = Compressed SWF file
-      if (swf_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (swf_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = try_decompression_swf(precomp_mgr);
+        auto result = try_decompression_swf(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -703,21 +683,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_base64)) { // no SWF header -> Base64?
-      if (base64_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (base64_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = precompress_base64(precomp_mgr);
+        auto result = precompress_base64(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -726,21 +703,18 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
           // set input file pointer after recompressed data
           precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-          precomp_mgr.ctx->cb += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_bzip2)) { // no Base64 header -> bZip2?
-      if (bzip2_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+      if (bzip2_header_check(checkbuf)) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        auto result = try_decompression_bzip2(precomp_mgr);
+        auto result = try_decompression_bzip2(precomp_mgr, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           end_uncompressed_data(precomp_mgr);
@@ -748,12 +722,10 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
           result.dump_to_outfile(precomp_mgr);
 
           // set input file pointer after recompressed data
-          precomp_mgr.ctx->input_file_pos += precomp_mgr.ctx->best_identical_bytes - 1;
-          precomp_mgr.ctx->cb += precomp_mgr.ctx->best_identical_bytes - 1;
+          precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
         }
         else {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }
@@ -780,11 +752,10 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
       }
 
       if (!ignore_this_position) {
-        if (zlib_header_check(&precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb])) {
+        if (zlib_header_check(checkbuf)) {
           precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-          precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-          auto result = try_decompression_zlib(precomp_mgr);
+          auto result = try_decompression_zlib(precomp_mgr, checkbuf);
           compressed_data_found = result.success;
           if (result.success) {
             compressed_data_found = true;
@@ -795,11 +766,9 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
             // set input file pointer after recompressed data
             precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-            precomp_mgr.ctx->cb += result.input_pos_add_offset();
           }
           else {
             precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-            precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
           }
         }
       }
@@ -828,10 +797,9 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
       if (!ignore_this_position) {
         precomp_mgr.ctx->saved_input_file_pos = precomp_mgr.ctx->input_file_pos;
-        precomp_mgr.ctx->saved_cb = precomp_mgr.ctx->cb;
 
-        if (check_raw_deflate_stream_start(precomp_mgr)) {
-          auto result = try_decompression_raw_deflate(precomp_mgr);
+        if (check_raw_deflate_stream_start(precomp_mgr, checkbuf)) {
+          auto result = try_decompression_raw_deflate(precomp_mgr, checkbuf);
           compressed_data_found = result.success;
           if (result.success) {
             compressed_data_found = true;
@@ -842,13 +810,11 @@ int compress_file_impl(Precomp& precomp_mgr, float min_percent, float max_percen
 
             // set input file pointer after recompressed data
             precomp_mgr.ctx->input_file_pos += result.input_pos_add_offset();
-            precomp_mgr.ctx->cb += result.input_pos_add_offset();
           }
         }
 
         if (!compressed_data_found) {
           precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-          precomp_mgr.ctx->cb = precomp_mgr.ctx->saved_cb;
         }
       }
     }

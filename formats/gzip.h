@@ -3,9 +3,11 @@
 #include "precomp_dll.h"
 #include "formats/deflate.h"
 
-bool gzip_header_check(Precomp& precomp_mgr, const unsigned char* checkbuf);
+#include <span>
 
-deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr);
+bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
+
+deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
 
 void recompress_gzip(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

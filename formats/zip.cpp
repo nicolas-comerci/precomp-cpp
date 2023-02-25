@@ -1,6 +1,7 @@
 #include "zip.h"
 
-bool zip_header_check(Precomp& precomp_mgr, const unsigned char* checkbuf) {
+bool zip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+  auto checkbuf = checkbuf_span.data();
   if (
     (*checkbuf == 'P') && (*(checkbuf + 1) == 'K') &&
     (*(checkbuf + 2) == 3) && (*(checkbuf + 3) == 4)
@@ -23,19 +24,20 @@ bool zip_header_check(Precomp& precomp_mgr, const unsigned char* checkbuf) {
   return false;
 }
 
-deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr) {
-  unsigned char* checkbuf = &precomp_mgr.ctx->in_buf[precomp_mgr.ctx->cb];
+deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+  unsigned char* checkbuf = checkbuf_span.data();
   unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
   unsigned int extra_field_length = (*(checkbuf + 29) << 8) + *(checkbuf + 28);
   auto header_length = 30 + filename_length + extra_field_length;
 
-  precomp_mgr.ctx->input_file_pos += header_length;
+  precomp_mgr.ctx->input_file_pos += header_length;  // skip ZIP header, get in position for deflate stream
 
   auto result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
-    D_ZIP, precomp_mgr.ctx->in_buf + precomp_mgr.ctx->cb + 4, header_length - 4, false,
+    D_ZIP, checkbuf + 4, header_length - 4, false,
     "in ZIP", temp_files_tag() + "_decomp_zip");
 
-  precomp_mgr.ctx->cb += header_length;
+  precomp_mgr.ctx->input_file_pos -= header_length;  // restore input file pos
+  result.input_pos_extra_add += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
   return result;
 }
 
