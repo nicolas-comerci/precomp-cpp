@@ -18,6 +18,7 @@
 #include <string>
 #include <fstream>
 #include <memory>
+#include <optional>
 
 enum SupportedFormats {
   D_PDF = 0,
@@ -71,9 +72,7 @@ constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 class Precomp;
 class RecursionContext: public CRecursionContext {
 public:
-  explicit RecursionContext(Precomp& instance);
-
-  Precomp& precomp_owner; // The precomp instance that owns this context
+  explicit RecursionContext(float min_percent, float max_percent);
 
   std::set<long long> intense_ignore_offsets;
   std::set<long long> brute_ignore_offsets;
@@ -87,18 +86,17 @@ public:
   void set_output_stream(std::ostream* ostream, bool take_ownership = true);
   void set_output_stream(FILE* fhandle, bool take_ownership = true);
 
-  float global_min_percent = 0;
-  float global_max_percent = 100;
+  float global_min_percent;
+  float global_max_percent;
   int comp_decomp_state = P_NONE;
 
+  long long input_file_pos;
   unsigned char in_buf[IN_BUF_SIZE];
 
   // Uncompressed data info
   long long uncompressed_pos;
-  bool uncompressed_data_in_work;
-  long long uncompressed_length = -1;
+  std::optional<long long> uncompressed_length = std::nullopt;
   long long uncompressed_bytes_total = 0;
-  long long uncompressed_bytes_written = 0;
 
   long long retval;
 
@@ -128,7 +126,7 @@ public:
   Switches switches;
   ResultStatistics statistics;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::make_unique<lzma_init_mt_extra_parameters>();
-  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(*this);
+  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(0, 100);
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
   std::string input_file_name;

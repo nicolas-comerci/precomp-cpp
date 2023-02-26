@@ -229,7 +229,7 @@ Switches::Switches(): CSwitches() {
   preflate_verify = false;
 }
 
-RecursionContext::RecursionContext(Precomp& instance): CRecursionContext(), precomp_owner(instance) {
+RecursionContext::RecursionContext(float min_percent, float max_percent): CRecursionContext(), global_min_percent(min_percent), global_max_percent(max_percent) {
   compression_otf_method = OTF_XZ_MT;
 }
 
@@ -357,8 +357,9 @@ void Precomp::set_progress_callback(std::function<void(float)> callback) {
 }
 void Precomp::call_progress_callback() {
   if (!this->progress_callback) return;
-  const auto percent = (this->get_original_context()->fin->tellg() / static_cast<float>(this->get_original_context()->fin_length)) * 100;
-  this->progress_callback(percent);
+  auto context_progress_range = this->ctx->global_max_percent - this->ctx->global_min_percent;
+  auto inner_context_progress_percent = static_cast<float>(this->ctx->input_file_pos) / this->ctx->fin_length;
+  this->progress_callback(this->ctx->global_min_percent + (context_progress_range * inner_context_progress_percent));
 }
 
 // get copyright message
@@ -422,18 +423,15 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
 }
 
 void end_uncompressed_data(Precomp& precomp_mgr) {
+  if (!precomp_mgr.ctx->uncompressed_length.has_value()) return;
 
-  if (!precomp_mgr.ctx->uncompressed_data_in_work) return;
-
-  fout_fput_vlint(*precomp_mgr.ctx->fout, precomp_mgr.ctx->uncompressed_length);
+  fout_fput_vlint(*precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length);
 
   // fast copy of uncompressed data
   precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->uncompressed_pos, std::ios_base::beg);
-  fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, precomp_mgr.ctx->uncompressed_length, true);
+  fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length, true);
 
-  precomp_mgr.ctx->uncompressed_length = -1;
-
-  precomp_mgr.ctx->uncompressed_data_in_work = false;
+  precomp_mgr.ctx->uncompressed_length = std::nullopt;
 }
 
 void init_decompression_variables(RecursionContext& context) {
@@ -479,9 +477,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
   if (precomp_mgr.recursion_depth == 0) write_header(precomp_mgr);
   precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.ctx->compression_otf_method);
 
-  precomp_mgr.ctx->uncompressed_length = -1;
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
-  precomp_mgr.ctx->uncompressed_bytes_written = 0;
 
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
@@ -492,6 +488,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->non_zlib_was_used = false;
 
   for (long long input_file_pos = 0; input_file_pos < precomp_mgr.ctx->fin_length; input_file_pos++) {
+  precomp_mgr.ctx->input_file_pos = input_file_pos;
   bool compressed_data_found = false;
 
   bool ignore_this_pos = false;
@@ -759,16 +756,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
   }
 
     if (!compressed_data_found) {
-      if (precomp_mgr.ctx->uncompressed_length == -1) {
+      if (!precomp_mgr.ctx->uncompressed_length.has_value()) {
           precomp_mgr.ctx->uncompressed_length = 0;
           precomp_mgr.ctx->uncompressed_pos = input_file_pos;
 
           // uncompressed data
           precomp_mgr.ctx->fout->put(0);
-
-          precomp_mgr.ctx->uncompressed_data_in_work = true;
       }
-      precomp_mgr.ctx->uncompressed_length++;
+      (*precomp_mgr.ctx->uncompressed_length)++;
       precomp_mgr.ctx->uncompressed_bytes_total++;
     }
 
@@ -1041,8 +1036,6 @@ void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, lon
     file1.read(reinterpret_cast<char*>(precomp_mgr.copybuf), remaining_bytes);
     file2.write(reinterpret_cast<char*>(precomp_mgr.copybuf), remaining_bytes);
   }
-
-  if ((update_progress) && (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG)) precomp_mgr.ctx->uncompressed_bytes_written += bytecount;
 }
 
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
@@ -1155,9 +1148,16 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
-void recursion_push(Precomp& precomp_mgr) {
+void recursion_push(Precomp& precomp_mgr, long long recurse_stream_length) {
+  auto context_progress_range = precomp_mgr.ctx->global_max_percent - precomp_mgr.ctx->global_min_percent;
+  auto current_context_progress_percent = static_cast<float>(precomp_mgr.ctx->input_file_pos) / precomp_mgr.ctx->fin_length;
+  auto recursion_end_progress_percent = static_cast<float>(precomp_mgr.ctx->input_file_pos + recurse_stream_length) / precomp_mgr.ctx->fin_length;
+
+  auto new_minimum = precomp_mgr.ctx->global_min_percent + (context_progress_range * current_context_progress_percent);
+  auto new_maximum = precomp_mgr.ctx->global_min_percent + (context_progress_range * recursion_end_progress_percent);
+
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
-  precomp_mgr.ctx = std::make_unique<RecursionContext>(precomp_mgr);
+  precomp_mgr.ctx = std::make_unique<RecursionContext>(new_minimum, new_maximum);
 }
 
 void recursion_pop(Precomp& precomp_mgr) {
@@ -1184,7 +1184,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   }
   tmpfile.close();
 
-  recursion_push(precomp_mgr);
+  recursion_push(precomp_mgr, compressed_bytes);
 
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
@@ -1261,7 +1261,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
   fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, tmpfile, recursion_data_length);
   tmpfile.close();
 
-  recursion_push(precomp_mgr);
+  recursion_push(precomp_mgr, recursion_data_length);
 
   precomp_mgr.ctx->fin_length = std::filesystem::file_size(tmpfile.file_path.c_str());
   auto fin = new std::ifstream();
