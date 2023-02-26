@@ -109,16 +109,17 @@ void pdf_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
+pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
   pdf_precompression_result result = pdf_precompression_result(img_width, img_height);
-  precomp_mgr.ctx->input_file_pos += pdf_header_length; // skip PDF part
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_decomp_pdf", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   init_decompression_variables(*precomp_mgr.ctx);
 
+  auto deflate_stream_pos = original_input_pos + pdf_header_length;
+
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
 
@@ -130,7 +131,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       precomp_mgr.statistics.decompressed_pdf_count++;
     }
 
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF");
+    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF", deflate_stream_pos);
 
     if (rdres.accepted) {
       result.success = true;
@@ -199,18 +200,17 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       debug_pos(precomp_mgr);
     }
     else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos);
+      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
+      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
 
-  precomp_mgr.ctx->input_file_pos -= pdf_header_length; // restore input pos
   result.input_pos_extra_add += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
   return result;
 }
 
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span) {
+pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
   pdf_precompression_result result = pdf_precompression_result(0, 0);
   long long act_search_pos = 12;
@@ -235,15 +235,15 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsign
 
   type_buf[4096] = 0;
 
-  if ((precomp_mgr.ctx->input_file_pos + act_search_pos) >= 4096) {
-    precomp_mgr.ctx->fin->seekg((precomp_mgr.ctx->input_file_pos + act_search_pos) - 4096, std::ios_base::beg);
+  if ((original_input_pos + act_search_pos) >= 4096) {
+    precomp_mgr.ctx->fin->seekg((original_input_pos + act_search_pos) - 4096, std::ios_base::beg);
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), 4096);
     type_buf_length = 4096;
   }
   else {
     precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), precomp_mgr.ctx->input_file_pos + act_search_pos);
-    type_buf_length = precomp_mgr.ctx->input_file_pos + act_search_pos;
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), original_input_pos + act_search_pos);
+    type_buf_length = original_input_pos + act_search_pos;
   }
 
   // find "<<"
@@ -320,7 +320,7 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsign
         ((*(checkbuf + act_search_pos + 9) & 32) == 0)) { // FDICT must not be set
         int compression_method = (*(checkbuf + act_search_pos + 8) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, checkbuf, act_search_pos + 10, width_val, height_val, bpc_val);
+          return try_decompression_pdf(precomp_mgr, checkbuf, original_input_pos, act_search_pos + 10, width_val, height_val, bpc_val);
         }
       }
     }
@@ -329,7 +329,7 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsign
       if ((((*(checkbuf + act_search_pos + 7) << 8) + *(checkbuf + act_search_pos + 8)) % 31) == 0) {
         int compression_method = (*(checkbuf + act_search_pos + 7) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, checkbuf, act_search_pos + 9, width_val, height_val, bpc_val);
+          return try_decompression_pdf(precomp_mgr, checkbuf, original_input_pos, act_search_pos + 9, width_val, height_val, bpc_val);
         }
       }
     }

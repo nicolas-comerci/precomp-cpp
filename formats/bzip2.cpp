@@ -87,7 +87,7 @@ long long compare_file_mem_penalty(RecursionContext& context, IStreamLike& file1
   return same_byte_count;
 }
 
-long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& source, IStreamLike& compfile, int level, long long& decompressed_bytes_used) {
+long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& decompressed_stream, IStreamLike& original_bzip2, long long original_input_pos, int level, long long& decompressed_bytes_used) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -116,13 +116,13 @@ long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& source, IStreamLi
   do {
     precomp_mgr.call_progress_callback();
 
-    source.read(reinterpret_cast<char*>(precomp_mgr.in), DEF_COMPARE_CHUNK);
-    strm.avail_in = source.gcount();
-    if (source.bad()) {
+    decompressed_stream.read(reinterpret_cast<char*>(precomp_mgr.in), DEF_COMPARE_CHUNK);
+    strm.avail_in = decompressed_stream.gcount();
+    if (decompressed_stream.bad()) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    flush = source.eof() ? BZ_FINISH : BZ_RUN;
+    flush = decompressed_stream.eof() ? BZ_FINISH : BZ_RUN;
     strm.next_in = (char*)precomp_mgr.in;
     decompressed_bytes_used += strm.avail_in;
 
@@ -135,11 +135,11 @@ long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& source, IStreamLi
       have = DEF_COMPARE_CHUNK - strm.avail_out;
 
       if (have > 0) {
-        if (&compfile == precomp_mgr.ctx->fin.get()) {
-          identical_bytes_compare = compare_file_mem_penalty(*precomp_mgr.ctx, compfile, precomp_mgr.out, precomp_mgr.ctx->input_file_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
+        if (&original_bzip2 == precomp_mgr.ctx->fin.get()) {
+          identical_bytes_compare = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.out, original_input_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         }
         else {
-          identical_bytes_compare = compare_file_mem_penalty(*precomp_mgr.ctx, compfile, precomp_mgr.out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
+          identical_bytes_compare = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes);
         }
       }
 
@@ -162,29 +162,29 @@ long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& source, IStreamLi
   return rek_same_byte_count;
 }
 
-long long file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& tmpfile) {
+long long file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& decompressed_stream) {
   long long retval;
 
-  tmpfile.seekg(0, std::ios_base::end);
-  decompressed_bytes_total = tmpfile.tellg();
-  if (!tmpfile.is_open()) {
+  decompressed_stream.seekg(0, std::ios_base::end);
+  decompressed_bytes_total = decompressed_stream.tellg();
+  if (!decompressed_stream.is_open()) {
     throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
   }
 
-  tmpfile.seekg(0, std::ios_base::beg);
-  tmpfile.close();
+  decompressed_stream.seekg(0, std::ios_base::beg);
+  decompressed_stream.close();
   WrappedFStream tmpfile2;
-  tmpfile2.open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-  retval = def_compare_bzip2(precomp_mgr, tmpfile2, origfile, level, decompressed_bytes_used);
+  tmpfile2.open(decompressed_stream.file_path, std::ios_base::in | std::ios_base::binary);
+  retval = def_compare_bzip2(precomp_mgr, tmpfile2, bzip2_stream, original_input_pos, level, decompressed_bytes_used);
   tmpfile2.close();
   return retval < 0 ? -1 : retval;
 }
 
-void try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
+void try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, long long original_input_pos, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
   precomp_mgr.call_progress_callback();
 
   long long decomp_bytes_total;
-  precomp_mgr.ctx->identical_bytes = file_recompress_bzip2(precomp_mgr, origfile, level, precomp_mgr.ctx->identical_bytes_decomp, decomp_bytes_total, tmpfile);
+  precomp_mgr.ctx->identical_bytes = file_recompress_bzip2(precomp_mgr, origfile, original_input_pos, level, precomp_mgr.ctx->identical_bytes_decomp, decomp_bytes_total, tmpfile);
   if (precomp_mgr.ctx->identical_bytes > -1) { // successfully recompressed?
     if ((precomp_mgr.ctx->identical_bytes > precomp_mgr.ctx->best_identical_bytes) || ((precomp_mgr.ctx->identical_bytes == precomp_mgr.ctx->best_identical_bytes) && (precomp_mgr.ctx->penalty_bytes_len < precomp_mgr.ctx->best_penalty_bytes_len))) {
       if (precomp_mgr.ctx->identical_bytes > precomp_mgr.switches.min_ident_size) {
@@ -286,28 +286,27 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
 
 }
 
-long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& file, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
+long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, long long& compressed_stream_size, PrecompTmpFile& decompressed_stream) {
   long long r, decompressed_stream_size;
 
   precomp_mgr.call_progress_callback();
 
-  remove(tmpfile.file_path.c_str());
+  remove(decompressed_stream.file_path.c_str());
   WrappedFStream ftempout;
-  ftempout.open(tmpfile.file_path, std::ios_base::out | std::ios_base::binary);
+  ftempout.open(decompressed_stream.file_path, std::ios_base::out | std::ios_base::binary);
 
-  file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+  bzip2_stream.seekg(&bzip2_stream == precomp_mgr.ctx->fin.get() ? original_input_pos : 0, std::ios_base::beg);
 
-  r = inf_bzip2(precomp_mgr, file, ftempout, compressed_stream_size, decompressed_stream_size);
+  r = inf_bzip2(precomp_mgr, bzip2_stream, ftempout, compressed_stream_size, decompressed_stream_size);
   ftempout.close();
   if (r == BZ_OK) return decompressed_stream_size;
 
   return r;
 }
 
-bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
-  int compression_level = *(checkbuf_span.data() + 3) - '0';
+bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+  const int compression_level = *(checkbuf_span.data() + 3) - '0';
   bzip2_precompression_result result = bzip2_precompression_result(compression_level);
-
   if ((compression_level < 1) || (compression_level > 9)) return result;
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
@@ -317,14 +316,14 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
 
   // try to decompress at current position
   long long compressed_stream_size = -1;
-  precomp_mgr.ctx->retval = try_to_decompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, compressed_stream_size, *tmpfile);
+  precomp_mgr.ctx->retval = try_to_decompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compressed_stream_size, *tmpfile);
 
   if (precomp_mgr.ctx->retval > 0) { // seems to be a zLib-Stream
 
     precomp_mgr.statistics.decompressed_streams_count++;
     precomp_mgr.statistics.decompressed_bzip2_count++;
 
-    print_to_log(PRECOMP_DEBUG_LOG, "Possible bZip2-Stream found at position %lli, compression level = %i\n", precomp_mgr.ctx->saved_input_file_pos, compression_level);
+    print_to_log(PRECOMP_DEBUG_LOG, "Possible bZip2-Stream found at position %lli, compression level = %i\n", original_input_pos, compression_level);
     print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", compressed_stream_size);
 
     WrappedFStream ftempout;
@@ -335,7 +334,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
   }
 
   tmpfile->reopen();
-  try_recompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, compression_level, compressed_stream_size, *tmpfile);
+  try_recompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compression_level, compressed_stream_size, *tmpfile);
 
   if ((precomp_mgr.ctx->best_identical_bytes > precomp_mgr.switches.min_ident_size) && (precomp_mgr.ctx->best_identical_bytes < precomp_mgr.ctx->best_identical_bytes_decomp)) {
     precomp_mgr.statistics.recompressed_streams_count++;
@@ -348,7 +347,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
 
     // check recursion
     tmpfile->reopen();
-    recursion_result r = recursion_compress(precomp_mgr, precomp_mgr.ctx->best_identical_bytes, precomp_mgr.ctx->best_identical_bytes_decomp, *tmpfile);
+    const recursion_result r = recursion_compress(precomp_mgr, precomp_mgr.ctx->best_identical_bytes, precomp_mgr.ctx->best_identical_bytes_decomp, *tmpfile);
 
     // write compressed data header (bZip2)
 
@@ -369,7 +368,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
 
     // write decompressed data
     if (r.success) {
-      auto rec_tmpfile = new PrecompTmpFile();
+      const auto rec_tmpfile = new PrecompTmpFile();
       rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
       result.precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
       result.recursion_filesize = r.file_length;

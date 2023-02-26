@@ -26,7 +26,7 @@ public:
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span);
+pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos);
 
 void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

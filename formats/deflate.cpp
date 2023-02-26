@@ -113,8 +113,8 @@ private:
   bool& _in_memory;
 };
 
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, PrecompTmpFile& tmpfile) {
-  file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long deflate_stream_pos, PrecompTmpFile& tmpfile) {
+  file.seekg(&file == precomp_mgr.ctx->fin.get() ? deflate_stream_pos : 0, std::ios_base::beg);
 
   recompress_deflate_result result;
 
@@ -132,7 +132,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
     result.uncompressed_stream_size = uos.written();
 
     if (precomp_mgr.switches.preflate_verify && result.accepted) {
-      file.seekg(&file == precomp_mgr.ctx->fin.get() ? precomp_mgr.ctx->input_file_pos : 0, std::ios_base::beg);
+      file.seekg(&file == precomp_mgr.ctx->fin.get() ? deflate_stream_pos : 0, std::ios_base::beg);
       OwnIStream is2(&file);
       std::vector<uint8_t> orgdata(result.compressed_stream_size);
       is2.read(orgdata.data(), orgdata.size());
@@ -166,10 +166,10 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
   return std::move(result);
 }
 
-void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type) {
+void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos) {
   if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
   std::stringstream ss;
-  ss << "Possible zLib-Stream " << type << " found at position " << context.saved_input_file_pos << std::endl;
+  ss << "Possible zLib-Stream within " << type << " found at position " << deflate_stream_pos << std::endl;
   ss << "Compressed size: " << rdres.compressed_stream_size << std::endl;
   ss << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
 
@@ -201,20 +201,20 @@ void debug_pos(Precomp& precomp_mgr) {
 }
 
 deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
-  const unsigned char* hdr, const unsigned int hdr_length, const bool inc_last, const char* debugname, std::string tmp_filename) {
+  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
   deflate_precompression_result result = deflate_precompression_result(type);
   init_decompression_variables(*precomp_mgr.ctx);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
     precomp_mgr.statistics.decompressed_streams_count++;
     dcounter++;
 
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, debugname);
+    debug_deflate_detected(*precomp_mgr.ctx, rdres, debugname, deflate_stream_pos);
 
     if (rdres.accepted) {
       result.success = rdres.accepted;
@@ -274,8 +274,8 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
       debug_pos(precomp_mgr);
     }
     else {
-      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos);
+      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
+      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
@@ -367,10 +367,10 @@ bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsign
   return check_inflate_result(precomp_mgr, checkbuf_span, precomp_mgr.out, -15, true);
 }
 
-deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
-    D_BRUTE, checkbuf_span.data(), 0, false,
+    D_BRUTE, checkbuf_span.data(), 0, original_input_pos, false,
     "(brute mode)", temp_files_tag() + "_decomp_brute");
 }
 

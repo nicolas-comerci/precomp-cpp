@@ -26,7 +26,7 @@ bool jpeg_header_check(const std::span<unsigned char> checkbuf_span) {
       );
 }
 
-precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_length, bool progressive_jpg) {
+precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
   precompression_result result = precompression_result(D_JPG);
   auto random_tag = temp_files_tag();
   std::string original_jpg_filename = random_tag + "_original_" + "jpg";
@@ -41,7 +41,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   else {
     print_to_log(PRECOMP_DEBUG_LOG, "Possible JPG found at position ");
   }
-  print_to_log(PRECOMP_DEBUG_LOG, "%lli, length %lli\n", precomp_mgr.ctx->saved_input_file_pos, jpg_length);
+  print_to_log(PRECOMP_DEBUG_LOG, "%lli, length %lli\n", jpg_start_pos, jpg_length);
   // do not recompress non-progressive JPGs when prog_only is set
   if ((!progressive_jpg) && (precomp_mgr.switches.prog_only)) {
     print_to_log(PRECOMP_DEBUG_LOG, "Skipping (only progressive JPGs mode set)\n");
@@ -60,7 +60,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
-    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+    precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
     jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
     memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + jpg_length);
     fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, jpg_length);
@@ -158,7 +158,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     {
       WrappedFStream decompressed_jpg;
       decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
-      precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+      precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
       fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
       decompressed_jpg.close();
     }
@@ -314,15 +314,16 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   return result;
 }
 
-precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos) {
   precompression_result result = precompression_result(D_JPG);
   bool done = false, found = false;
   bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
   bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);
-  precomp_mgr.ctx->input_file_pos += 2;
+
+  long long jpg_end_pos = jpg_start_pos + 2;  // skip header
 
   do {
-    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+    precomp_mgr.ctx->fin->seekg(jpg_end_pos, std::ios_base::beg);
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 5);
     if ((precomp_mgr.ctx->fin->gcount() != 5) || (precomp_mgr.in[0] != 0xFF))
       break;
@@ -336,7 +337,7 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
       // bit 4..7: precision of QT, 0 = 8 bit, otherwise 16 bit               
       if (length <= 262 && ((length - 2) % 65) == 0 && precomp_mgr.in[4] <= 3) {
         hasQuantTable = true;
-        precomp_mgr.ctx->input_file_pos += length + 2;
+        jpg_end_pos += length + 2;
       }
       else
         done = true;
@@ -344,20 +345,20 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
     }
     case 0xC4: {
       done = ((precomp_mgr.in[4] & 0xF) > 3 || (precomp_mgr.in[4] >> 4) > 1);
-      precomp_mgr.ctx->input_file_pos += length + 2;
+      jpg_end_pos += length + 2;
       break;
     }
     case 0xDA: found = hasQuantTable;
     case 0xD9: done = true; break; //EOI with no SOS?
     case 0xC2: progressive_flag = true;
     case 0xC0: done = (precomp_mgr.in[4] != 0x08);
-    default: precomp_mgr.ctx->input_file_pos += length + 2;
+    default: jpg_end_pos += length + 2;
     }
   } while (!done);
 
   if (found) {
     found = done = false;
-    precomp_mgr.ctx->input_file_pos += 5;
+    jpg_end_pos += 5;
 
     bool isMarker = (precomp_mgr.in[4] == 0xFF);
     size_t bytesRead = 0;
@@ -367,7 +368,7 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
       bytesRead = precomp_mgr.ctx->fin->gcount();
       if (!bytesRead) break;
       for (size_t i = 0; !done && (i < bytesRead); i++) {
-        precomp_mgr.ctx->input_file_pos++;
+        jpg_end_pos++;
         if (!isMarker) {
           isMarker = (precomp_mgr.in[i] == 0xFF);
         }
@@ -381,9 +382,8 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
   }
 
   if (found) {
-    long long jpg_length = precomp_mgr.ctx->input_file_pos - precomp_mgr.ctx->saved_input_file_pos;
-    precomp_mgr.ctx->input_file_pos = precomp_mgr.ctx->saved_input_file_pos;
-    result = try_decompression_jpg(precomp_mgr, jpg_length, progressive_flag);
+    long long jpg_length = jpg_end_pos - jpg_start_pos;
+    result = try_decompression_jpg(precomp_mgr, jpg_start_pos, jpg_length, progressive_flag);
   }
   return result;
 }

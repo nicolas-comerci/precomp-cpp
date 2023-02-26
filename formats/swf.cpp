@@ -9,17 +9,16 @@ bool swf_header_check(const std::span<unsigned char> checkbuf_span) {
   return cws_hdr && zlib_header_check(std::span(checkbuf + 8, checkbuf_span.size() - 8));
 }
 
-deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   deflate_precompression_result result = deflate_precompression_result(D_SWF);
   //int windowbits = (*(checkbuf_span.data() + 8) >> 4) + 8;
 
-  precomp_mgr.ctx->input_file_pos += 10; // skip CWS and zLib header
+  long long deflate_stream_pos = original_input_pos + 10; // skip CWS and zLib header
 
   result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count,
-    D_SWF, checkbuf_span.data() + 3, 7, true,
+    D_SWF, checkbuf_span.data() + 3, 7, deflate_stream_pos, true,
     "in SWF", temp_files_tag() + "_original_swf");
 
-  precomp_mgr.ctx->input_file_pos -= 10; // restore input file pos
   result.input_pos_extra_add += 10;
   return result;
 }

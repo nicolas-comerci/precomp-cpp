@@ -91,9 +91,7 @@ public:
   float global_max_percent = 100;
   int comp_decomp_state = P_NONE;
 
-  long long input_file_pos;
   unsigned char in_buf[IN_BUF_SIZE];
-  long long saved_input_file_pos;
 
   // Uncompressed data info
   long long uncompressed_pos;

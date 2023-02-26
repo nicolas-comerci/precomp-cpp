@@ -475,7 +475,7 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
   GifDiffFree(&gDiff);
 }
 
-gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   gif_precompression_result result = gif_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile{ new PrecompTmpFile() };
   tmpfile->open(temp_files_tag() + "_decomp_gif", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -497,16 +497,16 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<
 
   bool recompress_success_needed = true;
 
-  print_to_log(PRECOMP_DEBUG_LOG, "Possible GIF found at position %lli\n", precomp_mgr.ctx->input_file_pos);
+  print_to_log(PRECOMP_DEBUG_LOG, "Possible GIF found at position %lli\n", original_input_pos);
 
-  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
 
   // read GIF file
   {
     WrappedFStream ftempout;
     ftempout.open(tmpfile->file_path, std::ios_base::out | std::ios_base::binary);
 
-    if (!decompress_gif(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, precomp_mgr.ctx->input_file_pos, gif_length, decomp_length, block_size, &gCode)) {
+    if (!decompress_gif(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, original_input_pos, gif_length, decomp_length, block_size, &gCode)) {
       ftempout.close();
       remove(tmpfile->file_path.c_str());
       GifDiffFree(&gDiff);
@@ -532,7 +532,7 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<
 
     WrappedFStream frecomp2;
     frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    auto [best_identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx, *precomp_mgr.ctx->fin, frecomp2, precomp_mgr.ctx->input_file_pos, 0);
+    auto [best_identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx, *precomp_mgr.ctx->fin, frecomp2, original_input_pos, 0);
     frecomp2.close();
     result.original_size = best_identical_bytes;
     result.precompressed_size = decomp_length;

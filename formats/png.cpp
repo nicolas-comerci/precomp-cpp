@@ -68,7 +68,7 @@ void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, int idat_count,
+png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long deflate_stream_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
   png_precompression_result result;
   init_decompression_variables(*precomp_mgr.ctx);
@@ -77,7 +77,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
   tmpfile->open(temp_files_tag() + "_precompressed_png", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, deflate_stream_pos, *tmpfile);
 
   result.original_size = rdres.compressed_stream_size;
   result.precompressed_size = rdres.uncompressed_stream_size;
@@ -93,7 +93,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       precomp_mgr.statistics.decompressed_png_count++;
     }
 
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG");
+    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG", deflate_stream_pos);
 
     if (rdres.accepted) {
       precomp_mgr.statistics.recompressed_streams_count++;
@@ -137,15 +137,15 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       debug_pos(precomp_mgr);
     }
     else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(precomp_mgr.ctx->input_file_pos);
+      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
+      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
   return result;
 }
 
-png_precompression_result precompress_png(Precomp& precomp_mgr) {
+png_precompression_result precompress_png(Precomp& precomp_mgr, long long original_input_pos) {
   // space for length and crc parts of IDAT chunks
   std::vector<unsigned int> idat_lengths;
   idat_lengths.reserve(100 * sizeof(unsigned int));
@@ -157,9 +157,11 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
 
   std::array<unsigned char, 2> zlib_header{};
 
+  auto deflate_stream_pos = original_input_pos + 6;
+
   // get preceding length bytes
-  if (precomp_mgr.ctx->input_file_pos >= 4) {
-    precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos - 4, std::ios_base::beg);
+  if (original_input_pos >= 4) {
+    precomp_mgr.ctx->fin->seekg(original_input_pos - 4, std::ios_base::beg);
 
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 10);
     if (precomp_mgr.ctx->fin->gcount() == 10) {
@@ -223,7 +225,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
   PrecompTmpFile tmp_png;
   tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
-  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos + 6, std::ios_base::beg); // start after zLib header
+  precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
 
   idat_lengths[0] -= 2; // zLib header length
   for (int i = 0; i < idat_count; i++) {
@@ -232,12 +234,9 @@ png_precompression_result precompress_png(Precomp& precomp_mgr) {
   }
   idat_lengths[0] += 2;
 
-  precomp_mgr.ctx->input_file_pos += 6; // skip PNG header
+  auto result = try_decompression_png_multi(precomp_mgr, tmp_png, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
-  auto result = try_decompression_png_multi(precomp_mgr, tmp_png, idat_count, idat_lengths, idat_crcs, zlib_header);
-
-  precomp_mgr.ctx->input_file_pos -= 6; // restore input pos
-  result.input_pos_extra_add = 6;
+  result.input_pos_extra_add = 6;  // add header length to the deflate stream size for full input size
   return result;
 }
 

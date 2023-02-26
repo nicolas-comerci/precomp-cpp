@@ -151,7 +151,7 @@ void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& fi
   } while ((remaining_bytes > 0) && (avail_in > 0));
 }
 
-base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
+base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
@@ -160,9 +160,11 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
   init_decompression_variables(*precomp_mgr.ctx);
   tmpfile->close();
 
+  auto base64_stream_pos = original_input_pos + base64_header_length;
+
   // try to decode at current position
   remove(tmpfile->file_path.c_str());
-  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->input_file_pos, std::ios_base::beg);
+  precomp_mgr.ctx->fin->seekg(base64_stream_pos, std::ios_base::beg);
 
   unsigned char base64_data[CHUNK >> 2];
 
@@ -282,7 +284,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
       precomp_mgr.ctx->identical_bytes = ftempout.tellg();
     }
 
-    print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result.base64_line_len.size(), precomp_mgr.ctx->saved_input_file_pos);
+    print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result.base64_line_len.size(), original_input_pos);
     print_to_log(PRECOMP_DEBUG_LOG, "Can be decoded to %lli bytes\n", precomp_mgr.ctx->identical_bytes);
 
     // try to re-encode Base64 data
@@ -300,7 +302,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
       base64_reencode(precomp_mgr, ftempout, frecomp, result.base64_line_len.size(), result.base64_line_len.data());
 
       ftempout.close();
-      precomp_mgr.ctx->identical_bytes_decomp = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, precomp_mgr.ctx->input_file_pos, 0);
+      precomp_mgr.ctx->identical_bytes_decomp = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
     }
 
     if (precomp_mgr.ctx->identical_bytes_decomp > precomp_mgr.switches.min_ident_size) {
@@ -346,7 +348,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, int 
   return result;
 }
 
-base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();
   // search for double CRLF, all between is "header"
@@ -368,11 +370,8 @@ base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std:
   } while (base64_header_length < (CHECKBUF_SIZE - 2));
 
   if (found_double_crlf) {
-    precomp_mgr.ctx->input_file_pos += base64_header_length; // skip "header"
+    result = try_decompression_base64(precomp_mgr, original_input_pos, base64_header_length, checkbuf_span);
 
-    result = try_decompression_base64(precomp_mgr, base64_header_length, checkbuf_span);
-
-    precomp_mgr.ctx->input_file_pos -= base64_header_length; // restore pos
     result.input_pos_extra_add += base64_header_length;
   }
   return result;

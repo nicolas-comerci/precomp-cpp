@@ -17,7 +17,7 @@ public:
 
 bool gif_header_check(const std::span<unsigned char> checkbuf_span);
 
-gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
+gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
 
 void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string& tempfile, std::string& tempfile2);
 

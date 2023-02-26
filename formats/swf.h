@@ -7,7 +7,7 @@
 
 bool swf_header_check(const std::span<unsigned char> checkbuf_span);
 
-deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
+deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
 
 void recompress_swf(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 
