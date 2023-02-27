@@ -282,9 +282,16 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
   return result;
 }
 
-bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, unsigned char* out_buf, int windowbits, bool use_brute_parameters) {
+int histogram[256];
+RecursionContext* prev_context;
+unsigned char prev_first_byte;
+long long prev_deflate_stream_pos;
+int prev_maximum, prev_used;
+int prev_i;
+
+bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, unsigned char* out_buf, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters) {
   // first check BTYPE bits, skip 11 ("reserved (error)")
-  int btype = (*checkbuf_span.data() & 0x07) >> 1;
+  const int btype = (*checkbuf_span.data() & 0x07) >> 1;
   if (btype == 3) return false;
   // skip BTYPE = 00 ("uncompressed") only in brute mode, because these can be useful for recursion
   // and often occur in combination with static/dynamic BTYPE blocks
@@ -295,18 +302,49 @@ bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> c
     // if a byte is present 8 or more times, it's most likely not a deflate stream
     // and could slow down the process (e.g. repeated patterns of "0xEBE1F1" or "0xEBEBEBFF"
     // did this before)
-    int histogram[256];
-    memset(&histogram[0], 0, sizeof(histogram));
     int maximum = 0, used = 0;
     auto data_ptr = checkbuf_span.data();
-    for (int i = 0; i < 4; i++, data_ptr += 64) {
-      for (int j = 0; j < 64; j++) {
+    int i, j;
+    if (precomp_mgr.ctx.get() != prev_context || prev_deflate_stream_pos + 1 != deflate_stream_pos) {
+      // if we are not at the next pos from the last run, we need to remake the whole histogram from scratch
+      memset(&histogram[0], 0, sizeof(histogram));
+      i = 0;
+      j = 0;
+    }
+    else {
+      // if we are at the next pos from the last run, we just remove the data from the last run's first byte and pick up the histogram from there
+      i = prev_i == 4 ? prev_i - 1 : prev_i;
+      j = 63;
+      data_ptr += 64 * i; // adjust the data_ptr to point to the byte we determined we need to continue computing the histogram from
+      const bool prev_first_byte_repeated = histogram[prev_first_byte] > 1;
+      histogram[prev_first_byte] -= 1;  // remove counting of the last byte
+      maximum = *std::max_element(histogram, histogram + 256);
+      used = prev_used;
+      // if the first byte was repeated the used count would have been increased anyways, so we don't subtract, but if not repeated, that's one less for the use chars count
+      if (!prev_first_byte_repeated) used -= 1;
+    }
+
+    for (; i < 4; i++, data_ptr += 64) {
+      for (; j < 64; j++) {
         int* freq = &histogram[*(data_ptr + j)];
         used += ((*freq) == 0);
         maximum += (++(*freq)) > maximum;
       }
       if (maximum >= ((12 + i) << i) || used * (7 - (i + (i / 2))) < (i + 1) * 64)
-        return false;
+        break;
+      if (i != 3) j = 0;
+    }
+
+    // set vars to be able to pick up the histogram for the next position
+    prev_context = precomp_mgr.ctx.get();
+    prev_deflate_stream_pos = deflate_stream_pos;
+    prev_first_byte = *checkbuf_span.data();
+    prev_maximum = maximum;
+    prev_used = used;
+    prev_i = i;
+    
+    if (i < 3 || j < 63) {  // if we did break before the end then we found enough duplication to consider this a false positive stream
+      return false;
     }
   }
 
@@ -363,8 +401,8 @@ bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> c
   return false;
 }
 
-bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
-  return check_inflate_result(precomp_mgr, checkbuf_span, precomp_mgr.out, -15, true);
+bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+  return check_inflate_result(precomp_mgr, checkbuf_span, precomp_mgr.out, -15, original_input_pos, true);
 }
 
 deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {

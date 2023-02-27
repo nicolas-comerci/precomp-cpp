@@ -735,7 +735,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
       }
 
       if (!ignore_this_position) {
-        if (check_raw_deflate_stream_start(precomp_mgr, checkbuf)) {
+        if (check_raw_deflate_stream_start(precomp_mgr, checkbuf, input_file_pos)) {
           auto result = try_decompression_raw_deflate(precomp_mgr, checkbuf, input_file_pos);
           compressed_data_found = result.success;
           if (result.success) {
