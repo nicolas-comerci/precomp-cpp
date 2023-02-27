@@ -147,10 +147,12 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
 
 png_precompression_result precompress_png(Precomp& precomp_mgr, long long original_input_pos) {
   // space for length and crc parts of IDAT chunks
-  std::vector<unsigned int> idat_lengths;
+  std::vector<unsigned int> idat_lengths {};
   idat_lengths.reserve(100 * sizeof(unsigned int));
-  std::vector<unsigned int> idat_crcs;
+  idat_lengths.push_back(0);
+  std::vector<unsigned int> idat_crcs {};
   idat_crcs.reserve(100 * sizeof(unsigned int));
+  idat_crcs.push_back(0);
 
   int idat_count = 0;
   bool zlib_header_correct = false;
@@ -188,25 +190,22 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, long long origin
 
           // go through additional IDATs
           for (;;) {
-            precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + idat_lengths[idat_count - 1], std::ios_base::beg);
+            precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + idat_lengths.back(), std::ios_base::beg);
             precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 12);
             if (precomp_mgr.ctx->fin->gcount() != 12) { // CRC, length, "IDAT"
               idat_count = 0;
+              idat_lengths.resize(1);
               break;
             }
 
             if (memcmp(precomp_mgr.in + 8, "IDAT", 4) == 0) {
-              idat_crcs[idat_count] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
-              idat_lengths[idat_count] = (precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7];
+              idat_crcs.push_back((precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3]);
+              idat_lengths.push_back((precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7]);
               idat_count++;
 
-              if ((idat_count % 100) == 0) {
-                idat_lengths.reserve((idat_count + 100) * sizeof(unsigned int));
-                idat_crcs.reserve((idat_count + 100) * sizeof(unsigned int));
-              }
-
-              if (idat_count > 65535) {
+              if (idat_lengths.size() > 65535) {
                 idat_count = 0;
+                idat_lengths.resize(1);
                 break;
               }
             }
