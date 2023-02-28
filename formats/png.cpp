@@ -122,7 +122,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       if (rdres.uncompressed_stream_size)
       {
         auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-        auto memstream = memiostream::make_copy(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
+        auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
         result.precompressed_stream = std::move(memstream);
       }
       else {

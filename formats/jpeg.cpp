@@ -54,33 +54,32 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   bool brunsli_used = false;
   bool brotli_used = precomp_mgr.switches.use_brotli;
   char recompress_msg[256];
-  unsigned char* jpg_mem_in = nullptr;
-  unsigned char* jpg_mem_out = nullptr;
+  std::vector<unsigned char> jpg_mem_in {};
+  std::unique_ptr<unsigned char[]> jpg_mem_out;
   unsigned int jpg_mem_out_size = -1;
   bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
     precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
-    jpg_mem_in = new unsigned char[jpg_length + MJPGDHT_LEN];
-    memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + jpg_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, jpg_length);
+    jpg_mem_in.resize(jpg_length + MJPGDHT_LEN);
+    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpg_length);
+    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, jpg_length);
 
     bool brunsli_success = false;
 
     if (precomp_mgr.switches.use_brunsli) {
       print_to_log(PRECOMP_DEBUG_LOG, "Trying to compress using brunsli...\n");
       brunsli::JPEGData jpegData;
-      if (brunsli::ReadJpeg(jpg_mem_in, jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
+      if (brunsli::ReadJpeg(jpg_mem_in.data(), jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
         size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
-        jpg_mem_out = new unsigned char[output_size];
-        if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, precomp_mgr.switches.use_brotli)) {
+        jpg_mem_out = std::unique_ptr<unsigned char[]>(new unsigned char[output_size]);
+        if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size, precomp_mgr.switches.use_brotli)) {
           recompress_success = true;
           brunsli_success = true;
           brunsli_used = true;
           jpg_mem_out_size = output_size;
         }
         else {
-          delete[] jpg_mem_out;
           jpg_mem_out = nullptr;
         }
       }
@@ -109,13 +108,13 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
             brunsli::JPEGData newJpegData;
             jpegData = newJpegData;
 
-            memmove(jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
-            memcpy(jpg_mem_in + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
+            memmove(jpg_mem_in.data() + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in.data() + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
+            memcpy(jpg_mem_in.data() + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
 
-            if (brunsli::ReadJpeg(jpg_mem_in, jpg_length + MJPGDHT_LEN, brunsli::JPEG_READ_ALL, &jpegData)) {
+            if (brunsli::ReadJpeg(jpg_mem_in.data(), jpg_length + MJPGDHT_LEN, brunsli::JPEG_READ_ALL, &jpegData)) {
               size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
-              jpg_mem_out = new unsigned char[output_size];
-              if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out, &output_size, precomp_mgr.switches.use_brotli)) {
+              jpg_mem_out = std::unique_ptr<unsigned char[]>(new unsigned char[output_size]);
+              if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size, precomp_mgr.switches.use_brotli)) {
                 recompress_success = true;
                 brunsli_success = true;
                 brunsli_used = true;
@@ -123,14 +122,13 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
                 jpg_mem_out_size = output_size;
               }
               else {
-                delete[] jpg_mem_out;
                 jpg_mem_out = nullptr;
               }
             }
 
             if (!brunsli_success) {
               // revert DHT insertion
-              memmove(jpg_mem_in + (ffda_pos - 1), jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_length - (ffda_pos - 1));
+              memmove(jpg_mem_in.data() + (ffda_pos - 1), jpg_mem_in.data() + (ffda_pos - 1) + MJPGDHT_LEN, jpg_length - (ffda_pos - 1));
             }
           }
         }
@@ -146,10 +144,12 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     }
 
     if ((!precomp_mgr.switches.use_brunsli || !brunsli_success) && precomp_mgr.switches.use_packjpg_fallback) {
-      pjglib_init_streams(jpg_mem_in, 1, jpg_length, jpg_mem_out, 1);
-      recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
+      unsigned char* mem = nullptr;
+      pjglib_init_streams(jpg_mem_in.data(), 1, jpg_length, mem, 1);
+      recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
       brunsli_used = false;
       brotli_used = false;
+      jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
     }
   }
   else if (precomp_mgr.switches.use_packjpg_fallback) { // large stream => use temporary files
@@ -199,11 +199,13 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
         }
       } while (!found_ffda);
       if (found_ffda) {
-        memmove(jpg_mem_in + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
-        memcpy(jpg_mem_in + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
+        memmove(jpg_mem_in.data() + (ffda_pos - 1) + MJPGDHT_LEN, jpg_mem_in.data() + (ffda_pos - 1), jpg_length - (ffda_pos - 1));
+        memcpy(jpg_mem_in.data() + (ffda_pos - 1), MJPGDHT, MJPGDHT_LEN);
 
-        pjglib_init_streams(jpg_mem_in, 1, jpg_length + MJPGDHT_LEN, jpg_mem_out, 1);
-        recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
+        unsigned char* mem = nullptr;
+        pjglib_init_streams(jpg_mem_in.data(), 1, jpg_length + MJPGDHT_LEN, mem, 1);
+        recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
+        jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
       }
     }
     else {
@@ -297,7 +299,8 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     result.flags = jpg_flags;
 
     if (in_memory) {
-      auto memstream = memiostream::make_copy(jpg_mem_out, jpg_mem_out + result.precompressed_size);
+      auto mem = jpg_mem_out.release();
+      auto memstream = memiostream::make(mem, mem + result.precompressed_size, true);
       result.precompressed_stream = std::move(memstream);
     }
     else {
@@ -309,8 +312,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
   }
 
-  delete[] jpg_mem_in;
-  delete[] jpg_mem_out;
   return result;
 }
 
@@ -410,38 +411,42 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, precompressed_data_length);
 
   char recompress_msg[256];
-  unsigned char* jpg_mem_in = nullptr;
-  unsigned char* jpg_mem_out = nullptr;
+  std::vector<unsigned char> jpg_mem_in {};
+  std::unique_ptr<unsigned char[]> jpg_mem_out;
   unsigned int jpg_mem_out_size = -1;
   bool in_memory = recompressed_data_length <= JPG_MAX_MEMORY_SIZE;
   bool recompress_success = false;
 
   if (in_memory) {
-    jpg_mem_in = new unsigned char[precompressed_data_length];
-    memiostream memstream = memiostream::make(jpg_mem_in, jpg_mem_in + precompressed_data_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, precompressed_data_length);
+    jpg_mem_in.resize(precompressed_data_length);
+    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + precompressed_data_length);
+    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
 
     if (brunsli_used) {
       brunsli::JPEGData jpegData;
-      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in, precompressed_data_length, &jpegData, brotli_used) == brunsli::BRUNSLI_OK) {
+      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in.data(), precompressed_data_length, &jpegData, brotli_used) == brunsli::BRUNSLI_OK) {
         if (mjpg_dht_used) {
-          jpg_mem_out = new unsigned char[recompressed_data_length + MJPGDHT_LEN];
+          auto mem = new unsigned char[recompressed_data_length + MJPGDHT_LEN];
+          jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
         }
         else {
-          jpg_mem_out = new unsigned char[recompressed_data_length];
+          auto mem = new unsigned char[recompressed_data_length];
+          jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
         }
         std::string output;
         brunsli::JPEGOutput writer(BrunsliStringWriter, &output);
         if (brunsli::WriteJpeg(jpegData, writer)) {
           jpg_mem_out_size = output.length();
-          memcpy(jpg_mem_out, output.data(), jpg_mem_out_size);
+          memcpy(jpg_mem_out.get(), output.data(), jpg_mem_out_size);
           recompress_success = true;
         }
       }
     }
     else {
-      pjglib_init_streams(jpg_mem_in, 1, precompressed_data_length, jpg_mem_out, 1);
-      recompress_success = pjglib_convert_stream2mem(&jpg_mem_out, &jpg_mem_out_size, recompress_msg);
+      unsigned char* mem = nullptr;
+      pjglib_init_streams(jpg_mem_in.data(), 1, precompressed_data_length, mem, 1);
+      recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
+      jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
     }
   }
   else {
@@ -511,10 +516,10 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
 
     // remove motion JPG huffman table
     if (in_memory) {
-      memiostream memstream1 = memiostream::make(jpg_mem_out, jpg_mem_out + ffda_pos - 1 - MJPGDHT_LEN);
-      fast_copy(precomp_mgr, memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
-      memiostream memstream2 = memiostream::make(jpg_mem_out + (ffda_pos - 1), jpg_mem_out + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(precomp_mgr, memstream2, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(precomp_mgr, *memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+      auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
+      fast_copy(precomp_mgr, *memstream2, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
@@ -527,22 +532,15 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
   }
   else {
     if (in_memory) {
-      memiostream memstream = memiostream::make(jpg_mem_out, jpg_mem_out + recompressed_data_length);
-      fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
+      auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + recompressed_data_length);
+      fast_copy(precomp_mgr, *memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
     else {
       fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
   }
 
-  if (in_memory) {
-    delete[] jpg_mem_in;
-    delete[] jpg_mem_out;
-  }
-  else {
+  if (!in_memory) {
     frecomp.close();
-
-    remove(recompressed_filename.c_str());
-    remove(precompressed_filename.c_str());
   }
 }

@@ -46,18 +46,20 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
   bool recompress_success;
   char recompress_msg[256];
   unsigned char* mp3_mem_in = nullptr;
-  unsigned char* mp3_mem_out = nullptr;
+  std::unique_ptr<unsigned char[]> mp3_mem_out = nullptr;
   unsigned int mp3_mem_out_size = -1;
   bool in_memory = (mp3_length <= MP3_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
     precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
     mp3_mem_in = new unsigned char[mp3_length];
-    memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, mp3_length);
+    auto memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
+    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, mp3_length);
 
-    pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
-    recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
+    unsigned char* mem = nullptr;
+    pmplib_init_streams(mp3_mem_in, 1, mp3_length, mem, 1);
+    recompress_success = pmplib_convert_stream2mem(&mem, &mp3_mem_out_size, recompress_msg);
+    mp3_mem_out = std::unique_ptr<unsigned char[]>(mem);
   }
   else { // large stream => use temporary files
     // try to decompress at current position
@@ -90,8 +92,10 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
         print_to_log(PRECOMP_DEBUG_LOG, "Too much garbage data at the end, retry with new length %i\n", pos);
 
         if (in_memory) {
-          pmplib_init_streams(mp3_mem_in, 1, mp3_length, mp3_mem_out, 1);
-          recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
+          unsigned char* mem = nullptr;
+          pmplib_init_streams(mp3_mem_in, 1, mp3_length, mem, 1);
+          recompress_success = pmplib_convert_stream2mem(&mem, &mp3_mem_out_size, recompress_msg);
+          mp3_mem_out = std::unique_ptr<unsigned char[]>(mem);
         }
         else {
           std::filesystem::resize_file(decompressed_mp3_filename, pos);
@@ -132,10 +136,6 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
     print_to_log(PRECOMP_DEBUG_LOG, "packMP3 error: %s\n", recompress_msg);
   }
 
-  if (!in_memory) {
-    remove(decompressed_mp3_filename.c_str());
-  }
-
   if (recompress_success) {
     auto mp3_new_length = in_memory ? mp3_mem_out_size : std::filesystem::file_size(tmpfile->file_path);
 
@@ -155,7 +155,8 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
     print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli\n", result.original_size, result.precompressed_size);
 
     if (in_memory) {
-      auto memstream = memiostream::make_copy(mp3_mem_out, mp3_mem_out + result.precompressed_size);
+      auto mem = mp3_mem_out.release();
+      auto memstream = memiostream::make(mem, mem + result.precompressed_size, true);
       result.precompressed_stream = std::move(memstream);
     }
     else {
@@ -170,7 +171,6 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
   }
 
   delete[] mp3_mem_in;
-  delete[] mp3_mem_out;
   return result;
 }
 
@@ -268,7 +268,7 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
 
   // parse frames until first invalid frame is found or end-of-file
   std::array<unsigned char, 4> frame_hdr{};
-  auto memstream = memiostream::make_copy(checkbuf_span.data(), checkbuf_span.data() + checkbuf_span.size());
+  auto memstream = memiostream::make(checkbuf_span.data(), checkbuf_span.data() + checkbuf_span.size());
 
   const auto read_with_memstream_buffer = [&precomp_mgr, &memstream](char* buf, int minimum_gcount, long long seek_pos)  {
     memstream->read(buf, minimum_gcount);
@@ -421,23 +421,19 @@ void recompress_mp3(Precomp& precomp_mgr) {
 
   if (in_memory) {
     mp3_mem_in = new unsigned char[precompressed_data_length];
-    memiostream memstream = memiostream::make(mp3_mem_in, mp3_mem_in + precompressed_data_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, memstream, precompressed_data_length);
+    auto memstream = memiostream::make(mp3_mem_in, mp3_mem_in + precompressed_data_length);
+    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
 
     pmplib_init_streams(mp3_mem_in, 1, precompressed_data_length, mp3_mem_out, 1);
     recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
   }
   else {
-    remove(precompressed_filename.c_str());
-
     {
       WrappedFStream ftempout;
       ftempout.open(precompressed_filename, std::ios_base::out | std::ios_base::binary);
       fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
       ftempout.close();
     }
-
-    remove(recompressed_filename.c_str());
 
     recompress_success = pmplib_convert_file2file(const_cast<char*>(precompressed_filename.c_str()), const_cast<char*>(recompressed_filename.c_str()), recompress_msg);
   }
@@ -448,8 +444,8 @@ void recompress_mp3(Precomp& precomp_mgr) {
   }
 
   if (in_memory) {
-    memiostream memstream = memiostream::make(mp3_mem_out, mp3_mem_out + recompressed_data_length);
-    fast_copy(precomp_mgr, memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
+    auto memstream = memiostream::make(mp3_mem_out, mp3_mem_out + recompressed_data_length);
+    fast_copy(precomp_mgr, *memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
 
     delete[] mp3_mem_in;
     delete[] mp3_mem_out;
@@ -460,8 +456,5 @@ void recompress_mp3(Precomp& precomp_mgr) {
       frecomp.open(recompressed_filename, std::ios_base::in | std::ios_base::binary);
       fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
-
-    remove(recompressed_filename.c_str());
-    remove(precompressed_filename.c_str());
   }
 }

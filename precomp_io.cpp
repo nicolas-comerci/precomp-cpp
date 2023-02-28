@@ -188,18 +188,17 @@ memiostream::membuf::membuf(std::vector<char>&& memvector_): memvector(std::move
   this->setg(memvector.data(), memvector.data(), memvector.data() + memvector.size());
   this->setp(memvector.data(), memvector.data() + memvector.size());
 }
-memiostream::membuf::membuf(char* begin, char* end, bool copy) {
-  if (copy) {
-    auto length = end - begin;
-    memvector = std::vector(begin, end);
-    this->setg(memvector.data(), memvector.data(), memvector.data() + length);
-    this->setp(memvector.data(), memvector.data() + length);
-  }
-  else
-  {
-    this->setg(begin, begin, end);
-    this->setp(begin, end);
-  }
+memiostream::membuf::membuf(std::vector<unsigned char>&& memvector_) : memvector_unsigned(std::move(memvector_)) {
+  auto data_ptr = reinterpret_cast<char*>(memvector_unsigned.data());
+  this->setg(data_ptr, data_ptr, data_ptr + memvector_unsigned.size());
+  this->setp(data_ptr, data_ptr + memvector_unsigned.size());
+}
+memiostream::membuf::membuf(char* begin, char* end, bool owns_ptr_): data_ptr(begin), owns_ptr(owns_ptr_) {
+  this->setg(begin, begin, end);
+  this->setp(begin, end);
+}
+memiostream::membuf::~membuf() {
+  if (owns_ptr) delete[] data_ptr;
 }
 std::streambuf::pos_type memiostream::membuf::seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) {
   if (dir == std::ios_base::cur) {
@@ -225,12 +224,12 @@ std::unique_ptr<memiostream> memiostream::make(std::vector<char>&& memvector) {
   auto membuf_ptr = new membuf(std::move(memvector));
   return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
 }
-memiostream memiostream::make(unsigned char* begin, unsigned char* end) {
-  auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), false);
-  return memiostream(membuf_ptr);
+std::unique_ptr<memiostream> memiostream::make(std::vector<unsigned char>&& memvector) {
+  auto membuf_ptr = new membuf(std::move(memvector));
+  return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
 }
-std::unique_ptr<memiostream> memiostream::make_copy(unsigned char* begin, unsigned char* end) {
-  auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), true);
+std::unique_ptr<memiostream> memiostream::make(unsigned char* begin, unsigned char* end, bool take_mem_ownership) {
+  auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), take_mem_ownership);
   return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
 }
 

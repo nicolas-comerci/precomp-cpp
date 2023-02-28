@@ -90,8 +90,8 @@ public:
       auto decomp_io_buf_ptr = precomp_mgr->ctx->decomp_io_buf.data();
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
-        memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
-        fast_copy(*precomp_mgr, memstream, ftempout, _written);
+        auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
+        fast_copy(*precomp_mgr, *memstream, ftempout, _written);
       }
       else {
         memcpy(decomp_io_buf_ptr + _written, buffer, size);
@@ -260,7 +260,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
       else {
         if (rdres.uncompressed_stream_size) {
           auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-          auto memstream = memiostream::make_copy(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
+          auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
           result.precompressed_stream = std::move(memstream);
         }
         else {

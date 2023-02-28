@@ -189,7 +189,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       // write decompressed data
       unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
       if (rdres.uncompressed_in_memory) {
-        result.precompressed_stream = memiostream::make_copy(buf_ptr, buf_ptr + result.precompressed_size);
+        result.precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result.precompressed_size);
       }
       else {
         tmpfile->reopen();

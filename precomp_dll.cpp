@@ -1180,8 +1180,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 
   if (deflate_type && in_memory) {
     auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-    memiostream memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + decompressed_bytes);
-    fast_copy(precomp_mgr, memstream, tmpfile, decompressed_bytes);
+    auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + decompressed_bytes);
+    fast_copy(precomp_mgr, *memstream, tmpfile, decompressed_bytes);
   }
   tmpfile.close();
 

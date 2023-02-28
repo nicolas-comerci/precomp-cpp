@@ -270,10 +270,16 @@ class memiostream: public WrappedIOStream<std::iostream>
   class membuf : public std::streambuf
   {
   public:
+    bool owns_ptr = false;
+    char* data_ptr = nullptr;
     std::vector<char> memvector;
+    std::vector<unsigned char> memvector_unsigned;
+
     membuf() = delete;
-    explicit membuf(char* begin, char* end, bool copy);
+    explicit membuf(char* begin, char* end, bool owns_ptr_);
     explicit membuf(std::vector<char>&& memvector_);
+    explicit membuf(std::vector<unsigned char>&& memvector_);
+    virtual ~membuf();
 
     std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
     std::streambuf::pos_type seekpos(std::streambuf::pos_type sp, std::ios_base::openmode which) override;
@@ -284,8 +290,8 @@ class memiostream: public WrappedIOStream<std::iostream>
 
 public:
   static std::unique_ptr<memiostream> make(std::vector<char>&& memvector);
-  static memiostream make(unsigned char* begin, unsigned char* end);
-  static std::unique_ptr<memiostream> make_copy(unsigned char* begin, unsigned char* end);
+  static std::unique_ptr<memiostream> make(std::vector<unsigned char>&& memvector);
+  static std::unique_ptr<memiostream> make(unsigned char* begin, unsigned char* end, bool take_mem_ownership = false);
 };
 
 class CompressedOStreamBuffer;
