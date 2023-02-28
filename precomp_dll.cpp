@@ -498,7 +498,8 @@ int compress_file_impl(Precomp& precomp_mgr) {
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
     in_buf_pos = input_file_pos;
   }
-  checkbuf = std::span(&precomp_mgr.ctx->in_buf[input_file_pos - in_buf_pos], CHECKBUF_SIZE);
+  auto cb_pos = input_file_pos - in_buf_pos;
+  checkbuf = std::span(&precomp_mgr.ctx->in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
 
   ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
@@ -612,7 +613,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
       if (mp3_header_check(checkbuf)) { // frame start
-        auto result = precompress_mp3(precomp_mgr, input_file_pos);
+        auto result = precompress_mp3(precomp_mgr, input_file_pos, checkbuf);
         compressed_data_found = result.success;
         if (result.success) {
           // end uncompressed data

@@ -184,6 +184,10 @@ PrecompTmpFile::~PrecompTmpFile() {
   std::remove(file_path.c_str());
 }
 
+memiostream::membuf::membuf(std::vector<char>&& memvector_): memvector(std::move(memvector_)) {
+  this->setg(memvector.data(), memvector.data(), memvector.data() + memvector.size());
+  this->setp(memvector.data(), memvector.data() + memvector.size());
+}
 memiostream::membuf::membuf(char* begin, char* end, bool copy) {
   if (copy) {
     auto length = end - begin;
@@ -217,6 +221,10 @@ std::streambuf::pos_type memiostream::membuf::seekpos(std::streambuf::pos_type s
 }
 
 memiostream::memiostream(membuf* buf): WrappedIOStream(buf), m_buf(std::unique_ptr<membuf>(buf)) {}
+std::unique_ptr<memiostream> memiostream::make(std::vector<char>&& memvector) {
+  auto membuf_ptr = new membuf(std::move(memvector));
+  return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
+}
 memiostream memiostream::make(unsigned char* begin, unsigned char* end) {
   auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), false);
   return memiostream(membuf_ptr);

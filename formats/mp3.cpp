@@ -245,7 +245,7 @@ bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsign
   return true;
 }
 
-precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_input_pos) {
+precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_input_pos, const std::span<unsigned char> checkbuf_span) {
   mp3_suppression_vars suppression;
   precompression_result result = precompression_result(D_MP3);
   int mpeg = -1;
@@ -267,21 +267,40 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
   long long act_pos = original_input_pos;
 
   // parse frames until first invalid frame is found or end-of-file
-  precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
+  std::array<unsigned char, 4> frame_hdr{};
+  auto memstream = memiostream::make_copy(checkbuf_span.data(), checkbuf_span.data() + checkbuf_span.size());
+
+  const auto read_with_memstream_buffer = [&precomp_mgr, &memstream](char* buf, int minimum_gcount, long long seek_pos)  {
+    memstream->read(buf, minimum_gcount);
+    if (memstream->gcount() == minimum_gcount) return true;
+
+    // if we couldn't read as much as we wanted from the memstream we attempt to read more from the input stream and reattempt
+    precomp_mgr.ctx->fin->seekg(seek_pos, std::ios_base::beg);
+    std::vector<char> new_read_data{};
+    new_read_data.resize(CHUNK);
+    precomp_mgr.ctx->fin->read(new_read_data.data(), CHUNK);
+    auto read_amt = precomp_mgr.ctx->fin->gcount();
+    if (read_amt < minimum_gcount) return false;
+    if (read_amt < CHUNK) new_read_data.resize(read_amt);  // shrink to fit data, needed because memiostream relies on the vector's size
+
+    memstream = memiostream::make(std::move(new_read_data));
+    memstream->read(buf, minimum_gcount);
+    return memstream->gcount() == minimum_gcount;  // if somehow that fails again we fail and return false, else true for success
+  };
 
   for (;;) {
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 4);
-    if (precomp_mgr.ctx->fin->gcount() != 4) break;
+    if (!read_with_memstream_buffer(reinterpret_cast<char*>(frame_hdr.data()), 4, act_pos)) break;
+
     // check syncword
-    if ((precomp_mgr.in[0] != 0xFF) || ((precomp_mgr.in[1] & 0xE0) != 0xE0)) break;
+    if ((frame_hdr[0] != 0xFF) || ((frame_hdr[1] & 0xE0) != 0xE0)) break;
     // compare data from header
     if (n == 0) {
-      mpeg = (precomp_mgr.in[1] >> 3) & 0x3;
-      layer = (precomp_mgr.in[1] >> 1) & 0x3;
-      protection = (precomp_mgr.in[1] >> 0) & 0x1;
-      samples = (precomp_mgr.in[2] >> 2) & 0x3;
-      channels = (precomp_mgr.in[3] >> 6) & 0x3;
-      type = MBITS(precomp_mgr.in[1], 5, 1);
+      mpeg = (frame_hdr[1] >> 3) & 0x3;
+      layer = (frame_hdr[1] >> 1) & 0x3;
+      protection = (frame_hdr[1] >> 0) & 0x1;
+      samples = (frame_hdr[2] >> 2) & 0x3;
+      channels = (frame_hdr[3] >> 6) & 0x3;
+      type = MBITS(frame_hdr[1], 5, 1);
       // avoid slowdown and multiple verbose messages on unsupported types that have already been detected
       if ((type != MPEG1_LAYER_III) && (original_input_pos <= suppression.suppress_mp3_type_until[type])) {
         break;
@@ -294,20 +313,20 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
       }
       if (type == MPEG1_LAYER_III) { // supported MP3 type, all header information must be identical to the first frame
         if (
-          (mpeg != ((precomp_mgr.in[1] >> 3) & 0x3)) ||
-          (layer != ((precomp_mgr.in[1] >> 1) & 0x3)) ||
-          (protection != ((precomp_mgr.in[1] >> 0) & 0x1)) ||
-          (samples != ((precomp_mgr.in[2] >> 2) & 0x3)) ||
-          (channels != ((precomp_mgr.in[3] >> 6) & 0x3)) ||
-          (type != MBITS(precomp_mgr.in[1], 5, 1))) break;
+          (mpeg != ((frame_hdr[1] >> 3) & 0x3)) ||
+          (layer != ((frame_hdr[1] >> 1) & 0x3)) ||
+          (protection != ((frame_hdr[1] >> 0) & 0x1)) ||
+          (samples != ((frame_hdr[2] >> 2) & 0x3)) ||
+          (channels != ((frame_hdr[3] >> 6) & 0x3)) ||
+          (type != MBITS(frame_hdr[1], 5, 1))) break;
       }
       else { // unsupported type, compare only type, ignore the other header information to get a longer stream
-        if (type != MBITS(precomp_mgr.in[1], 5, 1)) break;
+        if (type != MBITS(frame_hdr[1], 5, 1)) break;
       }
     }
 
-    bits = (precomp_mgr.in[2] >> 4) & 0xF;
-    padding = (precomp_mgr.in[2] >> 1) & 0x1;
+    bits = (frame_hdr[2] >> 4) & 0xF;
+    padding = (frame_hdr[2] >> 1) & 0x1;
     // check for problems
     if ((mpeg == 0x1) || (layer == 0x0) ||
       (bits == 0x0) || (bits == 0xF) || (samples == 0x3)) break;
@@ -336,10 +355,10 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
 
     // if supported MP3 type, validate frames
     if ((type == MPEG1_LAYER_III) && (frame_size > 4)) {
-      unsigned char header2 = precomp_mgr.in[2];
-      unsigned char header3 = precomp_mgr.in[3];
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), frame_size - 4);
-      if (precomp_mgr.ctx->fin->gcount() != (unsigned int)(frame_size - 4)) {
+      unsigned char header2 = frame_hdr[2];
+      unsigned char header3 = frame_hdr[3];
+
+      if (!read_with_memstream_buffer(reinterpret_cast<char*>(precomp_mgr.in), frame_size - 4, act_pos - frame_size + 4)) {
         // discard incomplete frame
         n--;
         mp3_length -= frame_size;
@@ -349,9 +368,6 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
         n = 0;
         break;
       }
-    }
-    else {
-      precomp_mgr.ctx->fin->seekg(act_pos, std::ios_base::beg);
     }
   }
 

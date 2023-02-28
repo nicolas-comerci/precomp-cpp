@@ -272,7 +272,8 @@ class memiostream: public WrappedIOStream<std::iostream>
   public:
     std::vector<char> memvector;
     membuf() = delete;
-    membuf(char* begin, char* end, bool copy);
+    explicit membuf(char* begin, char* end, bool copy);
+    explicit membuf(std::vector<char>&& memvector_);
 
     std::streambuf::pos_type seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) override;
     std::streambuf::pos_type seekpos(std::streambuf::pos_type sp, std::ios_base::openmode which) override;
@@ -282,6 +283,7 @@ class memiostream: public WrappedIOStream<std::iostream>
   explicit memiostream(membuf* buf);
 
 public:
+  static std::unique_ptr<memiostream> make(std::vector<char>&& memvector);
   static memiostream make(unsigned char* begin, unsigned char* end);
   static std::unique_ptr<memiostream> make_copy(unsigned char* begin, unsigned char* end);
 };
