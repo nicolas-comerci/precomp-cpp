@@ -68,7 +68,7 @@ void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long deflate_stream_pos, int idat_count,
+png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
   png_precompression_result result;
   init_decompression_variables(*precomp_mgr.ctx);
@@ -77,7 +77,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
   tmpfile->open(temp_files_tag() + "_precompressed_png", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, deflate_stream_pos, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, fpng_deflate_stream_pos, *tmpfile);
 
   result.original_size = rdres.compressed_stream_size;
   result.precompressed_size = rdres.uncompressed_stream_size;
@@ -93,7 +93,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       precomp_mgr.statistics.decompressed_png_count++;
     }
 
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG", deflate_stream_pos);
+    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG", deflate_stream_original_pos);
 
     if (rdres.accepted) {
       precomp_mgr.statistics.recompressed_streams_count++;
@@ -137,15 +137,15 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       debug_pos(precomp_mgr);
     }
     else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_pos);
+      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_original_pos - 2);
+      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_original_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
   return result;
 }
 
-png_precompression_result precompress_png(Precomp& precomp_mgr, long long original_input_pos) {
+png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos) {
   // space for length and crc parts of IDAT chunks
   std::vector<unsigned int> idat_lengths {};
   idat_lengths.reserve(100 * sizeof(unsigned int));
@@ -161,79 +161,95 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, long long origin
 
   auto deflate_stream_pos = original_input_pos + 6;
 
+  auto memstream = memiostream::make(checkbuf.data(), checkbuf.data() + checkbuf.size());
+
   // get preceding length bytes
-  if (original_input_pos >= 4) {
+  while (true) {
+    if (original_input_pos < 4) break;
     precomp_mgr.ctx->fin->seekg(original_input_pos - 4, std::ios_base::beg);
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 4);
+    if (precomp_mgr.ctx->fin->gcount() != 4) break;
+    auto cur_pos = original_input_pos;
 
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 10);
-    if (precomp_mgr.ctx->fin->gcount() == 10) {
-      precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() - 2, std::ios_base::beg);
+    if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(precomp_mgr.in + 4), 6, cur_pos)) break;
+    cur_pos -= 2;
+    precomp_mgr.ctx->fin->seekg(cur_pos, std::ios_base::beg);
+    memstream->seekg(-2, std::ios_base::cur);
 
-      idat_lengths[0] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
+    idat_lengths[0] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
 
-      if (idat_lengths[0] > 2) {
-        // check zLib header and get windowbits
-        zlib_header[0] = precomp_mgr.in[8];
-        zlib_header[1] = precomp_mgr.in[9];
-        if ((((precomp_mgr.in[8] << 8) + precomp_mgr.in[9]) % 31) == 0) {
-          if ((precomp_mgr.in[8] & 15) == 8) {
-            if ((precomp_mgr.in[9] & 32) == 0) { // FDICT must not be set
-              //windowbits = (precomp_mgr.in[8] >> 4) + 8;
-              zlib_header_correct = true;
-            }
-          }
-        }
-
-        if (zlib_header_correct) {
-
-          idat_count++;
-
-          // go through additional IDATs
-          for (;;) {
-            precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + idat_lengths.back(), std::ios_base::beg);
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 12);
-            if (precomp_mgr.ctx->fin->gcount() != 12) { // CRC, length, "IDAT"
-              idat_count = 0;
-              idat_lengths.resize(1);
-              break;
-            }
-
-            if (memcmp(precomp_mgr.in + 8, "IDAT", 4) == 0) {
-              idat_crcs.push_back((precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3]);
-              idat_lengths.push_back((precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7]);
-              idat_count++;
-
-              if (idat_lengths.size() > 65535) {
-                idat_count = 0;
-                idat_lengths.resize(1);
-                break;
-              }
-            }
-            else {
-              break;
-            }
-          }
+    if (idat_lengths[0] <= 2) break;
+    // check zLib header and get windowbits
+    zlib_header[0] = precomp_mgr.in[8];
+    zlib_header[1] = precomp_mgr.in[9];
+    if ((((precomp_mgr.in[8] << 8) + precomp_mgr.in[9]) % 31) == 0) {
+      if ((precomp_mgr.in[8] & 15) == 8) {
+        if ((precomp_mgr.in[9] & 32) == 0) { // FDICT must not be set
+          //windowbits = (precomp_mgr.in[8] >> 4) + 8;
+          zlib_header_correct = true;
         }
       }
     }
+    if (!zlib_header_correct) break;
+
+    idat_count++;
+
+    // go through additional IDATs
+    for (;;) {
+      precomp_mgr.ctx->fin->seekg(idat_lengths.back(), std::ios_base::cur);
+      memstream->seekg(idat_lengths.back(), std::ios_base::cur);
+      cur_pos += idat_lengths.back();
+      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(precomp_mgr.in), 12, cur_pos)) { // 12 = CRC, length, "IDAT"
+        idat_count = 0;
+        idat_lengths.resize(1);
+        break;
+      }
+
+      if (memcmp(precomp_mgr.in + 8, "IDAT", 4) == 0) {
+        idat_crcs.push_back((precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3]);
+        idat_lengths.push_back((precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7]);
+        idat_count++;
+
+        if (idat_lengths.size() > 65535) {
+          idat_count = 0;
+          idat_lengths.resize(1);
+          break;
+        }
+      }
+      else {
+        break;
+      }
+    }
+    break;
   }
 
   // copy to tempfile before trying to recompress
   std::string png_tmp_filename = temp_files_tag() + "_original_png";
   remove(png_tmp_filename.c_str());
-  PrecompTmpFile tmp_png;
-  tmp_png.open(png_tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
   precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
 
-  idat_lengths[0] -= 2; // zLib header length
-  for (int i = 0; i < idat_count; i++) {
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, tmp_png, idat_lengths[i]);
-    precomp_mgr.ctx->fin->seekg((long long)precomp_mgr.ctx->fin->tellg() + 12, std::ios_base::beg);
+  auto png_length = idat_lengths[0] - 2; // 2 = zLib header length
+  for (int i = 1; i < idat_count; i++) {
+    png_length += idat_lengths[i];
   }
-  idat_lengths[0] += 2;
 
-  auto result = try_decompression_png_multi(precomp_mgr, tmp_png, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
+  auto copy_to_temp = [&idat_lengths, &idat_count, &precomp_mgr](IStreamLike& src, OStreamLike& dst)  {
+    idat_lengths[0] -= 2; // zLib header length
+    for (int i = 0; i < idat_count; i++) {
+      fast_copy(precomp_mgr, src, dst, idat_lengths[i]);
+      src.seekg(12, std::ios_base::cur);
+    }
+    idat_lengths[0] += 2;
+  };
+
+  std::unique_ptr<IStreamLike> temp_png = make_temporary_stream(
+    deflate_stream_pos, png_length, checkbuf, 
+    *precomp_mgr.ctx->fin, original_input_pos, png_tmp_filename,
+    copy_to_temp, 50 * 1024 * 1024  // 50mb
+  );
+
+  auto result = try_decompression_png_multi(precomp_mgr, *temp_png, 0, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
   result.input_pos_extra_add = 6;  // add header length to the deflate stream size for full input size
   return result;

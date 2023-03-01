@@ -162,25 +162,18 @@ long long def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& decompressed_stre
   return rek_same_byte_count;
 }
 
-long long file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, PrecompTmpFile& decompressed_stream) {
+long long file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, int level, long long& decompressed_bytes_used, long long& decompressed_bytes_total, IStreamLike& decompressed_stream) {
   long long retval;
 
   decompressed_stream.seekg(0, std::ios_base::end);
   decompressed_bytes_total = decompressed_stream.tellg();
-  if (!decompressed_stream.is_open()) {
-    throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
-  }
 
   decompressed_stream.seekg(0, std::ios_base::beg);
-  decompressed_stream.close();
-  WrappedFStream tmpfile2;
-  tmpfile2.open(decompressed_stream.file_path, std::ios_base::in | std::ios_base::binary);
-  retval = def_compare_bzip2(precomp_mgr, tmpfile2, bzip2_stream, original_input_pos, level, decompressed_bytes_used);
-  tmpfile2.close();
+  retval = def_compare_bzip2(precomp_mgr, decompressed_stream, bzip2_stream, original_input_pos, level, decompressed_bytes_used);
   return retval < 0 ? -1 : retval;
 }
 
-void try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, long long original_input_pos, int level, long long& compressed_stream_size, PrecompTmpFile& tmpfile) {
+void try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, long long original_input_pos, int level, long long& compressed_stream_size, IStreamLike& tmpfile) {
   precomp_mgr.call_progress_callback();
 
   long long decomp_bytes_total;
@@ -334,6 +327,9 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
   }
 
   tmpfile->reopen();
+  if (!tmpfile->is_open()) {
+    throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
+  }
   try_recompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compression_level, compressed_stream_size, *tmpfile);
 
   if ((precomp_mgr.ctx->best_identical_bytes > precomp_mgr.switches.min_ident_size) && (precomp_mgr.ctx->best_identical_bytes < precomp_mgr.ctx->best_identical_bytes_decomp)) {

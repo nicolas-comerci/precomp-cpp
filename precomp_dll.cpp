@@ -560,7 +560,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
       if (png_header_check(checkbuf)) {
-        auto result = precompress_png(precomp_mgr, input_file_pos);
+        auto result = precompress_png(precomp_mgr, checkbuf, input_file_pos);
         compressed_data_found = result.success;
 
         if (result.success) {
@@ -1054,15 +1054,9 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
 
   std::vector<char> penalty_bytes;
 
-  long long compare_end;
-  if (&file1 == context.fin.get()) {
-    file2.seekg(0, std::ios_base::end);
-    compare_end = file2.tellg();
-  } else {
-    file1.seekg(0, std::ios_base::end);
-    file2.seekg(0, std::ios_base::end);
-    compare_end = std::min(file1.tellg(), file2.tellg());
-  }
+  file1.seekg(0, std::ios_base::end);
+  file2.seekg(0, std::ios_base::end);
+  long long compare_end = std::min(file1.tellg() - pos1, file2.tellg() - pos2);
 
   file1.seekg(pos1, std::ios_base::beg);
   file2.seekg(pos2, std::ios_base::beg);

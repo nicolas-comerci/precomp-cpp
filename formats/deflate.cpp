@@ -113,8 +113,8 @@ private:
   bool& _in_memory;
 };
 
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long deflate_stream_pos, PrecompTmpFile& tmpfile) {
-  file.seekg(&file == precomp_mgr.ctx->fin.get() ? deflate_stream_pos : 0, std::ios_base::beg);
+recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, PrecompTmpFile& tmpfile) {
+  file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
   recompress_deflate_result result;
 
@@ -132,7 +132,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
     result.uncompressed_stream_size = uos.written();
 
     if (precomp_mgr.switches.preflate_verify && result.accepted) {
-      file.seekg(&file == precomp_mgr.ctx->fin.get() ? deflate_stream_pos : 0, std::ios_base::beg);
+      file.seekg(file_deflate_stream_pos, std::ios_base::beg);
       OwnIStream is2(&file);
       std::vector<uint8_t> orgdata(result.compressed_stream_size);
       is2.read(orgdata.data(), orgdata.size());

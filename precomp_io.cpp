@@ -233,6 +233,57 @@ std::unique_ptr<memiostream> memiostream::make(unsigned char* begin, unsigned ch
   return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
 }
 
+bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiostream>& memstream_buf, char* target_buf, int minimum_gcount, long long& cur_pos) {
+  memstream_buf->read(target_buf, minimum_gcount);
+  if (memstream_buf->gcount() == minimum_gcount) {
+    cur_pos += minimum_gcount;
+    return true;
+  }
+
+  // if we couldn't read as much as we wanted from the memstream we attempt to read more from the input stream and reattempt
+  orig_input.seekg(cur_pos, std::ios_base::beg);
+  std::vector<char> new_read_data{};
+  new_read_data.resize(CHUNK);
+  orig_input.read(new_read_data.data(), CHUNK);
+  auto read_amt = orig_input.gcount();
+  if (read_amt < minimum_gcount) return false;
+  if (read_amt < CHUNK) new_read_data.resize(read_amt);  // shrink to fit data, needed because memiostream relies on the vector's size
+
+  memstream_buf = memiostream::make(std::move(new_read_data));
+  memstream_buf->read(target_buf, minimum_gcount);
+  if (memstream_buf->gcount() == minimum_gcount) cur_pos += minimum_gcount;
+  return memstream_buf->gcount() == minimum_gcount;  // if somehow that fails again we fail and return false, else true for success
+}
+
+std::unique_ptr<IStreamLike> make_temporary_stream(
+  long long stream_pos, long long stream_size, std::span<unsigned char> checkbuf,
+  IStreamLike& original_input, long long original_input_pos, std::string temp_filename,
+  std::function<void(IStreamLike&, OStreamLike&)> copy_to_temp, long long max_memory_size
+) {
+  std::unique_ptr<IStreamLike> temp_png;
+  if (stream_size < max_memory_size) {  // File small enough, will use it from memory
+    std::vector<char> mem{};
+    mem.resize(stream_size);
+    auto mem_png = memiostream::make(std::move(mem));
+    if (stream_size < checkbuf.size()) {  // The whole file did fit the checkbuf, we can copy it from there
+      auto checkbuf_stream = memiostream::make(checkbuf.data(), checkbuf.data() + checkbuf.size());
+      checkbuf_stream->seekg(stream_pos - original_input_pos, std::ios_base::beg);
+      copy_to_temp(*checkbuf_stream, *mem_png);
+    }
+    else {  // just copy it from the input file
+      copy_to_temp(original_input, *mem_png);
+    }
+    temp_png = std::move(mem_png);
+  }
+  else {  // too large, use temporary file
+    auto tmp_png = std::make_unique<PrecompTmpFile>();
+    tmp_png->open(temp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+    copy_to_temp(original_input, *tmp_png);
+    temp_png = std::move(tmp_png);
+  }
+  return temp_png;
+}
+
 CompressedIStreamBuffer::CompressedIStreamBuffer(std::unique_ptr<std::istream>&& istream) : wrapped_istream(std::move(istream)) { }
 std::streambuf::pos_type CompressedIStreamBuffer::seekoff(std::streambuf::off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) {
   return wrapped_istream->rdbuf()->pubseekoff(offset, dir, mode);

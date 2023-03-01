@@ -5,6 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <span>
 
 #include "precomp_xz_params.h"
 
@@ -293,6 +294,15 @@ public:
   static std::unique_ptr<memiostream> make(std::vector<unsigned char>&& memvector);
   static std::unique_ptr<memiostream> make(unsigned char* begin, unsigned char* end, bool take_mem_ownership = false);
 };
+
+bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiostream>& memstream_buf, char* target_buf, int minimum_gcount, long long& cur_pos);
+// This makes a temporary stream for use as input, reusing checkbuf or copying from original_input to mem if the stream is small enough, or to a temp file if larger
+// copy_to_temp is so you can use a custom way of copying to the temporary stream, in case you need to skip some data or something like that, if not provided, fast_copy will be used
+std::unique_ptr<IStreamLike> make_temporary_stream(
+  long long stream_pos, long long stream_size, std::span<unsigned char> checkbuf,
+  IStreamLike& original_input, long long original_input_pos, std::string temp_filename,
+  std::function<void(IStreamLike&, OStreamLike&)> copy_to_temp, long long max_memory_size
+);
 
 class CompressedOStreamBuffer;
 constexpr auto CHUNK = 262144; // 256 KB buffersize

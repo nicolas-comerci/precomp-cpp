@@ -21,7 +21,7 @@ public:
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long deflate_stream_pos, PrecompTmpFile& tmpfile);
+recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, PrecompTmpFile& tmpfile);
 
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos);
 

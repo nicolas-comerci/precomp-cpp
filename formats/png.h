@@ -23,7 +23,7 @@ public:
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-png_precompression_result precompress_png(Precomp& precomp_mgr, long long original_input_pos);
+png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos);
 
 void recompress_png(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
 

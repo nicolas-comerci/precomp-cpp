@@ -270,26 +270,9 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
   std::array<unsigned char, 4> frame_hdr{};
   auto memstream = memiostream::make(checkbuf_span.data(), checkbuf_span.data() + checkbuf_span.size());
 
-  const auto read_with_memstream_buffer = [&precomp_mgr, &memstream](char* buf, int minimum_gcount, long long seek_pos)  {
-    memstream->read(buf, minimum_gcount);
-    if (memstream->gcount() == minimum_gcount) return true;
-
-    // if we couldn't read as much as we wanted from the memstream we attempt to read more from the input stream and reattempt
-    precomp_mgr.ctx->fin->seekg(seek_pos, std::ios_base::beg);
-    std::vector<char> new_read_data{};
-    new_read_data.resize(CHUNK);
-    precomp_mgr.ctx->fin->read(new_read_data.data(), CHUNK);
-    auto read_amt = precomp_mgr.ctx->fin->gcount();
-    if (read_amt < minimum_gcount) return false;
-    if (read_amt < CHUNK) new_read_data.resize(read_amt);  // shrink to fit data, needed because memiostream relies on the vector's size
-
-    memstream = memiostream::make(std::move(new_read_data));
-    memstream->read(buf, minimum_gcount);
-    return memstream->gcount() == minimum_gcount;  // if somehow that fails again we fail and return false, else true for success
-  };
-
   for (;;) {
-    if (!read_with_memstream_buffer(reinterpret_cast<char*>(frame_hdr.data()), 4, act_pos)) break;
+    if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(frame_hdr.data()), 4, act_pos)) break;
+    act_pos -= 4;
 
     // check syncword
     if ((frame_hdr[0] != 0xFF) || ((frame_hdr[1] & 0xE0) != 0xE0)) break;
@@ -358,7 +341,8 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
       unsigned char header2 = frame_hdr[2];
       unsigned char header3 = frame_hdr[3];
 
-      if (!read_with_memstream_buffer(reinterpret_cast<char*>(precomp_mgr.in), frame_size - 4, act_pos - frame_size + 4)) {
+      act_pos = act_pos - frame_size + 4;
+      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(precomp_mgr.in), frame_size - 4, act_pos)) {
         // discard incomplete frame
         n--;
         mp3_length -= frame_size;
