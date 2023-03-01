@@ -165,6 +165,30 @@ public:
   std::istream::pos_type tellg() override;
 };
 
+// This allows us to treat subsections of an IStreamLike as if they were a separate stream, and reaching the end of the subsection makes the View behave like it reached eof.
+// The whole point of this is to behave exactly as if we had copied the data to a temporary file and were working with it.
+class IStreamLikeView : public IStreamLike {
+public:
+  IStreamLike* istream;
+  long long starting_stream_pos;
+  long long current_stream_pos;
+  long long final_allowed_stream_pos;
+  bool _eof = false;
+
+  explicit IStreamLikeView(IStreamLike* istream_, long long final_allowed_stream_pos_);
+
+  IStreamLikeView& read(char* buff, std::streamsize count) override;
+  std::istream::int_type get() override;
+  std::streamsize gcount() override;
+  std::istream::pos_type tellg() override;
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
+
+  IStreamLikeView& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+};
+
 // With this we can get notified whenever we write to the ostream, useful for registering callbacks to update progress without littering our code with calls for it
 class ObservableStreamBase {
 public:

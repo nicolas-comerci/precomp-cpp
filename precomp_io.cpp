@@ -127,6 +127,54 @@ WrappedIStream& WrappedIStream::seekg(std::istream::off_type offset, std::ios_ba
 }
 std::istream::pos_type WrappedIStream::tellg() { return wrapped_stream->tellg(); }
 
+IStreamLikeView::IStreamLikeView(IStreamLike* istream_, long long final_allowed_stream_pos_) : istream(istream_), final_allowed_stream_pos(final_allowed_stream_pos_) {
+  starting_stream_pos = istream->tellg();
+  current_stream_pos = starting_stream_pos;
+}
+IStreamLikeView& IStreamLikeView::read(char* buff, std::streamsize count) {
+  if (_eof) return *this;
+
+  std::streamsize effective_count = count;
+  if (current_stream_pos + count > final_allowed_stream_pos) {
+    effective_count = final_allowed_stream_pos - current_stream_pos;
+    _eof = true;
+  }
+
+  istream->read(buff, effective_count);
+  long long amt_read = istream->gcount();
+  if (amt_read < effective_count) _eof = true;
+  current_stream_pos += amt_read;
+
+  return *this;
+}
+std::istream::int_type IStreamLikeView::get() {
+  unsigned char chr[1];
+  read(reinterpret_cast<char*>(&chr[0]), 1);
+  return chr[0];
+}
+std::streamsize IStreamLikeView::gcount() { return istream->gcount(); }
+std::istream::pos_type IStreamLikeView::tellg() { return current_stream_pos - starting_stream_pos; }
+bool IStreamLikeView::eof() { return _eof; }
+bool IStreamLikeView::good() { return istream->good() && !eof(); }
+bool IStreamLikeView::bad() { return istream->bad(); }
+void IStreamLikeView::clear() {
+  _eof = false;
+  istream->clear();
+}
+IStreamLikeView& IStreamLikeView::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  istream->seekg(offset, dir);
+  if (dir == std::ios_base::beg) {
+    current_stream_pos = offset;
+  }
+  else if (dir == std::ios_base::end) {
+    current_stream_pos = final_allowed_stream_pos - offset;
+  }
+  else {
+    current_stream_pos += offset;
+  }
+  return *this;
+}
+
 void ObservableStreamBase::register_observer(observable_methods method, std::function<void()> callback) {
   method_observers[method] = callback;
 }

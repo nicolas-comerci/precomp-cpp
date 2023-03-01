@@ -480,9 +480,7 @@ void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
 
   if (recursion_used) {
-    PrecompTmpFile tmp_bzip2;
-    tmp_bzip2.open(temp_files_tag() + "_recomp_bzip2", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, tmp_bzip2);
+    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
     precomp_mgr.ctx->retval = def_part_bzip2(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, level, decompressed_data_length, recompressed_data_length);
     r.frecurse->close();

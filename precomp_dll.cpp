@@ -321,7 +321,7 @@ void Precomp::set_output_stream(FILE* fhandle, bool take_ownership) {
 
 void Precomp::enable_input_stream_otf_decompression() {
   const auto& orig_context = this->get_original_context();
-  if (&orig_context != &ctx || orig_context->compression_otf_method == OTF_NONE) return;
+  if (recursion_depth > 0 || orig_context->compression_otf_method == OTF_NONE) return;
   auto wrapped_istream = dynamic_cast<WrappedIStream*>(orig_context->fin.get());
   if (!wrapped_istream) throw std::runtime_error("Compression only supported when using C++'s std::istream or std::ostream, sorry if you are using the C API");
   const bool take_ownership = wrapped_istream->is_owns_wrapped_stream();
@@ -1250,29 +1250,26 @@ recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const r
   return r;
 }
 
-recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, PrecompTmpFile& tmpfile) {
+recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile) {
   recursion_result tmp_r;
 
-  fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, tmpfile, recursion_data_length);
-  tmpfile.close();
-
+  auto original_pos = precomp_mgr.ctx->fin->tellg();
+  auto input_stream = std::move(precomp_mgr.ctx->fin);  // steal the input file from the context before pushing it
   recursion_push(precomp_mgr, recursion_data_length);
 
-  precomp_mgr.ctx->fin_length = std::filesystem::file_size(tmpfile.file_path.c_str());
-  auto fin = new std::ifstream();
-  fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-  if (!fin->is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
-  }
-  precomp_mgr.ctx->set_input_stream(fin);
+  long long recursion_end_pos = original_pos + recursion_data_length;
+  precomp_mgr.ctx->fin_length = recursion_data_length;
+  // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
+  // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
+  auto fin_view = std::make_unique<IStreamLikeView>(input_stream.get(), recursion_end_pos);
+  precomp_mgr.ctx->fin = std::move(fin_view);
 
-  tmp_r.file_name = tmpfile.file_path;
-  tmp_r.file_name += '_';
+  tmp_r.file_name = tmpfile;
   auto fout = new std::ofstream();
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
 
-  // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
+  // disable compression-on-the-fly in recursion - we don't want streams compressed many times
   precomp_mgr.ctx->compression_otf_method = OTF_NONE;
 
   precomp_mgr.recursion_depth++;
@@ -1284,6 +1281,7 @@ recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_
 
   precomp_mgr.recursion_depth--;
   recursion_pop(precomp_mgr);
+  precomp_mgr.ctx->fin = std::move(input_stream); // and set it on its original context
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
 

@@ -523,9 +523,7 @@ void recompress_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags, bool 
   // write decompressed data
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    PrecompTmpFile tmpfile;
-    tmpfile.open(filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, tmpfile);
+    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, filename);
     debug_pos(precomp_mgr);
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
     ok = try_reconstructing_deflate(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, rdres);

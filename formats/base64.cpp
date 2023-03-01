@@ -427,9 +427,7 @@ void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   // re-encode Base64
 
   if (recursion_used) {
-    PrecompTmpFile tmp_base64;
-    tmp_base64.open(temp_files_tag() + "_recomp_base64", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, tmp_base64);
+    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, temp_files_tag() + "_recomp_base64");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
     base64_reencode(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
     r.frecurse->close();

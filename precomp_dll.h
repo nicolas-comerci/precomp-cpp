@@ -121,7 +121,7 @@ class Precomp: public CPrecomp {
   void register_output_observer_callbacks();
 
 public:
-  Precomp();
+  explicit Precomp();
 
   Switches switches;
   ResultStatistics statistics;
@@ -214,6 +214,6 @@ struct recursion_result {
   std::shared_ptr<std::ifstream> frecurse = std::make_shared<std::ifstream>();
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
-recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, PrecompTmpFile& tmpfile);
+recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile);
 recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 #endif // PRECOMP_DLL_H
