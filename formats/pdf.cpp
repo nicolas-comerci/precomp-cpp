@@ -186,8 +186,8 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       result.zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
 
       // write decompressed data
-      unsigned char* buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-      if (rdres.uncompressed_in_memory) {
+      if (!rdres.uncompressed_stream_mem.empty()) {
+        unsigned char* buf_ptr = rdres.uncompressed_stream_mem.data();
         result.precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result.precompressed_size);
       }
       else {

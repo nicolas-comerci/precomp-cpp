@@ -118,10 +118,8 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       result.idat_lengths = std::move(idat_lengths);
       result.idat_crcs = std::move(idat_crcs);
 
-      if (rdres.uncompressed_stream_size)
-      {
-        auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-        auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
+      if (!rdres.uncompressed_stream_mem.empty()) {
+        auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
         result.precompressed_stream = std::move(memstream);
       }
       else {

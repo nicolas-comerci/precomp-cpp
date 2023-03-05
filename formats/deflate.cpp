@@ -47,6 +47,17 @@ void deflate_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
+void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
+  if (!rdres.zlib_perfect) {
+    size_t sz = fin_fget_vlint(input);
+    rdres.recon_data.resize(sz);
+    input.read(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
+  }
+
+  rdres.compressed_stream_size = fin_fget_vlint(input);
+  rdres.uncompressed_stream_size = fin_fget_vlint(input);
+}
+
 class OwnIStream : public InputStream {
 public:
   explicit OwnIStream(IStreamLike* f) : _f(f), _eof(false) {}
@@ -76,25 +87,30 @@ private:
   OStreamLike* _f;
 };
 class UncompressedOutStream : public OutputStream {
+  uint64_t _written = 0;
+  bool _in_memory = true;
+
 public:
   OStreamLike& ftempout;
   Precomp* precomp_mgr;
+  std::vector<unsigned char> decomp_io_buf;
 
-  UncompressedOutStream(bool& in_memory, OStreamLike& tmpfile, Precomp* precomp_mgr)
-    : ftempout(tmpfile), precomp_mgr(precomp_mgr), _written(0), _in_memory(in_memory) {}
+  UncompressedOutStream(OStreamLike& tmpfile, Precomp* precomp_mgr) : ftempout(tmpfile), precomp_mgr(precomp_mgr) {}
   ~UncompressedOutStream() override = default;
 
   size_t write(const unsigned char* buffer, const size_t size) override {
     precomp_mgr->call_progress_callback();
     if (_in_memory) {
-      auto decomp_io_buf_ptr = precomp_mgr->ctx->decomp_io_buf.data();
+      auto decomp_io_buf_ptr = decomp_io_buf.data();
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
         auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
         fast_copy(*memstream, ftempout, _written);
+        decomp_io_buf.clear();
       }
       else {
-        memcpy(decomp_io_buf_ptr + _written, buffer, size);
+        decomp_io_buf.resize(decomp_io_buf.size() + size);
+        memcpy(decomp_io_buf.data() + _written, buffer, size);
         _written += size;
         return size;
       }
@@ -108,9 +124,10 @@ public:
     return _written;
   }
 
-private:
-  uint64_t _written;
-  bool& _in_memory;
+  [[nodiscard]] bool in_memory() const {
+    return _in_memory;
+  }
+
 };
 
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, PrecompTmpFile& tmpfile) {
@@ -121,8 +138,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
   OwnIStream is(&file);
 
   {
-    result.uncompressed_in_memory = true;
-    UncompressedOutStream uos(result.uncompressed_in_memory, tmpfile, &precomp_mgr);
+    UncompressedOutStream uos(tmpfile, &precomp_mgr);
     uint64_t compressed_stream_size = 0;
     result.accepted = preflate_decode(uos, result.recon_data,
       compressed_stream_size, is, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); },
@@ -130,6 +146,9 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
       precomp_mgr.switches.preflate_meta_block_size); // you can set a minimum deflate stream size here
     result.compressed_stream_size = compressed_stream_size;
     result.uncompressed_stream_size = uos.written();
+    if (uos.in_memory()) {
+      result.uncompressed_stream_mem = uos.decomp_io_buf;
+    }
 
     if (precomp_mgr.switches.preflate_verify && result.accepted) {
       file.seekg(file_deflate_stream_pos, std::ios_base::beg);
@@ -138,11 +157,11 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
       is2.read(orgdata.data(), orgdata.size());
 
       MemStream reencoded_deflate;
-      auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-      MemStream uncompressed_mem(result.uncompressed_in_memory ? std::vector<uint8_t>(decomp_io_buf_ptr, decomp_io_buf_ptr + result.uncompressed_stream_size) : std::vector<uint8_t>());
-      OwnIStream uncompressed_file(result.uncompressed_in_memory ? nullptr : &tmpfile);
+      auto decomp_io_buf_ptr = result.uncompressed_stream_mem.data();
+      MemStream uncompressed_mem(uos.in_memory() ? std::vector(decomp_io_buf_ptr, decomp_io_buf_ptr + result.uncompressed_stream_size) : std::vector<uint8_t>());
+      OwnIStream uncompressed_file(uos.in_memory() ? nullptr : &tmpfile);
       if (!preflate_reencode(reencoded_deflate, result.recon_data,
-        result.uncompressed_in_memory ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file,
+        uos.in_memory() ? (InputStream&)uncompressed_mem : (InputStream&)uncompressed_file,
         result.uncompressed_stream_size,
         [] {})
         || orgdata != reencoded_deflate.data()) {
@@ -163,6 +182,8 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
       }
     }
   }
+  // If you think "hey I'll remove this std::move here so we can have copy elision", thread lightly... I tried it and it got me invalid precompressed streams...
+  // You can try to get to the bottom of it if you want, for now I decided its not worth my time.
   return std::move(result);
 }
 
@@ -232,7 +253,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       // check recursion
       tmpfile->reopen();
-      recursion_result r = recursion_write_file_and_compress(precomp_mgr, rdres, *tmpfile);
+      recursion_result r = recursion_compress(precomp_mgr, rdres.compressed_stream_size, rdres.uncompressed_stream_size, *tmpfile, true, rdres.uncompressed_stream_mem);
 
 #if 0
       // Do we really want to allow uncompressed streams that are smaller than the compressed
@@ -257,9 +278,8 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
         result.recursion_used = true;
       }
       else {
-        if (rdres.uncompressed_stream_size) {
-          auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
-          auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
+        if (!rdres.uncompressed_stream_mem.empty()) {
+          auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
           result.precompressed_stream = std::move(memstream);
         }
         else {

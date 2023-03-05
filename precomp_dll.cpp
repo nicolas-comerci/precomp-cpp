@@ -1133,7 +1133,7 @@ void recursion_pop(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.pop_back();
 }
 
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type, bool in_memory) {
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type, std::vector<unsigned char> in_memory) {
   recursion_result tmp_r;
   tmp_r.success = false;
 
@@ -1145,8 +1145,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     return tmp_r;
   }
 
-  if (deflate_type && in_memory) {
-    auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
+  if (deflate_type && !in_memory.empty()) {
+    auto decomp_io_buf_ptr = in_memory.data();
     auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + decompressed_bytes);
     fast_copy(*memstream, tmpfile, decompressed_bytes);
   }
@@ -1218,10 +1218,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 
   return tmp_r;
 }
-recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const recompress_deflate_result& rdres, PrecompTmpFile& tmpfile) {
-  recursion_result r = recursion_compress(precomp_mgr, rdres.compressed_stream_size, rdres.uncompressed_stream_size, tmpfile, true, rdres.uncompressed_in_memory);
-  return r;
-}
 
 recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile) {
   recursion_result tmp_r;
@@ -1286,16 +1282,6 @@ void fout_fput_vlint(OStreamLike& output, unsigned long long v) {
     v = (v >> 7) - 1;
   }
   output.put(v);
-}
-void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
-  if (!rdres.zlib_perfect) {
-    size_t sz = fin_fget_vlint(input);
-    rdres.recon_data.resize(sz);
-    input.read(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
-  }
-
-  rdres.compressed_stream_size = fin_fget_vlint(input);
-  rdres.uncompressed_stream_size = fin_fget_vlint(input);
 }
 
 int32_t fin_fget32(IStreamLike& input) {

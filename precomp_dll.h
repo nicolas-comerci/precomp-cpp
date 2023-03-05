@@ -74,8 +74,6 @@ public:
   std::set<long long> intense_ignore_offsets;
   std::set<long long> brute_ignore_offsets;
 
-  std::array<unsigned char, MAX_IO_BUFFER_SIZE> decomp_io_buf;
-
   std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   void set_input_stream(std::istream* istream, bool take_ownership = true);
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
@@ -164,22 +162,8 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
 
 // helpers for try_decompression functions
-
-struct recompress_deflate_result {
-  long long compressed_stream_size;
-  long long uncompressed_stream_size;
-  std::vector<unsigned char> recon_data;
-  bool accepted;
-  bool uncompressed_in_memory;
-  bool zlib_perfect;
-  char zlib_comp_level;
-  char zlib_mem_level;
-  char zlib_window_bits;
-};
-
 int32_t fin_fget32(IStreamLike& input);
 long long fin_fget_vlint(IStreamLike& input);
-void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
 void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
@@ -190,7 +174,6 @@ struct recursion_result {
   long long file_length;
   std::shared_ptr<std::ifstream> frecurse = std::make_shared<std::ifstream>();
 };
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, bool in_memory = true);
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, std::vector<unsigned char> in_memory = std::vector<unsigned char>());
 recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile);
-recursion_result recursion_write_file_and_compress(Precomp& precomp_mgr, const recompress_deflate_result&, PrecompTmpFile& tmpfile);
 #endif // PRECOMP_DLL_H

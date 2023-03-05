@@ -4,6 +4,18 @@
 
 #include <span>
 
+struct recompress_deflate_result {
+  long long compressed_stream_size;
+  long long uncompressed_stream_size;
+  std::vector<unsigned char> recon_data;
+  bool accepted;
+  std::vector<unsigned char> uncompressed_stream_mem;
+  bool zlib_perfect;
+  char zlib_comp_level;
+  char zlib_mem_level;
+  char zlib_window_bits;
+};
+
 class deflate_precompression_result : public precompression_result {
 protected:
   void dump_recon_data_to_outfile(Precomp& precomp_mgr);
@@ -20,6 +32,8 @@ public:
   void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
   void dump_to_outfile(Precomp& precomp_mgr) override;
 };
+
+void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
 
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, PrecompTmpFile& tmpfile);
 
