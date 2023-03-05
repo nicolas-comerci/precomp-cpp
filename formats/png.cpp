@@ -71,7 +71,6 @@ void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
 png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
   png_precompression_result result;
-  init_decompression_variables(*precomp_mgr.ctx);
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_precompressed_png", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -237,7 +236,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
   auto copy_to_temp = [&idat_lengths, &idat_count, &precomp_mgr](IStreamLike& src, OStreamLike& dst)  {
     idat_lengths[0] -= 2; // zLib header length
     for (int i = 0; i < idat_count; i++) {
-      fast_copy(precomp_mgr, src, dst, idat_lengths[i]);
+      fast_copy(src, dst, idat_lengths[i]);
       src.seekg(12, std::ios_base::cur);
     }
     idat_lengths[0] += 2;

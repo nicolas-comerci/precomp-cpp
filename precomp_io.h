@@ -319,6 +319,8 @@ public:
   static std::unique_ptr<memiostream> make(unsigned char* begin, unsigned char* end, bool take_mem_ownership = false);
 };
 
+void fast_copy(IStreamLike& file1, OStreamLike& file2, long long bytecount);
+
 bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiostream>& memstream_buf, char* target_buf, int minimum_gcount, long long& cur_pos);
 // This makes a temporary stream for use as input, reusing checkbuf or copying from original_input to mem if the stream is small enough, or to a temp file if larger
 // copy_to_temp is so you can use a custom way of copying to the temporary stream, in case you need to skip some data or something like that, if not provided, fast_copy will be used

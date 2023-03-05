@@ -155,7 +155,7 @@ bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
       if (last_pos != srcfile_pos) {
         if (last_pos == -1) {
           srcfile.seekg(src_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - src_pos);
+          fast_copy(srcfile, dstfile, srcfile_pos - src_pos);
           srcfile.seekg(srcfile_pos, std::ios_base::beg);
 
           long long dstfile_pos = dstfile.tellp();
@@ -167,7 +167,7 @@ bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
         }
         else {
           srcfile.seekg(last_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
+          fast_copy(srcfile, dstfile, srcfile_pos - last_pos);
           srcfile.seekg(srcfile_pos, std::ios_base::beg);
         }
       }
@@ -239,7 +239,7 @@ bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
   srcfile_pos = srcfile.tellg();
   if (last_pos != srcfile_pos) {
     srcfile.seekg(last_pos, std::ios_base::beg);
-    fast_copy(precomp_mgr, srcfile, dstfile, srcfile_pos - last_pos);
+    fast_copy(srcfile, dstfile, srcfile_pos - last_pos);
     srcfile.seekg(srcfile_pos, std::ios_base::beg);
   }
 
@@ -302,7 +302,7 @@ bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
       if (last_pos != src_pos) {
         if (last_pos == -1) {
           srcfile.seekg(init_src_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, srcfile, dstfile, src_pos - init_src_pos);
+          fast_copy(srcfile, dstfile, src_pos - init_src_pos);
           srcfile.seekg(src_pos, std::ios_base::beg);
 
           long long dstfile_pos = dstfile.tellp();
@@ -314,7 +314,7 @@ bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
         }
         else {
           srcfile.seekg(last_pos, std::ios_base::beg);
-          fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
+          fast_copy(srcfile, dstfile, src_pos - last_pos);
           srcfile.seekg(src_pos, std::ios_base::beg);
         }
       }
@@ -374,7 +374,7 @@ bool recompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
   src_pos = srcfile.tellg();
   if (last_pos != src_pos) {
     srcfile.seekg(last_pos, std::ios_base::beg);
-    fast_copy(precomp_mgr, srcfile, dstfile, src_pos - last_pos);
+    fast_copy(srcfile, dstfile, src_pos - last_pos);
     srcfile.seekg(src_pos, std::ios_base::beg);
   }
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
@@ -400,9 +400,11 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
   gDiff.GIFCodeCount = 0;
 
   // read penalty bytes
+  std::vector<char> penalty_bytes;
   if (penalty_bytes_stored) {
-    precomp_mgr.ctx->penalty_bytes_len = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    precomp_mgr.ctx->fin->read(precomp_mgr.ctx->penalty_bytes.data(), precomp_mgr.ctx->penalty_bytes_len);
+    auto penalty_bytes_len = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    penalty_bytes.resize(penalty_bytes_len);
+    precomp_mgr.ctx->fin->read(penalty_bytes.data(), penalty_bytes_len);
   }
 
   const long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
@@ -416,7 +418,7 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
   {
     WrappedFStream ftempout;
     ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
+    fast_copy(*precomp_mgr.ctx->fin, ftempout, decompressed_data_length);
     ftempout.close();
   }
 
@@ -447,7 +449,7 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
   {
     PrecompTmpFile frecomp;
     frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
+    fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
   }
 
   remove(tempfile2.c_str());
@@ -459,14 +461,14 @@ void try_recompression_gif(Precomp& precomp_mgr, std::byte header1, std::string&
     const long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
 
     int pb_pos = 0;
-    for (int pbc = 0; pbc < precomp_mgr.ctx->penalty_bytes_len; pbc += 5) {
-      pb_pos = ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc]) << 24;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 1]) << 16;
-      pb_pos += ((unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 2]) << 8;
-      pb_pos += (unsigned char)precomp_mgr.ctx->penalty_bytes[pbc + 3];
+    for (int pbc = 0; pbc < penalty_bytes.size(); pbc += 5) {
+      pb_pos = ((unsigned char)penalty_bytes[pbc]) << 24;
+      pb_pos += ((unsigned char)penalty_bytes[pbc + 1]) << 16;
+      pb_pos += ((unsigned char)penalty_bytes[pbc + 2]) << 8;
+      pb_pos += (unsigned char)penalty_bytes[pbc + 3];
 
       precomp_mgr.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      precomp_mgr.ctx->fout->write(precomp_mgr.ctx->penalty_bytes.data() + pbc + 4, 1);
+      precomp_mgr.ctx->fout->write(penalty_bytes.data() + pbc + 4, 1);
     }
 
     precomp_mgr.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);

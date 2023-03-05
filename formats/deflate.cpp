@@ -37,7 +37,7 @@ void deflate_precompression_result::dump_header_to_outfile(Precomp& precomp_mgr)
 void deflate_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
   if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
   auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-  fast_copy(precomp_mgr, *precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
 }
 void deflate_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_header_to_outfile(precomp_mgr);
@@ -91,7 +91,7 @@ public:
       if (_written + size >= MAX_IO_BUFFER_SIZE) {
         _in_memory = false;
         auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + _written);
-        fast_copy(*precomp_mgr, *memstream, ftempout, _written);
+        fast_copy(*memstream, ftempout, _written);
       }
       else {
         memcpy(decomp_io_buf_ptr + _written, buffer, size);
@@ -205,7 +205,6 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
   deflate_precompression_result result = deflate_precompression_result(type);
-  init_decompression_variables(*precomp_mgr.ctx);
 
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);

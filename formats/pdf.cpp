@@ -21,7 +21,7 @@ void pdf_precompression_result::dump_precompressed_data_to_outfile(Precomp& prec
   }
   else {
     for (int y = 0; y < img_height; y++) {
-      fast_copy(precomp_mgr, *precompressed_stream, *precomp_mgr.ctx->fout, img_width);
+      fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, img_width);
 
       for (int i = 0; i < (4 - (img_width % 4)); i++) {
         precomp_mgr.ctx->fout->put(0);
@@ -114,7 +114,6 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_decomp_pdf", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-  init_decompression_variables(*precomp_mgr.ctx);
 
   auto deflate_stream_pos = original_input_pos + pdf_header_length;
 

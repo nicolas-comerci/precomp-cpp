@@ -20,6 +20,8 @@
 #include <memory>
 #include <optional>
 
+static constexpr int MAX_PENALTY_BYTES = 16384;
+
 enum SupportedFormats {
   D_PDF = 0,
   D_ZIP = 1,
@@ -61,12 +63,7 @@ constexpr auto IN_BUF_SIZE = 65536;
 constexpr auto DIV3CHUNK = 262143;
 // CHECKBUF is a subsection of the IN_BUF, from the current position onwards, format support modules should only read this section of the IN_BUF
 constexpr auto CHECKBUF_SIZE = 4096;
-constexpr auto COPY_BUF_SIZE = 512;
-// update work sign after (FAST_COPY_WORK_SIGN_DIST * COPY_BUF_SIZE) bytes
-constexpr auto FAST_COPY_WORK_SIGN_DIST = 64;
 constexpr auto COMP_CHUNK = 512;
-constexpr auto PENALTY_BYTES_TOLERANCE = 160;
-constexpr auto IDENTICAL_COMPRESSED_BYTES_TOLERANCE = 32;
 constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
 class Precomp;
@@ -97,21 +94,6 @@ public:
   long long uncompressed_pos;
   std::optional<long long> uncompressed_length = std::nullopt;
   long long uncompressed_bytes_total = 0;
-
-  long long retval;
-
-  // penalty bytes
-#define MAX_PENALTY_BYTES 16384
-  std::array<char, MAX_PENALTY_BYTES> penalty_bytes;
-  int penalty_bytes_len = 0;
-  std::array<char, MAX_PENALTY_BYTES> best_penalty_bytes;
-  int best_penalty_bytes_len = 0;
-  std::array<char, MAX_PENALTY_BYTES> local_penalty_bytes;
-
-  long long identical_bytes = -1;
-  long long identical_bytes_decomp = -1;
-  long long best_identical_bytes = -1;
-  long long best_identical_bytes_decomp = -1;
 };
 
 class Precomp: public CPrecomp {
@@ -146,7 +128,6 @@ public:
 
   unsigned char in[CHUNK];
   unsigned char out[CHUNK];
-  unsigned char copybuf[COPY_BUF_SIZE];
 
   int conversion_from_method;
   
@@ -184,8 +165,6 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
 
 // helpers for try_decompression functions
 
-void init_decompression_variables(RecursionContext& context);
-
 struct recompress_deflate_result {
   long long compressed_stream_size;
   long long uncompressed_stream_size;
@@ -204,8 +183,6 @@ void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
 void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
-
-void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress = false);
 
 struct recursion_result {
   bool success;

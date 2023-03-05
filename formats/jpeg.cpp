@@ -63,7 +63,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
     jpg_mem_in.resize(jpg_length + MJPGDHT_LEN);
     auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpg_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, jpg_length);
+    fast_copy(*precomp_mgr.ctx->fin, *memstream, jpg_length);
 
     bool brunsli_success = false;
 
@@ -159,7 +159,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       WrappedFStream decompressed_jpg;
       decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
       precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
-      fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
+      fast_copy(*precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
       decompressed_jpg.close();
     }
 
@@ -229,11 +229,11 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
         WrappedFStream decompressed_jpg_w_MJPGDHT;
         decompressed_jpg_w_MJPGDHT.open(mjpgdht_tempfile, std::ios_base::out | std::ios_base::binary);
         decompressed_jpg.seekg(0, std::ios_base::beg);
-        fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
+        fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, ffda_pos - 1);
         // insert MJPGDHT
         decompressed_jpg_w_MJPGDHT.write(reinterpret_cast<char*>(MJPGDHT), MJPGDHT_LEN);
         decompressed_jpg.seekg(ffda_pos - 1, std::ios_base::beg);
-        fast_copy(precomp_mgr, decompressed_jpg, decompressed_jpg_w_MJPGDHT, jpg_length - (ffda_pos - 1));
+        fast_copy(decompressed_jpg, decompressed_jpg_w_MJPGDHT, jpg_length - (ffda_pos - 1));
       }
       decompressed_jpg.close();
       recompress_success = pjglib_convert_file2file(const_cast<char*>(mjpgdht_tempfile.c_str()), const_cast<char*>(tmpfile->file_path.c_str()), recompress_msg);
@@ -420,7 +420,7 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
   if (in_memory) {
     jpg_mem_in.resize(precompressed_data_length);
     auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + precompressed_data_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
+    fast_copy(*precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
 
     if (brunsli_used) {
       brunsli::JPEGData jpegData;
@@ -455,7 +455,7 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
     {
       WrappedFStream ftempout;
       ftempout.open(precompressed_filename, std::ios_base::out | std::ios_base::binary);
-      fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
+      fast_copy(*precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
       ftempout.close();
     }
 
@@ -517,26 +517,26 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
     // remove motion JPG huffman table
     if (in_memory) {
       auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
-      fast_copy(precomp_mgr, *memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(*memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
       auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(precomp_mgr, *memstream2, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(*memstream2, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(frecomp, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
 
       frecomp_pos += ffda_pos - 1;
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
     }
   }
   else {
     if (in_memory) {
       auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + recompressed_data_length);
-      fast_copy(precomp_mgr, *memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
+      fast_copy(*memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
     else {
-      fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
+      fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
   }
 

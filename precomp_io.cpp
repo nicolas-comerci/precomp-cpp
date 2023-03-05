@@ -1,4 +1,7 @@
 #include "precomp_io.h"
+
+#include <array>
+
 #include "precomp_utils.h"
 
 #include <filesystem>
@@ -279,6 +282,25 @@ std::unique_ptr<memiostream> memiostream::make(std::vector<unsigned char>&& memv
 std::unique_ptr<memiostream> memiostream::make(unsigned char* begin, unsigned char* end, bool take_mem_ownership) {
   auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), take_mem_ownership);
   return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
+}
+
+void fast_copy(IStreamLike& file1, OStreamLike& file2, long long bytecount) {
+  constexpr auto COPY_BUF_SIZE = 512;
+  if (bytecount == 0) return;
+
+  long long i;
+  auto remaining_bytes = (bytecount % COPY_BUF_SIZE);
+  long long maxi = (bytecount / COPY_BUF_SIZE);
+  std::array<unsigned char, COPY_BUF_SIZE> copybuf{};
+
+  for (i = 1; i <= maxi; i++) {
+    file1.read(reinterpret_cast<char*>(copybuf.data()), COPY_BUF_SIZE);
+    file2.write(reinterpret_cast<char*>(copybuf.data()), COPY_BUF_SIZE);
+  }
+  if (remaining_bytes != 0) {
+    file1.read(reinterpret_cast<char*>(copybuf.data()), remaining_bytes);
+    file2.write(reinterpret_cast<char*>(copybuf.data()), remaining_bytes);
+  }
 }
 
 bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiostream>& memstream_buf, char* target_buf, int minimum_gcount, long long& cur_pos) {

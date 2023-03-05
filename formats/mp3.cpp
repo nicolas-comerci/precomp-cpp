@@ -54,7 +54,7 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
     precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
     mp3_mem_in = new unsigned char[mp3_length];
     auto memstream = memiostream::make(mp3_mem_in, mp3_mem_in + mp3_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, mp3_length);
+    fast_copy(*precomp_mgr.ctx->fin, *memstream, mp3_length);
 
     unsigned char* mem = nullptr;
     pmplib_init_streams(mp3_mem_in, 1, mp3_length, mem, 1);
@@ -67,7 +67,7 @@ precompression_result try_precompression_mp3(Precomp& precomp_mgr, long long ori
       WrappedFStream decompressed_mp3;
       decompressed_mp3.open(decompressed_mp3_filename, std::ios_base::out | std::ios_base::binary);
       precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
-      fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, decompressed_mp3, mp3_length);
+      fast_copy(*precomp_mgr.ctx->fin, decompressed_mp3, mp3_length);
       decompressed_mp3.close();
     }
 
@@ -406,7 +406,7 @@ void recompress_mp3(Precomp& precomp_mgr) {
   if (in_memory) {
     mp3_mem_in = new unsigned char[precompressed_data_length];
     auto memstream = memiostream::make(mp3_mem_in, mp3_mem_in + precompressed_data_length);
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
+    fast_copy(*precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
 
     pmplib_init_streams(mp3_mem_in, 1, precompressed_data_length, mp3_mem_out, 1);
     recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
@@ -415,7 +415,7 @@ void recompress_mp3(Precomp& precomp_mgr) {
     {
       WrappedFStream ftempout;
       ftempout.open(precompressed_filename, std::ios_base::out | std::ios_base::binary);
-      fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
+      fast_copy(*precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
       ftempout.close();
     }
 
@@ -429,7 +429,7 @@ void recompress_mp3(Precomp& precomp_mgr) {
 
   if (in_memory) {
     auto memstream = memiostream::make(mp3_mem_out, mp3_mem_out + recompressed_data_length);
-    fast_copy(precomp_mgr, *memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
+    fast_copy(*memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
 
     delete[] mp3_mem_in;
     delete[] mp3_mem_out;
@@ -438,7 +438,7 @@ void recompress_mp3(Precomp& precomp_mgr) {
     {
       PrecompTmpFile frecomp;
       frecomp.open(recompressed_filename, std::ios_base::in | std::ios_base::binary);
-      fast_copy(precomp_mgr, frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
+      fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
     }
   }
 }

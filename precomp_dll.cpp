@@ -115,7 +115,7 @@ void precompression_result::dump_stream_sizes_to_outfile(Precomp& precomp_mgr) c
 }
 
 void precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  fast_copy(precomp_mgr, *precompressed_stream, *precomp_mgr.ctx->fout, precompressed_size);
+  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, precompressed_size);
 }
 
 void precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
@@ -429,17 +429,9 @@ void end_uncompressed_data(Precomp& precomp_mgr) {
 
   // fast copy of uncompressed data
   precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->uncompressed_pos, std::ios_base::beg);
-  fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length, true);
+  fast_copy(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length);
 
   precomp_mgr.ctx->uncompressed_length = std::nullopt;
-}
-
-void init_decompression_variables(RecursionContext& context) {
-  context.identical_bytes = -1;
-  context.best_identical_bytes = -1;
-  context.best_penalty_bytes_len = 0;
-  context.best_identical_bytes_decomp = -1;
-  context.identical_bytes_decomp = -1;
 }
 
 void write_header(Precomp& precomp_mgr) {
@@ -824,7 +816,7 @@ while (precomp_mgr.ctx->fin->good()) {
     if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
 
     print_to_log(PRECOMP_DEBUG_LOG, "Uncompressed data, length=%lli\n");
-    fast_copy(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, uncompressed_data_length);
+    fast_copy(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, uncompressed_data_length);
 
   } else { // decompressed data, recompress
 
@@ -906,16 +898,18 @@ int decompress_file(Precomp& precomp_mgr)
 }
 
 int convert_file_impl(Precomp& precomp_mgr) {
+  constexpr auto COPY_BUF_SIZE = 512;
   long long bytes_read;
   unsigned char convbuf[COPY_BUF_SIZE];
   long long int conv_bytes = -1;
+  std::array<unsigned char, COPY_BUF_SIZE> copybuf{};
 
   precomp_mgr.ctx->comp_decomp_state = P_CONVERT;
   precomp_mgr.enable_input_stream_otf_decompression();
   precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.conversion_to_method);
 
   for (;;) {
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.copybuf), COPY_BUF_SIZE);
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(copybuf.data()), COPY_BUF_SIZE);
     bytes_read = precomp_mgr.ctx->fin->gcount();
     // truncate by 9 bytes (Precomp on-the-fly delimiter) if converting from compressed data
     if ((precomp_mgr.conversion_from_method > OTF_NONE) && (bytes_read < COPY_BUF_SIZE)) {
@@ -927,7 +921,7 @@ int convert_file_impl(Precomp& precomp_mgr) {
     }
     if (conv_bytes > -1) precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
     for (int i = 0; i < bytes_read; i++) {
-      convbuf[i] = precomp_mgr.copybuf[i];
+      convbuf[i] = copybuf[i];
     }
     conv_bytes = bytes_read;
     if (bytes_read < COPY_BUF_SIZE) {
@@ -1016,27 +1010,6 @@ void convert_header(Precomp& precomp_mgr) {
   } while (c != 0);
   ostream_printf(*precomp_mgr.ctx->fout, header_filename);
   precomp_mgr.ctx->fout->put(0);
-}
-
-void fast_copy(Precomp& precomp_mgr, IStreamLike& file1, OStreamLike& file2, long long bytecount, bool update_progress) {
-  if (bytecount == 0) return;
-
-  long long i;
-  auto remaining_bytes = (bytecount % COPY_BUF_SIZE);
-  long long maxi = (bytecount / COPY_BUF_SIZE);
-
-  for (i = 1; i <= maxi; i++) {
-    file1.read(reinterpret_cast<char*>(precomp_mgr.copybuf), COPY_BUF_SIZE);
-    file2.write(reinterpret_cast<char*>(precomp_mgr.copybuf), COPY_BUF_SIZE);
-
-    if (((i - 1) % FAST_COPY_WORK_SIGN_DIST) == 0) {
-      precomp_mgr.call_progress_callback();
-    }
-  }
-  if (remaining_bytes != 0) {
-    file1.read(reinterpret_cast<char*>(precomp_mgr.copybuf), remaining_bytes);
-    file2.write(reinterpret_cast<char*>(precomp_mgr.copybuf), remaining_bytes);
-  }
 }
 
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
@@ -1175,7 +1148,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   if (deflate_type && in_memory) {
     auto decomp_io_buf_ptr = precomp_mgr.ctx->decomp_io_buf.data();
     auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + decompressed_bytes);
-    fast_copy(precomp_mgr, *memstream, tmpfile, decompressed_bytes);
+    fast_copy(*memstream, tmpfile, decompressed_bytes);
   }
   tmpfile.close();
 

@@ -37,7 +37,7 @@ void base64_precompression_result::dump_base64_header(Precomp& precomp_mgr) {
 void base64_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
   if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
   auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-  fast_copy(precomp_mgr, *precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
 }
 void base64_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_header_to_outfile(precomp_mgr);
@@ -156,14 +156,12 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
   base64_precompression_result result = base64_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_decomp_base64", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-
-  init_decompression_variables(*precomp_mgr.ctx);
   tmpfile->close();
+  remove(tmpfile->file_path.c_str());
 
   auto base64_stream_pos = original_input_pos + base64_header_length;
 
   // try to decode at current position
-  remove(tmpfile->file_path.c_str());
   precomp_mgr.ctx->fin->seekg(base64_stream_pos, std::ios_base::beg);
 
   unsigned char base64_data[CHUNK >> 2];
@@ -277,16 +275,18 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     precomp_mgr.statistics.decompressed_streams_count++;
     precomp_mgr.statistics.decompressed_base64_count++;
 
+    long long decoded_size;
     {
       WrappedFStream ftempout;
       ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
       ftempout.seekg(0, std::ios_base::end);
-      precomp_mgr.ctx->identical_bytes = ftempout.tellg();
+      decoded_size = ftempout.tellg();
     }
 
     print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result.base64_line_len.size(), original_input_pos);
-    print_to_log(PRECOMP_DEBUG_LOG, "Can be decoded to %lli bytes\n", precomp_mgr.ctx->identical_bytes);
+    print_to_log(PRECOMP_DEBUG_LOG, "Can be decoded to %lli bytes\n", decoded_size);
 
+    long long compressed_size;
     // try to re-encode Base64 data
     {
       WrappedFStream ftempout;
@@ -302,10 +302,10 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       base64_reencode(precomp_mgr, ftempout, frecomp, result.base64_line_len.size(), result.base64_line_len.data());
 
       ftempout.close();
-      precomp_mgr.ctx->identical_bytes_decomp = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
+      compressed_size = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
     }
 
-    if (precomp_mgr.ctx->identical_bytes_decomp > precomp_mgr.switches.min_ident_size) {
+    if (compressed_size > precomp_mgr.switches.min_ident_size) {
       precomp_mgr.statistics.recompressed_streams_count++;
       precomp_mgr.statistics.recompressed_base64_count++;
       print_to_log(PRECOMP_DEBUG_LOG, "Match: encoded to %lli bytes\n");
@@ -314,7 +314,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
 
       // check recursion
       tmpfile->reopen();
-      recursion_result r = recursion_compress(precomp_mgr, precomp_mgr.ctx->identical_bytes_decomp, precomp_mgr.ctx->identical_bytes, *tmpfile);
+      recursion_result r = recursion_compress(precomp_mgr, compressed_size, decoded_size, *tmpfile);
 
       // write compressed data header (Base64)
       std::byte header_byte = std::byte{ 0b1 } | (line_case << 2);
@@ -325,8 +325,9 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       result.flags = header_byte;
       result.base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
 
-      result.original_size = precomp_mgr.ctx->identical_bytes;
-      result.precompressed_size = precomp_mgr.ctx->identical_bytes_decomp;
+      // TODO: check, aren't these two switched?
+      result.original_size = decoded_size;
+      result.precompressed_size = compressed_size;
 
       // write decompressed data
       if (r.success) {
