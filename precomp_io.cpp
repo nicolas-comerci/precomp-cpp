@@ -153,7 +153,7 @@ IStreamLikeView& IStreamLikeView::read(char* buff, std::streamsize count) {
 std::istream::int_type IStreamLikeView::get() {
   unsigned char chr[1];
   read(reinterpret_cast<char*>(&chr[0]), 1);
-  return chr[0];
+  return istream->gcount() == 1 ? chr[0] : EOF;
 }
 std::streamsize IStreamLikeView::gcount() { return istream->gcount(); }
 std::istream::pos_type IStreamLikeView::tellg() { return current_stream_pos - starting_stream_pos; }
