@@ -116,12 +116,12 @@ std::tuple<long long, std::optional<std::vector<char>>> def_compare_bzip2(Precom
       return { BZ_PARAM_ERROR, local_penalty_bytes };
     }
     flush = decompressed_stream.eof() ? BZ_FINISH : BZ_RUN;
-    strm.next_in = (char*)in_buf.data();
+    strm.next_in = reinterpret_cast<char*>(in_buf.data());
     decompressed_bytes_used += strm.avail_in;
 
     do {
       strm.avail_out = DEF_COMPARE_CHUNK;
-      strm.next_out = (char*)precomp_mgr.out;
+      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
 
       ret = BZ2_bzCompress(&strm, flush);
 
@@ -129,10 +129,10 @@ std::tuple<long long, std::optional<std::vector<char>>> def_compare_bzip2(Precom
 
       if (have > 0) {
         if (&original_bzip2 == precomp_mgr.ctx->fin.get()) {
-          std::tie(identical_bytes_compare, local_penalty_bytes) = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.out, original_input_pos + comp_pos, have, total_same_byte_count, rek_same_byte_count, rek_penalty_bytes_len);
+          std::tie(identical_bytes_compare, local_penalty_bytes) = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.ctx->tmp_out, original_input_pos + comp_pos, have, total_same_byte_count, rek_same_byte_count, rek_penalty_bytes_len);
         }
         else {
-          std::tie(identical_bytes_compare, local_penalty_bytes) = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.out, comp_pos, have, total_same_byte_count, rek_same_byte_count, rek_penalty_bytes_len);
+          std::tie(identical_bytes_compare, local_penalty_bytes) = compare_file_mem_penalty(*precomp_mgr.ctx, original_bzip2, precomp_mgr.ctx->tmp_out, comp_pos, have, total_same_byte_count, rek_same_byte_count, rek_penalty_bytes_len);
         }
       }
 
@@ -232,11 +232,11 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
     }
     if (strm.avail_in == 0)
       break;
-    strm.next_in = (char*)in_buf.data();
+    strm.next_in = reinterpret_cast<char*>(in_buf.data());
 
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = (char*)precomp_mgr.out;
+      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
 
       ret = BZ2_bzDecompress(&strm);
       if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
@@ -248,7 +248,7 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
       avail_in_before = strm.avail_in;
 
       have = CHUNK - strm.avail_out;
-      dest.write(reinterpret_cast<char*>(precomp_mgr.out), have);
+      dest.write(reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out), have);
       if (dest.bad()) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -407,22 +407,22 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    strm.next_in = (char*)in_buf.data();
+    strm.next_in = reinterpret_cast<char*>(in_buf.data());
 
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = (char*)precomp_mgr.out;
+      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
 
       ret = BZ2_bzCompress(&strm, flush);
 
       have = CHUNK - strm.avail_out;
 
-      if ((pos_out + (signed)have) > stream_size_out) {
+      if ((pos_out + static_cast<signed>(have)) > stream_size_out) {
         have = stream_size_out - pos_out;
       }
       pos_out += have;
 
-      dest.write(reinterpret_cast<char*>(precomp_mgr.out), have);
+      dest.write(reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out), have);
       if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;

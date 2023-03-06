@@ -14,7 +14,7 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const
   int windowbits = (*checkbuf >> 4) + 8;
 
   const auto deflate_stream_pos = original_input_pos + 2; // skip zLib header
-  if (check_inflate_result(precomp_mgr, std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), precomp_mgr.out, -windowbits, deflate_stream_pos)) {
+  if (check_inflate_result(precomp_mgr, std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), -windowbits, deflate_stream_pos)) {
 
     result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
       D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", temp_files_tag() + "_original_zlib");

@@ -89,6 +89,7 @@ public:
 
   long long input_file_pos;
   unsigned char in_buf[IN_BUF_SIZE];
+  unsigned char tmp_out[CHUNK];
 
   // Uncompressed data info
   long long uncompressed_pos;
@@ -125,8 +126,6 @@ public:
 
   void set_progress_callback(std::function<void(float)> callback);
   void call_progress_callback();
-
-  unsigned char out[CHUNK];
 
   int conversion_from_method;
   

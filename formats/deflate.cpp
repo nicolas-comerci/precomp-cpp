@@ -308,7 +308,7 @@ long long prev_deflate_stream_pos;
 int prev_maximum, prev_used;
 int prev_i;
 
-bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, unsigned char* out_buf, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters) {
+bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters) {
   // first check BTYPE bits, skip 11 ("reserved (error)")
   const int btype = (*checkbuf_span.data() & 0x07) >> 1;
   if (btype == 3) return false;
@@ -389,7 +389,7 @@ bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> c
   /* run inflate() on input until output buffer not full */
   do {
     strm.avail_out = CHUNK;
-    strm.next_out = out_buf;
+    strm.next_out = precomp_mgr.ctx->tmp_out;
 
     ret = inflate(&strm, Z_NO_FLUSH);
     switch (ret) {
@@ -421,7 +421,7 @@ bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> c
 }
 
 bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
-  return check_inflate_result(precomp_mgr, checkbuf_span, precomp_mgr.out, -15, original_input_pos, true);
+  return check_inflate_result(precomp_mgr, checkbuf_span, -15, original_input_pos, true);
 }
 
 deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
