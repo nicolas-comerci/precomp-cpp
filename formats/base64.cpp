@@ -77,27 +77,29 @@ void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& fi
 
   long long remaining_bytes = max_in_count;
 
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(DIV3CHUNK);
   do {
     if (remaining_bytes > DIV3CHUNK) {
-      file_in.read(reinterpret_cast<char*>(precomp_mgr.in), DIV3CHUNK);
+      file_in.read(reinterpret_cast<char*>(in_buf.data()), DIV3CHUNK);
       avail_in = file_in.gcount();
     }
     else {
-      file_in.read(reinterpret_cast<char*>(precomp_mgr.in), remaining_bytes);
+      file_in.read(reinterpret_cast<char*>(in_buf.data()), remaining_bytes);
       avail_in = file_in.gcount();
     }
     remaining_bytes -= avail_in;
 
     // make sure avail_in mod 3 = 0, pad with 0 bytes
     while ((avail_in % 3) != 0) {
-      precomp_mgr.in[avail_in] = 0;
+      in_buf[avail_in] = 0;
       avail_in++;
     }
 
     for (i = 0; i < (avail_in / 3); i++) {
-      a = precomp_mgr.in[i * 3];
-      b = precomp_mgr.in[i * 3 + 1];
-      c = precomp_mgr.in[i * 3 + 2];
+      a = in_buf[i * 3];
+      b = in_buf[i * 3 + 1];
+      c = in_buf[i * 3 + 2];
       if (act_byte_count < max_byte_count) file_out.put(b64[a >> 2]);
       act_byte_count++;
       act_line_len++;
@@ -178,13 +180,15 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     uint16_t k = 0;
     std::fstream ftempout;
     ftempout.open(tmpfile->file_path, std::ios_base::out | std::ios_base::binary);
+    std::vector<unsigned char> in_buf{};
+    in_buf.resize(CHUNK);
     do {
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
+      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
       avail_in = precomp_mgr.ctx->fin->gcount();
       for (auto i = 0; i < (avail_in >> 2); i++) {
         // are these valid base64 chars?
         for (auto j = (i << 2); j < ((i << 2) + 4); j++) {
-          c = base64_char_decode(precomp_mgr.in[j]);
+          c = base64_char_decode(in_buf[j]);
           if (c < 64) {
             base64_data[k] = c;
             k++;
@@ -192,8 +196,8 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
             act_line_len++;
             continue;
           }
-          if ((precomp_mgr.in[j] == 13) || (precomp_mgr.in[j] == 10)) {
-            if (precomp_mgr.in[j] == 13) {
+          if ((in_buf[j] == 13) || (in_buf[j] == 10)) {
+            if (in_buf[j] == 13) {
               cr_count++;
               if (cr_count == 2) { // double CRLF -> base64 end
                 stream_finished = true;
@@ -212,7 +216,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
           result.base64_line_len.push_back(act_line_len);
           act_line_len = 0;
           // "=" -> Padding
-          if (precomp_mgr.in[j] == '=') {
+          if (in_buf[j] == '=') {
             while ((k % 4) != 0) {
               base64_data[k] = 0;
               k++;
@@ -220,7 +224,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
             break;
           }
           // "-" -> base64 end
-          if (precomp_mgr.in[j] == '-') break;
+          if (in_buf[j] == '-') break;
           // invalid char found -> decoding failed
           decoding_failed = true;
           break;
@@ -378,44 +382,46 @@ base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std:
   return result;
 }
 
-void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
+void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - Base64\n");
 
   int line_case = static_cast<int>(precomp_hdr_flags & std::byte{ 0b1100 });
   bool recursion_used = (precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
 
   // restore Base64 "header"
-  auto base64_header_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  auto base64_header_length = fin_fget_vlint(*context.fin);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Base64 header length: %i\n", base64_header_length);
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), base64_header_length);
-  precomp_mgr.ctx->fout->put(*precomp_mgr.in + 1); // first char was decreased
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in + 1), base64_header_length - 1);
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(base64_header_length);
+  context.fin->read(reinterpret_cast<char*>(in_buf.data()), base64_header_length);
+  context.fout->put(in_buf[0] + 1); // first char was decreased
+  context.fout->write(reinterpret_cast<char*>(in_buf.data() + 1), base64_header_length - 1);
 
   // read line length list
-  auto line_count = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  auto line_count = fin_fget_vlint(*context.fin);
 
   auto base64_line_len = new unsigned int[line_count];
 
   if (line_case == 2) {
     for (int i = 0; i < line_count; i++) {
-      base64_line_len[i] = precomp_mgr.ctx->fin->get();
+      base64_line_len[i] = context.fin->get();
     }
   }
   else {
-    base64_line_len[0] = precomp_mgr.ctx->fin->get();
+    base64_line_len[0] = context.fin->get();
     for (int i = 1; i < line_count; i++) {
       base64_line_len[i] = base64_line_len[0];
     }
-    if (line_case == 1) base64_line_len[line_count - 1] = precomp_mgr.ctx->fin->get();
+    if (line_case == 1) base64_line_len[line_count - 1] = context.fin->get();
   }
 
-  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  long long recompressed_data_length = fin_fget_vlint(*context.fin);
+  long long decompressed_data_length = fin_fget_vlint(*context.fin);
 
   long long recursion_data_length = 0;
   if (recursion_used) {
-    recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    recursion_data_length = fin_fget_vlint(*context.fin);
   }
 
   if (recursion_used) {
@@ -428,14 +434,14 @@ void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   // re-encode Base64
 
   if (recursion_used) {
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, temp_files_tag() + "_recomp_base64");
+    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, temp_files_tag() + "_recomp_base64");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    base64_reencode(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
+    base64_reencode(context.precomp, wrapped_istream_frecurse, *context.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    base64_reencode(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
+    base64_reencode(context.precomp, *context.fin, *context.fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
   }
 
   delete[] base64_line_len;

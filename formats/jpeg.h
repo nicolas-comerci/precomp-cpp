@@ -10,6 +10,6 @@ bool jpeg_header_check(const std::span<unsigned char> checkbuf_span);
 
 precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos);
 
-void recompress_jpg(Precomp& precomp_mgr, std::byte flags);
+void recompress_jpg(RecursionContext& context, std::byte flags);
 
 #endif //PRECOMP_JPEG_HANDLER_H

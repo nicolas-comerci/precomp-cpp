@@ -9,6 +9,6 @@ bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> chec
 
 deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos);
 
-void recompress_gzip(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_gzip(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_GZIP_HANDLER_H

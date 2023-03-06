@@ -104,17 +104,19 @@ std::tuple<long long, std::optional<std::vector<char>>> def_compare_bzip2(Precom
   long long rek_penalty_bytes_len = 0;
   
   /* compress until end of file */
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(DEF_COMPARE_CHUNK);
   do {
     precomp_mgr.call_progress_callback();
 
-    decompressed_stream.read(reinterpret_cast<char*>(precomp_mgr.in), DEF_COMPARE_CHUNK);
+    decompressed_stream.read(reinterpret_cast<char*>(in_buf.data()), DEF_COMPARE_CHUNK);
     strm.avail_in = decompressed_stream.gcount();
     if (decompressed_stream.bad()) {
       (void)BZ2_bzCompressEnd(&strm);
       return { BZ_PARAM_ERROR, local_penalty_bytes };
     }
     flush = decompressed_stream.eof() ? BZ_FINISH : BZ_RUN;
-    strm.next_in = (char*)precomp_mgr.in;
+    strm.next_in = (char*)in_buf.data();
     decompressed_bytes_used += strm.avail_in;
 
     do {
@@ -214,11 +216,13 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
   compressed_stream_size = 0;
   decompressed_stream_size = 0;
   unsigned int avail_in_before;
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(CHUNK);
 
   do {
     precomp_mgr.call_progress_callback();
 
-    source.read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
+    source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
     strm.avail_in = source.gcount();
     avail_in_before = strm.avail_in;
 
@@ -228,7 +232,7 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
     }
     if (strm.avail_in == 0)
       break;
-    strm.next_in = (char*)precomp_mgr.in;
+    strm.next_in = (char*)in_buf.data();
 
     do {
       strm.avail_out = CHUNK;
@@ -383,17 +387,19 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
   long long pos_out = 0;
 
   /* compress until end of file */
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(CHUNK);
   do {
     if ((stream_size_in - pos_in) > CHUNK) {
       precomp_mgr.call_progress_callback();
 
-      source.read(reinterpret_cast<char*>(precomp_mgr.in), CHUNK);
+      source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
       strm.avail_in = source.gcount();
       pos_in += CHUNK;
       flush = BZ_RUN;
     }
     else {
-      source.read(reinterpret_cast<char*>(precomp_mgr.in), stream_size_in - pos_in);
+      source.read(reinterpret_cast<char*>(in_buf.data()), stream_size_in - pos_in);
       strm.avail_in = source.gcount();
       flush = BZ_FINISH;
     }
@@ -401,7 +407,7 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    strm.next_in = (char*)precomp_mgr.in;
+    strm.next_in = (char*)in_buf.data();
 
     do {
       strm.avail_out = CHUNK;
@@ -429,10 +435,10 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
   return BZ_OK;
 }
 
-void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
+void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
 
-  unsigned char header2 = precomp_mgr.ctx->fin->get();
+  unsigned char header2 = context.fin->get();
 
   bool penalty_bytes_stored = (precomp_hdr_flags & std::byte{ 0b10 }) == std::byte{ 0b10 };
   bool recursion_used = (precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
@@ -443,17 +449,17 @@ void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   // read penalty bytes
   std::vector<char> penalty_bytes {};
   if (penalty_bytes_stored) {
-    auto penalty_bytes_len = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    auto penalty_bytes_len = fin_fget_vlint(*context.fin);
     penalty_bytes.resize(penalty_bytes_len);
-    precomp_mgr.ctx->fin->read(penalty_bytes.data(), penalty_bytes_len);
+    context.fin->read(penalty_bytes.data(), penalty_bytes_len);
   }
 
-  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  long long decompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  long long recompressed_data_length = fin_fget_vlint(*context.fin);
+  long long decompressed_data_length = fin_fget_vlint(*context.fin);
 
   long long recursion_data_length = 0;
   if (recursion_used) {
-    recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    recursion_data_length = fin_fget_vlint(*context.fin);
   }
 
   if (recursion_used) {
@@ -463,18 +469,18 @@ void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
     print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
   }
 
-  long long old_fout_pos = precomp_mgr.ctx->fout->tellp();
+  long long old_fout_pos = context.fout->tellp();
 
   long long retval;
   if (recursion_used) {
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
+    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    retval = def_part_bzip2(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, level, decompressed_data_length, recompressed_data_length);
+    retval = def_part_bzip2(context.precomp, wrapped_istream_frecurse, *context.fout, level, decompressed_data_length, recompressed_data_length);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    retval = def_part_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, level, decompressed_data_length, recompressed_data_length);
+    retval = def_part_bzip2(context.precomp, *context.fin, *context.fout, level, decompressed_data_length, recompressed_data_length);
   }
 
   if (retval != BZ_OK) {
@@ -483,9 +489,9 @@ void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   }
 
   if (penalty_bytes_stored) {
-    precomp_mgr.ctx->fout->flush();
+    context.fout->flush();
 
-    long long fsave_fout_pos = precomp_mgr.ctx->fout->tellp();
+    long long fsave_fout_pos = context.fout->tellp();
     int pb_pos = 0;
     for (int pbc = 0; pbc < penalty_bytes.size(); pbc += 5) {
       pb_pos = (unsigned char)penalty_bytes[pbc] << 24;
@@ -493,10 +499,10 @@ void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
       pb_pos += (unsigned char)penalty_bytes[pbc + 2] << 8;
       pb_pos += (unsigned char)penalty_bytes[pbc + 3];
 
-      precomp_mgr.ctx->fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      precomp_mgr.ctx->fout->write(penalty_bytes.data() + pbc + 4, 1);
+      context.fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
+      context.fout->write(penalty_bytes.data() + pbc + 4, 1);
     }
 
-    precomp_mgr.ctx->fout->seekp(fsave_fout_pos, std::ios_base::beg);
+    context.fout->seekp(fsave_fout_pos, std::ios_base::beg);
   }
 }

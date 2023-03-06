@@ -69,7 +69,9 @@ constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 class Precomp;
 class RecursionContext: public CRecursionContext {
 public:
-  explicit RecursionContext(float min_percent, float max_percent);
+  Precomp& precomp;
+
+  explicit RecursionContext(float min_percent, float max_percent, Precomp& precomp_);
 
   std::set<long long> intense_ignore_offsets;
   std::set<long long> brute_ignore_offsets;
@@ -106,7 +108,7 @@ public:
   Switches switches;
   ResultStatistics statistics;
   std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::make_unique<lzma_init_mt_extra_parameters>();
-  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(0, 100);
+  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(0, 100, *this);
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
   std::string input_file_name;
@@ -124,7 +126,6 @@ public:
   void set_progress_callback(std::function<void(float)> callback);
   void call_progress_callback();
 
-  unsigned char in[CHUNK];
   unsigned char out[CHUNK];
 
   int conversion_from_method;

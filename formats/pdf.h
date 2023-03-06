@@ -28,6 +28,6 @@ public:
 
 pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos);
 
-void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_pdf(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_PDF_HANDLER_H

@@ -229,7 +229,9 @@ Switches::Switches(): CSwitches() {
   preflate_verify = false;
 }
 
-RecursionContext::RecursionContext(float min_percent, float max_percent): CRecursionContext(), global_min_percent(min_percent), global_max_percent(max_percent) {
+RecursionContext::RecursionContext(float min_percent, float max_percent, Precomp& precomp_):
+    CRecursionContext(), precomp(precomp_), global_min_percent(min_percent), global_max_percent(max_percent)
+{
   compression_otf_method = OTF_XZ_MT;
 }
 
@@ -791,9 +793,9 @@ int compress_file(Precomp& precomp_mgr)
   return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr); });
 }
 
-int decompress_file_impl(Precomp& precomp_mgr) {
-  precomp_mgr.ctx->comp_decomp_state = P_RECOMPRESS;
-  precomp_mgr.enable_input_stream_otf_decompression();
+int decompress_file_impl(RecursionContext& precomp_ctx) {
+  precomp_ctx.comp_decomp_state = P_RECOMPRESS;
+  precomp_ctx.precomp.enable_input_stream_otf_decompression();
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile_base = tmp_tag + "_recomp_";
@@ -801,79 +803,79 @@ int decompress_file_impl(Precomp& precomp_mgr) {
   std::string tempfile;
   std::string tempfile2;
 
-  long long fin_pos = precomp_mgr.ctx->fin->tellg();
+  long long fin_pos = precomp_ctx.fin->tellg();
 
-while (precomp_mgr.ctx->fin->good()) {
+while (precomp_ctx.fin->good()) {
   tempfile = tempfile_base;
   tempfile2 = tempfile2_base;
 
-  std::byte header1 = static_cast<std::byte>(precomp_mgr.ctx->fin->get());
-  if (!precomp_mgr.ctx->fin->good()) break;
+  std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
+  if (!precomp_ctx.fin->good()) break;
   if (header1 == std::byte{ 0 }) { // uncompressed data
     long long uncompressed_data_length;
-    uncompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    uncompressed_data_length = fin_fget_vlint(*precomp_ctx.fin);
 
     if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
 
     print_to_log(PRECOMP_DEBUG_LOG, "Uncompressed data, length=%lli\n");
-    fast_copy(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, uncompressed_data_length);
+    fast_copy(*precomp_ctx.fin, *precomp_ctx.fout, uncompressed_data_length);
 
   } else { // decompressed data, recompress
 
-    unsigned char headertype = precomp_mgr.ctx->fin->get();
+    unsigned char headertype = precomp_ctx.fin->get();
 
     switch (headertype) {
     case D_PDF: { // PDF recompression
-      recompress_pdf(precomp_mgr, header1);
+      recompress_pdf(precomp_ctx, header1);
       break;
     }     
     case D_ZIP: { // ZIP recompression
-      recompress_zip(precomp_mgr, header1);
+      recompress_zip(precomp_ctx, header1);
       break;
     }
     case D_GZIP: { // GZip recompression
-      recompress_gzip(precomp_mgr, header1);
+      recompress_gzip(precomp_ctx, header1);
       break;
     }
     case D_PNG: { // PNG recompression
-      recompress_png(precomp_mgr, header1);
+      recompress_png(precomp_ctx, header1);
       break;
     }
     case D_MULTIPNG: { // PNG multi recompression
-      recompress_multipng(precomp_mgr, header1);
+      recompress_multipng(precomp_ctx, header1);
       break;
     }
     case D_GIF: { // GIF recompression
       print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - GIF\n");
-      try_recompression_gif(precomp_mgr, header1, tempfile, tempfile2);
+      try_recompression_gif(precomp_ctx, header1, tempfile, tempfile2);
       break;
     }
     case D_JPG: { // JPG recompression
-      recompress_jpg(precomp_mgr, header1);
+      recompress_jpg(precomp_ctx, header1);
       break;
     }
     case D_SWF: { // SWF recompression
-      recompress_swf(precomp_mgr, header1);
+      recompress_swf(precomp_ctx, header1);
       break;
     }
     case D_BASE64: { // Base64 recompression
-      recompress_base64(precomp_mgr, header1);
+      recompress_base64(precomp_ctx, header1);
       break;
     }
     case D_BZIP2: { // bZip2 recompression
-      recompress_bzip2(precomp_mgr, header1);
+      recompress_bzip2(precomp_ctx, header1);
       break;
     }
     case D_MP3: { // MP3 recompression
-      recompress_mp3(precomp_mgr);
+      recompress_mp3(precomp_ctx);
       break;
     }
     case D_BRUTE: { // brute mode recompression
-      recompress_raw_deflate(precomp_mgr, header1);
+      recompress_raw_deflate(precomp_ctx, header1);
       break;
     }
     case D_RAW: { // raw zLib recompression
-      recompress_zlib(precomp_mgr, header1);
+      recompress_zlib(precomp_ctx, header1);
       break;
     }
     default:
@@ -882,10 +884,10 @@ while (precomp_mgr.ctx->fin->good()) {
 
   }
 
-  fin_pos = precomp_mgr.ctx->fin->tellg();
-  if (precomp_mgr.ctx->compression_otf_method != OTF_NONE) {
-    if (precomp_mgr.ctx->fin->eof()) break;
-    if (fin_pos >= precomp_mgr.ctx->fin_length) fin_pos = precomp_mgr.ctx->fin_length - 1;
+  fin_pos = precomp_ctx.fin->tellg();
+  if (precomp_ctx.compression_otf_method != OTF_NONE) {
+    if (precomp_ctx.fin->eof()) break;
+    if (fin_pos >= precomp_ctx.fin_length) fin_pos = precomp_ctx.fin_length - 1;
   }
 }
 
@@ -894,7 +896,7 @@ while (precomp_mgr.ctx->fin->good()) {
 
 int decompress_file(Precomp& precomp_mgr)
 {
-  return wrap_with_exception_catch([&]() { return decompress_file_impl(precomp_mgr); });
+  return wrap_with_exception_catch([&]() { return decompress_file_impl(*precomp_mgr.ctx); });
 }
 
 int convert_file_impl(Precomp& precomp_mgr) {
@@ -942,23 +944,24 @@ int convert_file(Precomp& precomp_mgr)
 
 void read_header(Precomp& precomp_mgr) {
   if (precomp_mgr.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
+  unsigned char hdr[3];
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  if ((hdr[0] == 'P') && (hdr[1] == 'C') && (hdr[2] == 'F')) {
   } else {
     throw PrecompError(ERR_NO_PCF_HEADER);
   }
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  if ((hdr[0] == V_MAJOR) && (hdr[1] == V_MINOR) && (hdr[2] == V_MINOR2)) {
   } else {
     throw PrecompError(
       ERR_PCF_HEADER_INCOMPATIBLE_VERSION,
-      make_cstyle_format_string("PCF version info: %i.%i.%i\n", precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2])
+      make_cstyle_format_string("PCF version info: %i.%i.%i\n", hdr[0], hdr[1], hdr[2])
     );
   }
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
-  precomp_mgr.ctx->compression_otf_method = precomp_mgr.in[0];
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 1);
+  precomp_mgr.ctx->compression_otf_method = hdr[0];
 
   std::string header_filename;
   char c;
@@ -976,31 +979,32 @@ void read_header(Precomp& precomp_mgr) {
 void convert_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == 'P') && (precomp_mgr.in[1] == 'C') && (precomp_mgr.in[2] == 'F')) {
+  unsigned char hdr[3];
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  if ((hdr[0] == 'P') && (hdr[1] == 'C') && (hdr[2] == 'F')) {
   } else {
     throw std::runtime_error(make_cstyle_format_string("Input stream has no valid PCF header\n"));
   }
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
+  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 3);
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 3);
-  if ((precomp_mgr.in[0] == V_MAJOR) && (precomp_mgr.in[1] == V_MINOR) && (precomp_mgr.in[2] == V_MINOR2)) {
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  if ((hdr[0] == V_MAJOR) && (hdr[1] == V_MINOR) && (hdr[2] == V_MINOR2)) {
   } else {
     throw std::runtime_error(make_cstyle_format_string(
       "Input stream was made with a different Precomp version\n"
       "PCF version info: %i.%i.%i\n",
-      precomp_mgr.in[0], precomp_mgr.in[1], precomp_mgr.in[2]
+      hdr[0], hdr[1], hdr[2]
     ));
   }
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 3);
+  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 3);
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 1);
-  precomp_mgr.conversion_from_method = precomp_mgr.in[0];
+  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 1);
+  precomp_mgr.conversion_from_method = hdr[0];
   if (precomp_mgr.conversion_from_method == precomp_mgr.conversion_to_method) {
     throw std::runtime_error(make_cstyle_format_string("Input file doesn't need to be converted\n"));
   }
-  precomp_mgr.in[0] = precomp_mgr.conversion_to_method;
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(precomp_mgr.in), 1);
+  hdr[0] = precomp_mgr.conversion_to_method;
+  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 1);
 
   std::string header_filename;
   char c;
@@ -1125,7 +1129,7 @@ void recursion_push(Precomp& precomp_mgr, long long recurse_stream_length) {
   auto new_maximum = precomp_mgr.ctx->global_min_percent + (context_progress_range * recursion_end_progress_percent);
 
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
-  precomp_mgr.ctx = std::make_unique<RecursionContext>(new_minimum, new_maximum);
+  precomp_mgr.ctx = std::make_unique<RecursionContext>(new_minimum, new_maximum, precomp_mgr);
 }
 
 void recursion_pop(Precomp& precomp_mgr) {

@@ -213,15 +213,16 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       decompressed_jpg.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
       do {
         ffda_pos++;
-        decompressed_jpg.read(reinterpret_cast<char*>(precomp_mgr.in), 1);
+        unsigned char chr[1];
+        decompressed_jpg.read(reinterpret_cast<char*>(chr), 1);
         if (decompressed_jpg.gcount() != 1) break;
         if (found_ff) {
-          found_ffda = (precomp_mgr.in[0] == 0xDA);
+          found_ffda = (chr[0] == 0xDA);
           if (found_ffda) break;
           found_ff = false;
         }
         else {
-          found_ff = (precomp_mgr.in[0] == 0xFF);
+          found_ff = (chr[0] == 0xFF);
         }
       } while (!found_ffda);
       std::string mjpgdht_tempfile = tmpfile->file_path + "_mjpgdht";
@@ -323,20 +324,21 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
 
   long long jpg_end_pos = jpg_start_pos + 2;  // skip header
 
+  unsigned char in_buf[5];
   do {
     precomp_mgr.ctx->fin->seekg(jpg_end_pos, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 5);
-    if ((precomp_mgr.ctx->fin->gcount() != 5) || (precomp_mgr.in[0] != 0xFF))
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf), 5);
+    if ((precomp_mgr.ctx->fin->gcount() != 5) || (in_buf[0] != 0xFF))
       break;
-    int length = (int)precomp_mgr.in[2] * 256 + (int)precomp_mgr.in[3];
-    switch (precomp_mgr.in[1]) {
+    int length = (int)in_buf[2] * 256 + (int)in_buf[3];
+    switch (in_buf[1]) {
     case 0xDB: {
       // FF DB XX XX QtId ...
       // Marker length (XX XX) must be = 2 + (multiple of 65 <= 260)
       // QtId:
       // bit 0..3: number of QT (0..3, otherwise error)
       // bit 4..7: precision of QT, 0 = 8 bit, otherwise 16 bit               
-      if (length <= 262 && ((length - 2) % 65) == 0 && precomp_mgr.in[4] <= 3) {
+      if (length <= 262 && ((length - 2) % 65) == 0 && in_buf[4] <= 3) {
         hasQuantTable = true;
         jpg_end_pos += length + 2;
       }
@@ -345,14 +347,14 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
       break;
     }
     case 0xC4: {
-      done = ((precomp_mgr.in[4] & 0xF) > 3 || (precomp_mgr.in[4] >> 4) > 1);
+      done = ((in_buf[4] & 0xF) > 3 || (in_buf[4] >> 4) > 1);
       jpg_end_pos += length + 2;
       break;
     }
     case 0xDA: found = hasQuantTable;
     case 0xD9: done = true; break; //EOI with no SOS?
     case 0xC2: progressive_flag = true;
-    case 0xC0: done = (precomp_mgr.in[4] != 0x08);
+    case 0xC0: done = (in_buf[4] != 0x08);
     default: jpg_end_pos += length + 2;
     }
   } while (!done);
@@ -361,21 +363,23 @@ precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<uns
     found = done = false;
     jpg_end_pos += 5;
 
-    bool isMarker = (precomp_mgr.in[4] == 0xFF);
+    bool isMarker = (in_buf[4] == 0xFF);
     size_t bytesRead = 0;
+    std::vector<unsigned char> in_buf_chunk{};
+    in_buf_chunk.resize(CHUNK);
     for (;;) {
       if (done) break;
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), sizeof(precomp_mgr.in[0]) * CHUNK);
+      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf_chunk.data()), CHUNK);
       bytesRead = precomp_mgr.ctx->fin->gcount();
       if (!bytesRead) break;
       for (size_t i = 0; !done && (i < bytesRead); i++) {
         jpg_end_pos++;
         if (!isMarker) {
-          isMarker = (precomp_mgr.in[i] == 0xFF);
+          isMarker = (in_buf_chunk[i] == 0xFF);
         }
         else {
-          done = (precomp_mgr.in[i] && ((precomp_mgr.in[i] & 0xF8) != 0xD0) && ((progressive_flag) ? (precomp_mgr.in[i] != 0xC4) && (precomp_mgr.in[i] != 0xDA) : true));
-          found = (precomp_mgr.in[i] == 0xD9);
+          done = (in_buf_chunk[i] && ((in_buf_chunk[i] & 0xF8) != 0xD0) && ((progressive_flag) ? (in_buf_chunk[i] != 0xC4) && (in_buf_chunk[i] != 0xDA) : true));
+          found = (in_buf_chunk[i] == 0xD9);
           isMarker = false;
         }
       }
@@ -395,7 +399,7 @@ int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
   return count;
 }
 
-void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
+void recompress_jpg(RecursionContext& context, std::byte flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
 
   std::string precompressed_filename = temp_files_tag() + "_precompressed_jpg";
@@ -405,8 +409,8 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
   bool brunsli_used = (flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };
   bool brotli_used = (flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
 
-  long long recompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-  long long precompressed_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
+  long long recompressed_data_length = fin_fget_vlint(*context.fin);
+  long long precompressed_data_length = fin_fget_vlint(*context.fin);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, precompressed_data_length);
 
@@ -420,7 +424,7 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
   if (in_memory) {
     jpg_mem_in.resize(precompressed_data_length);
     auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + precompressed_data_length);
-    fast_copy(*precomp_mgr.ctx->fin, *memstream, precompressed_data_length);
+    fast_copy(*context.fin, *memstream, precompressed_data_length);
 
     if (brunsli_used) {
       brunsli::JPEGData jpegData;
@@ -455,7 +459,7 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
     {
       WrappedFStream ftempout;
       ftempout.open(precompressed_filename, std::ios_base::out | std::ios_base::binary);
-      fast_copy(*precomp_mgr.ctx->fin, ftempout, precompressed_data_length);
+      fast_copy(*context.fin, ftempout, precompressed_data_length);
       ftempout.close();
     }
 
@@ -497,15 +501,16 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
     else {
       do {
         ffda_pos++;
-        frecomp.read(reinterpret_cast<char*>(precomp_mgr.in), 1);
+        unsigned char chr[1];
+        frecomp.read(reinterpret_cast<char*>(chr), 1);
         if (frecomp.gcount() != 1) break;
         if (found_ff) {
-          found_ffda = precomp_mgr.in[0] == 0xDA;
+          found_ffda = chr[0] == 0xDA;
           if (found_ffda) break;
           found_ff = false;
         }
         else {
-          found_ff = precomp_mgr.in[0] == 0xFF;
+          found_ff = chr[0] == 0xFF;
         }
       } while (!found_ffda);
     }
@@ -517,26 +522,26 @@ void recompress_jpg(Precomp& precomp_mgr, std::byte flags) {
     // remove motion JPG huffman table
     if (in_memory) {
       auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
-      fast_copy(*memstream1, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(*memstream1, *context.fout, ffda_pos - 1 - MJPGDHT_LEN);
       auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(*memstream2, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(*memstream2, *context.fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(frecomp, *precomp_mgr.ctx->fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(frecomp, *context.fout, ffda_pos - 1 - MJPGDHT_LEN);
 
       frecomp_pos += ffda_pos - 1;
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(frecomp, *context.fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
     }
   }
   else {
     if (in_memory) {
       auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + recompressed_data_length);
-      fast_copy(*memstream, *precomp_mgr.ctx->fout, recompressed_data_length);
+      fast_copy(*memstream, *context.fout, recompressed_data_length);
     }
     else {
-      fast_copy(frecomp, *precomp_mgr.ctx->fout, recompressed_data_length);
+      fast_copy(frecomp, *context.fout, recompressed_data_length);
     }
   }
 

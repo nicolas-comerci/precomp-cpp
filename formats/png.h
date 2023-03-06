@@ -25,8 +25,8 @@ public:
 
 png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos);
 
-void recompress_png(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_png(RecursionContext& context, std::byte precomp_hdr_flags);
 
-void recompress_multipng(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif  // PRECOMP_PNG_HANDLER_H

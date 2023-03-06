@@ -39,10 +39,10 @@ deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr, const 
   return result;
 }
 
-void recompress_zip(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
-  precomp_mgr.ctx->fout->put('P');
-  precomp_mgr.ctx->fout->put('K');
-  precomp_mgr.ctx->fout->put(3);
-  precomp_mgr.ctx->fout->put(4);
-  recompress_deflate(precomp_mgr, precomp_hdr_flags, false, temp_files_tag() + "_recomp_zip", "ZIP");
+void recompress_zip(RecursionContext& context, std::byte precomp_hdr_flags) {
+  context.fout->put('P');
+  context.fout->put('K');
+  context.fout->put(3);
+  context.fout->put(4);
+  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_zip", "ZIP");
 }

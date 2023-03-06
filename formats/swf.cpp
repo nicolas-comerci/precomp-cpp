@@ -23,10 +23,10 @@ deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const 
   return result;
 }
 
-void recompress_swf(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
-  precomp_mgr.ctx->fout->put('C');
-  precomp_mgr.ctx->fout->put('W');
-  precomp_mgr.ctx->fout->put('S');
+void recompress_swf(RecursionContext& context, std::byte precomp_hdr_flags) {
+  context.fout->put('C');
+  context.fout->put('W');
+  context.fout->put('S');
 
-  recompress_deflate(precomp_mgr, precomp_hdr_flags, true, temp_files_tag() + "_recomp_swf", "SWF");
+  recompress_deflate(context, precomp_hdr_flags, true, temp_files_tag() + "_recomp_swf", "SWF");
 }

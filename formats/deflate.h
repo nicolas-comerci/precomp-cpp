@@ -39,7 +39,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
 
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos);
 
-void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres);
+void debug_sums(RecursionContext& context, const recompress_deflate_result& rdres);
 
 void debug_pos(Precomp& precomp_mgr);
 
@@ -52,18 +52,18 @@ bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsign
 
 deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos);
 
-bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part);
+bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part);
 
 void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
   unsigned char* hdr_data, unsigned& hdr_length,
   const bool inc_last_hdr_byte);
 
-void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
+void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length);
 
-void recompress_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type);
+void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type);
 
-void recompress_raw_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_raw_deflate(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_DEFLATE_HANDLER_H

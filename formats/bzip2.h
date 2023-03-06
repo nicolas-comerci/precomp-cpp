@@ -20,6 +20,6 @@ bool bzip2_header_check(const std::span<unsigned char> checkbuf_span);
 
 bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos);
 
-void recompress_bzip2(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_BZip2_HANDLER_H

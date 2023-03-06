@@ -107,7 +107,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
 
       precomp_mgr.ctx->non_zlib_was_used = true;
 
-      debug_sums(precomp_mgr, rdres);
+      debug_sums(*precomp_mgr.ctx, rdres);
 
       result.success = true;
       result.format = idat_count > 1 ? D_MULTIPNG : D_PNG;
@@ -161,28 +161,29 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
   auto memstream = memiostream::make(checkbuf.data(), checkbuf.data() + checkbuf.size());
 
   // get preceding length bytes
+  std::array<unsigned char, 12> in_buf{};
   while (true) {
     if (original_input_pos < 4) break;
     precomp_mgr.ctx->fin->seekg(original_input_pos - 4, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 4);
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf.data()), 4);
     if (precomp_mgr.ctx->fin->gcount() != 4) break;
     auto cur_pos = original_input_pos;
 
-    if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(precomp_mgr.in + 4), 6, cur_pos)) break;
+    if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(in_buf.data() + 4), 6, cur_pos)) break;
     cur_pos -= 2;
     precomp_mgr.ctx->fin->seekg(cur_pos, std::ios_base::beg);
     memstream->seekg(-2, std::ios_base::cur);
 
-    idat_lengths[0] = (precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3];
+    idat_lengths[0] = (in_buf[0] << 24) + (in_buf[1] << 16) + (in_buf[2] << 8) + in_buf[3];
 
     if (idat_lengths[0] <= 2) break;
     // check zLib header and get windowbits
-    zlib_header[0] = precomp_mgr.in[8];
-    zlib_header[1] = precomp_mgr.in[9];
-    if ((((precomp_mgr.in[8] << 8) + precomp_mgr.in[9]) % 31) == 0) {
-      if ((precomp_mgr.in[8] & 15) == 8) {
-        if ((precomp_mgr.in[9] & 32) == 0) { // FDICT must not be set
-          //windowbits = (precomp_mgr.in[8] >> 4) + 8;
+    zlib_header[0] = in_buf[8];
+    zlib_header[1] = in_buf[9];
+    if ((((in_buf[8] << 8) + in_buf[9]) % 31) == 0) {
+      if ((in_buf[8] & 15) == 8) {
+        if ((in_buf[9] & 32) == 0) { // FDICT must not be set
+          //windowbits = (in_buf[8] >> 4) + 8;
           zlib_header_correct = true;
         }
       }
@@ -196,15 +197,15 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
       precomp_mgr.ctx->fin->seekg(idat_lengths.back(), std::ios_base::cur);
       memstream->seekg(idat_lengths.back(), std::ios_base::cur);
       cur_pos += idat_lengths.back();
-      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(precomp_mgr.in), 12, cur_pos)) { // 12 = CRC, length, "IDAT"
+      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(in_buf.data()), 12, cur_pos)) { // 12 = CRC, length, "IDAT"
         idat_count = 0;
         idat_lengths.resize(1);
         break;
       }
 
-      if (memcmp(precomp_mgr.in + 8, "IDAT", 4) == 0) {
-        idat_crcs.push_back((precomp_mgr.in[0] << 24) + (precomp_mgr.in[1] << 16) + (precomp_mgr.in[2] << 8) + precomp_mgr.in[3]);
-        idat_lengths.push_back((precomp_mgr.in[4] << 24) + (precomp_mgr.in[5] << 16) + (precomp_mgr.in[6] << 8) + precomp_mgr.in[7]);
+      if (memcmp(in_buf.data() + 8, "IDAT", 4) == 0) {
+        idat_crcs.push_back((in_buf[0] << 24) + (in_buf[1] << 16) + (in_buf[2] << 8) + in_buf[3]);
+        idat_lengths.push_back((in_buf[4] << 24) + (in_buf[5] << 16) + (in_buf[6] << 8) + in_buf[7]);
         idat_count++;
 
         if (idat_lengths.size() > 65535) {
@@ -252,10 +253,10 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
   return result;
 }
 
-void recompress_png(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
+void recompress_png(RecursionContext& context, std::byte precomp_hdr_flags) {
   // restore IDAT
-  ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
-  recompress_deflate(precomp_mgr, precomp_hdr_flags, true, temp_files_tag() + "_recomp_png", "PNG");
+  ostream_printf(*context.fout, "IDAT");
+  recompress_deflate(context, precomp_hdr_flags, true, temp_files_tag() + "_recomp_png", "PNG");
 }
 
 class OwnOStreamMultiPNG : public OutputStream {
@@ -311,38 +312,40 @@ bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin,
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-void recompress_multipng(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
+void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags) {
   // restore first IDAT
-  ostream_printf(*precomp_mgr.ctx->fout, "IDAT");
+  ostream_printf(*context.fout, "IDAT");
 
   recompress_deflate_result rdres;
   unsigned hdr_length;
-  fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, true);
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(CHUNK);
+  fin_fget_deflate_hdr(*context.fin, *context.fout, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, true);
 
   // get IDAT count
-  auto idat_count = fin_fget_vlint(*precomp_mgr.ctx->fin) + 1;
+  auto idat_count = fin_fget_vlint(*context.fin) + 1;
 
   std::vector<unsigned int> idat_crcs;
-  idat_crcs.reserve(idat_count * sizeof(unsigned int));
+  idat_crcs.resize(idat_count * sizeof(unsigned int));
   std::vector<unsigned int> idat_lengths;
-  idat_lengths.reserve(idat_count * sizeof(unsigned int));
+  idat_lengths.resize(idat_count * sizeof(unsigned int));
 
   // get first IDAT length
-  idat_lengths[0] = fin_fget_vlint(*precomp_mgr.ctx->fin) - 2; // zLib header length
+  idat_lengths[0] = fin_fget_vlint(*context.fin) - 2; // zLib header length
 
   // get IDAT chunk lengths and CRCs
   for (int i = 1; i < idat_count; i++) {
-    idat_crcs[i] = fin_fget32(*precomp_mgr.ctx->fin);
-    idat_lengths[i] = fin_fget_vlint(*precomp_mgr.ctx->fin);
+    idat_crcs[i] = fin_fget32(*context.fin);
+    idat_lengths[i] = fin_fget_vlint(*context.fin);
   }
 
-  fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
-  debug_sums(precomp_mgr, rdres);
-  debug_pos(precomp_mgr);
+  fin_fget_recon_data(*context.fin, rdres);
+  debug_sums(context, rdres);
+  debug_pos(context.precomp);
 
   debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
 
-  if (!try_reconstructing_deflate_multipng(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, idat_count, idat_crcs.data(), idat_lengths.data())) {
+  if (!try_reconstructing_deflate_multipng(context.precomp, *context.fin, *context.fout, rdres, idat_count, idat_crcs.data(), idat_lengths.data())) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }

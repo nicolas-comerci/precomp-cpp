@@ -25,6 +25,6 @@ bool base64_header_check(const std::span<unsigned char> checkbuf_span);
 
 base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
 
-void recompress_base64(Precomp& precomp_mgr, std::byte precomp_hdr_flags);
+void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_B64_HANDLER_H

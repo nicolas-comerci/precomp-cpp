@@ -142,7 +142,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       precomp_mgr.statistics.recompressed_pdf_count++;
 
       precomp_mgr.ctx->non_zlib_was_used = true;
-      debug_sums(precomp_mgr, rdres);
+      debug_sums(*precomp_mgr.ctx, rdres);
 
       if (img_bpc == 8) {
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
@@ -337,12 +337,14 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsign
   return result;
 }
 
-void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
+void recompress_pdf(RecursionContext& context, std::byte precomp_hdr_flags) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   // restore PDF header
-  ostream_printf(*precomp_mgr.ctx->fout, "/FlateDecode");
-  fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, false);
+  ostream_printf(*context.fout, "/FlateDecode");
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(CHUNK);
+  fin_fget_deflate_rec(context, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, false);
   debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
 
   int bmp_c = static_cast<int>(precomp_hdr_flags & std::byte{ 0b11000000 });
@@ -353,14 +355,14 @@ void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
   int bmp_width = 0;
   switch (bmp_c) {
   case 1:
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 54 + 1024);
+    context.fin->read(reinterpret_cast<char*>(in_buf.data()), 54 + 1024);
     break;
   case 2:
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.in), 54);
+    context.fin->read(reinterpret_cast<char*>(in_buf.data()), 54);
     break;
   }
   if (bmp_c > 0) {
-    bmp_width = precomp_mgr.in[18] + (precomp_mgr.in[19] << 8) + (precomp_mgr.in[20] << 16) + (precomp_mgr.in[21] << 24);
+    bmp_width = in_buf[18] + (in_buf[19] << 8) + (in_buf[20] << 16) + (in_buf[21] << 24);
     if (bmp_c == 2) bmp_width *= 3;
   }
 
@@ -375,7 +377,7 @@ void recompress_pdf(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
     read_part = bmp_width;
     skip_part = (-bmp_width) & 3;
   }
-  if (!try_reconstructing_deflate_skip(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, read_part, skip_part)) {
+  if (!try_reconstructing_deflate_skip(context, *context.fin, *context.fout, rdres, read_part, skip_part)) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }

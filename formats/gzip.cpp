@@ -75,8 +75,8 @@ deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const
   return result;
 }
 
-void recompress_gzip(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
-  precomp_mgr.ctx->fout->put(31);
-  precomp_mgr.ctx->fout->put(139);
-  recompress_deflate(precomp_mgr, precomp_hdr_flags, false, temp_files_tag() + "_recomp_gzip", "GZIP");
+void recompress_gzip(RecursionContext& context, std::byte precomp_hdr_flags) {
+  context.fout->put(31);
+  context.fout->put(139);
+  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_gzip", "GZIP");
 }

@@ -207,14 +207,14 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
 }
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
-void debug_sums(Precomp& precomp_mgr, const recompress_deflate_result& rdres) {
+void debug_sums(RecursionContext& context, const recompress_deflate_result& rdres) {
   if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
   sum_compressed += rdres.compressed_stream_size;
   sum_uncompressed += rdres.uncompressed_stream_size;
   sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
   sum_recon += rdres.recon_data.size();
   print_to_log(PRECOMP_DEBUG_LOG, "deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
-    sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
+    sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
 }
 
 void debug_pos(Precomp& precomp_mgr) {
@@ -245,7 +245,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       precomp_mgr.ctx->non_zlib_was_used = true;
 
-      debug_sums(precomp_mgr, rdres);
+      debug_sums(*precomp_mgr.ctx, rdres);
 
       // end uncompressed data
 
@@ -469,7 +469,7 @@ size_t fread_skip(unsigned char* ptr, size_t size, size_t count, IStreamLike& st
   return bytes_read;
 }
 
-bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   unsigned int frs_offset = 0;
@@ -479,7 +479,7 @@ bool try_reconstructing_deflate_skip(Precomp& precomp_mgr, IStreamLike& fin, OSt
     return false;
   }
   OwnOStream os(&fout);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&context]() { context.precomp.call_progress_callback(); });
 }
 
 void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
@@ -503,11 +503,11 @@ void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_de
   output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
 
-void fin_fget_deflate_rec(Precomp& precomp_mgr, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
-  fin_fget_deflate_hdr(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres, flags, hdr, hdr_length, inc_last);
-  fin_fget_recon_data(*precomp_mgr.ctx->fin, rdres);
+void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
+  fin_fget_deflate_hdr(*context.fin, *context.fout, rdres, flags, hdr, hdr_length, inc_last);
+  fin_fget_recon_data(*context.fin, rdres);
 
-  debug_sums(precomp_mgr, rdres);
+  debug_sums(context, rdres);
 }
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length) {
@@ -532,28 +532,30 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
 
-void recompress_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
+void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   int64_t recursion_data_length = 0;
   bool ok;
-  fin_fget_deflate_rec(precomp_mgr, rdres, precomp_hdr_flags, precomp_mgr.in, hdr_length, incl_last_hdr_byte);
+  std::vector<unsigned char> in_buf{};
+  in_buf.resize(CHUNK);
+  fin_fget_deflate_rec(context, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, incl_last_hdr_byte);
 
   // write decompressed data
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
-    recursion_data_length = fin_fget_vlint(*precomp_mgr.ctx->fin);
-    recursion_result r = recursion_decompress(precomp_mgr, recursion_data_length, filename);
-    debug_pos(precomp_mgr);
+    recursion_data_length = fin_fget_vlint(*context.fin);
+    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, filename);
+    debug_pos(context.precomp);
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    ok = try_reconstructing_deflate(precomp_mgr, wrapped_istream_frecurse, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
+    ok = try_reconstructing_deflate(context.precomp, wrapped_istream_frecurse, *context.fout, rdres);
+    debug_pos(context.precomp);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    debug_pos(precomp_mgr);
-    ok = try_reconstructing_deflate(precomp_mgr, *precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
-    debug_pos(precomp_mgr);
+    debug_pos(context.precomp);
+    ok = try_reconstructing_deflate(context.precomp, *context.fin, *context.fout, rdres);
+    debug_pos(context.precomp);
   }
 
   debug_deflate_reconstruct(rdres, type.c_str(), hdr_length, recursion_data_length);
@@ -563,6 +565,6 @@ void recompress_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags, bool 
   }
 }
 
-void recompress_raw_deflate(Precomp& precomp_mgr, std::byte precomp_hdr_flags) {
-  recompress_deflate(precomp_mgr, precomp_hdr_flags, false, temp_files_tag() + "_recomp_deflate", "brute mode");
+void recompress_raw_deflate(RecursionContext& context, std::byte precomp_hdr_flags) {
+  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_deflate", "brute mode");
 }
