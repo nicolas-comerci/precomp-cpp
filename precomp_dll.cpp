@@ -1224,52 +1224,152 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   return tmp_r;
 }
 
-recursion_result recursion_decompress(RecursionContext& precomp_ctx, long long recursion_data_length, std::string tmpfile) {
-  recursion_result tmp_r;
-  auto& precomp_mgr = precomp_ctx.precomp;
 
-  auto original_pos = precomp_ctx.fin->tellg();
-  auto input_stream = std::move(precomp_ctx.fin);  // steal the input file from the context before pushing it
-  {
-    // This is just a way of getting a new RecursionContext
-    recursion_push(precomp_ctx, recursion_data_length);
-    auto new_precomp_ctx = std::move(precomp_mgr.ctx);
-    recursion_pop(precomp_mgr);
 
-    long long recursion_end_pos = original_pos + recursion_data_length;
-    new_precomp_ctx->fin_length = recursion_data_length;
-    // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
-    // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
-    auto fin_view = std::make_unique<IStreamLikeView>(input_stream.get(), recursion_end_pos);
-    new_precomp_ctx->fin = std::move(fin_view);
+RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_) : ctx(std::move(ctx_)) {
+  buffer.reserve(CHUNK);
 
-    tmp_r.file_name = tmpfile;
-    auto fout = new std::ofstream();
-    fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-    new_precomp_ctx->set_output_stream(fout, true);
+  ctx->fout = std::make_unique<ObservableOStreamWrapper>(this, false);
+  // disable compression-on-the-fly in recursion - we don't want streams compressed many times
+  ctx->compression_otf_method = OTF_NONE;
 
-    // disable compression-on-the-fly in recursion - we don't want streams compressed many times
-    new_precomp_ctx->compression_otf_method = OTF_NONE;
+  //const auto ret_code = decompress_file(ctx->precomp);
+  //if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
+  thread = std::thread([&ctx_capture = ctx, &write_eof_capture = write_eof] {
+    auto retval = decompress_file(*ctx_capture);
+    write_eof_capture = true;
+    return retval;
+  });
+}
 
-    new_precomp_ctx->precomp.recursion_depth++;
-    print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", new_precomp_ctx->precomp.recursion_depth);
-    const auto ret_code = decompress_file(*new_precomp_ctx);
-    if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
+RecursionPasstroughStream::~RecursionPasstroughStream() {
+  if (thread.joinable()) thread.join();
+}
 
-    // TODO CHECK: Delete ctx?
-
-    new_precomp_ctx->precomp.recursion_depth--;
+RecursionPasstroughStream& RecursionPasstroughStream::read(char* buff, std::streamsize count) {
+  if (read_eof) {
+    _gcount = 0;
+    return *this;
   }
-  precomp_ctx.fin = std::move(input_stream); // and set it on its original context
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: TAKING LOCK FOR READ!\n\n", static_cast<void*>(this));
+  std::unique_lock lock(mtx);
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: LOCK TAKEN FOR READ!\n\n", static_cast<void*>(this));
+  std::streamsize already_read_count = 0;
 
-  print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_ctx.precomp.recursion_depth);
+  while (already_read_count < count) {
+    std::streamsize remaining_count = count - already_read_count;
+    std::streamsize iteration_read_count = data_available() >= remaining_count ? remaining_count : data_available();
+    if (iteration_read_count == 0) {
+      // If we don't have any data in the buffer we need to wait for more
+      // unless we already reached the write_eof, in which case we know no more data will ever arrive
+      if (write_eof) { break; }
 
-  // get recursion file size
-  tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
+      data_needed_cv.notify_one();
+      //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WAITING FOR DATA AVAILABLE FOR READ!\n\n", static_cast<void*>(this));
+      data_available_cv.wait(lock);
+      //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WOKE UP FROM WAITING FOR DATA AVAILABLE FOR READ!\n\n", static_cast<void*>(this));
 
-  tmp_r.frecurse->open(tmp_r.file_name, std::ios_base::in | std::ios_base::binary);
+      // now that we are back from getting more data, recalculate the iteration_read_count
+      iteration_read_count = data_available() >= remaining_count ? remaining_count : data_available();
+      if (iteration_read_count == 0) { continue; }
+    }
 
-  return tmp_r;
+    memcpy(buff + already_read_count, buffer_current_pos(), iteration_read_count);
+    already_read_count += iteration_read_count;
+    buffer_already_read_count += iteration_read_count;
+  }
+
+  // if we didn't read enough to satisfy the count (or we did but write_eof has been reached and there is no more data available) we set read_eof
+  if (already_read_count < count || (write_eof && !data_available())) {
+    read_eof = true;
+  }
+  _gcount = already_read_count;
+  //data_needed_cv.notify_one();
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: EXITING READ, RELEASING LOCK!\n\n", static_cast<void*>(this));
+  return *this;
+}
+
+std::istream::int_type RecursionPasstroughStream::get() {
+  unsigned char chr[1];
+  read(reinterpret_cast<char*>(&chr[0]), 1);
+  return _gcount == 1 ? chr[0] : EOF;
+}
+
+std::streamsize RecursionPasstroughStream::gcount() { return _gcount; }
+RecursionPasstroughStream& RecursionPasstroughStream::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  throw std::runtime_error("CANT SEEK ON A RecursionPassthroughStream!");
+}
+std::istream::pos_type RecursionPasstroughStream::tellg() { return accumulated_already_read_count + buffer_already_read_count; }
+bool RecursionPasstroughStream::eof() { return write_eof && read_eof; }
+bool RecursionPasstroughStream::good() { return true; }
+bool RecursionPasstroughStream::bad() { return false; }
+void RecursionPasstroughStream::clear() { throw std::runtime_error("CANT CLEAR ON A RecursionPassthroughStream!"); }
+
+RecursionPasstroughStream& RecursionPasstroughStream::write(const char* buf, std::streamsize count) {
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: TAKING LOCK FOR WRITE!\n\n", static_cast<void*>(this));
+  std::unique_lock lock(mtx);
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: LOCK TAKEN FOR WRITE!\n\n", static_cast<void*>(this));
+  std::streamsize data_already_written = 0;
+
+  while (data_already_written < count) {
+    std::streamsize remaining_data_to_write = count - data_already_written;
+    //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WAITING FOR MORE DATA NEEDED FOR WRITE!\n\n", static_cast<void*>(this));
+    if (data_available()) {
+      data_available_cv.notify_one();
+      data_needed_cv.wait(lock);
+    }
+    //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WOKE UP FROM WAITING FOR MORE DATA NEEDED FOR WRITE!\n\n", static_cast<void*>(this));
+
+    // at this point, all data available was consumed and we are ready to replenish the buffer with new data
+    accumulated_already_read_count += buffer_already_read_count;
+    buffer_already_read_count = 0;
+
+    std::streamsize iteration_data_to_write = remaining_data_to_write >= CHUNK ? CHUNK : remaining_data_to_write;
+    if (buffer.size() != iteration_data_to_write) buffer.resize(iteration_data_to_write);
+    memcpy(buffer.data(), buf + data_already_written, iteration_data_to_write);
+    data_already_written += iteration_data_to_write;
+  }
+
+  //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: EXITING WRITE, RELEASING LOCK!\n\n", static_cast<void*>(this));
+  if (data_available()) { data_available_cv.notify_one(); }
+  return *this;
+}
+
+RecursionPasstroughStream& RecursionPasstroughStream::put(char chr) {
+  write(&chr, 1);
+  return *this;
+}
+
+void RecursionPasstroughStream::flush() { throw std::runtime_error("CANT FLUSH ON A RecursionPassthroughStream!"); }
+std::ostream::pos_type RecursionPasstroughStream::tellp() { return accumulated_already_read_count + buffer.size(); }
+OStreamLike& RecursionPasstroughStream::seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) {
+  throw std::runtime_error("CANT SEEK ON A RecursionPassthroughStream!");
+}
+
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length, std::string tmpfile) {
+  auto original_pos = context.fin->tellg();
+  auto& precomp_mgr = context.precomp;
+
+  // This is just a way for getting a new context, as we are not going to really use our context stack for decompression.
+  // Is pretty dumb, could be made more straightforward but works for now
+  recursion_push(context, recursion_data_length);
+  auto new_ctx = std::move(precomp_mgr.ctx);
+  recursion_pop(precomp_mgr);
+
+  long long recursion_end_pos = original_pos + recursion_data_length;
+  new_ctx->fin_length = recursion_data_length;
+  // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
+  // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
+  auto fin_view = std::make_unique<IStreamLikeView>(context.fin.get(), recursion_end_pos);
+  new_ctx->fin = std::move(fin_view);
+
+  std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(std::move(new_ctx));
+
+  //print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
+
+  //print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
+
+  return passthrough;
 }
 
 void fout_fput32_little_endian(OStreamLike& output, unsigned int v) {

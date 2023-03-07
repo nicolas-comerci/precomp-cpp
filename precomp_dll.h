@@ -19,6 +19,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <mutex>
 
 static constexpr int MAX_PENALTY_BYTES = 16384;
 
@@ -175,5 +176,51 @@ struct recursion_result {
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, std::vector<unsigned char> in_memory = std::vector<unsigned char>());
-recursion_result recursion_decompress(RecursionContext& precomp_ctx, long long recursion_data_length, std::string tmpfile);
+
+class RecursionPasstroughStream : public IStreamLike, public OStreamLike {
+  // boost::circular_buffer would be a good idea here
+  std::vector<unsigned char> buffer{};
+  unsigned int buffer_already_read_count = 0;
+  unsigned int accumulated_already_read_count = 0;
+
+  std::thread thread;
+  std::mutex mtx;
+  std::condition_variable data_needed_cv;  // this is used to signal that reads had to stop because all buffered data was already used
+  std::condition_variable data_available_cv;  // this is used to signal that writes had to stop because the buffer is full
+
+  bool write_eof = false;
+  bool read_eof = false;
+
+  long long _gcount = 0;
+
+  unsigned int data_available() const { return buffer.size() - buffer_already_read_count; }
+  const unsigned char* buffer_current_pos() const { return buffer.data() + buffer_already_read_count; }
+
+public:
+  std::unique_ptr<RecursionContext> ctx;
+
+  RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_);
+  ~RecursionPasstroughStream();
+
+  RecursionPasstroughStream& read(char* buff, std::streamsize count) override;
+
+  std::istream::int_type get() override;
+
+  std::streamsize gcount() override;
+  RecursionPasstroughStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+  std::istream::pos_type tellg() override;
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
+
+  RecursionPasstroughStream& write(const char* buf, std::streamsize count) override;
+
+  RecursionPasstroughStream& put(char chr);
+
+  void flush() override;
+  std::ostream::pos_type tellp() override;
+  OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
+};
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length, std::string tmpfile);
 #endif // PRECOMP_DLL_H

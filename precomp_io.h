@@ -221,6 +221,26 @@ public:
   ObservableOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 
+class ObservableOStreamWrapper : public ObservableOStream {
+  OStreamLike* ostream;
+  bool owns_ostream;
+
+  void internal_write(const char* buf, std::streamsize count) override  { ostream->write(buf, count); }
+  void internal_put(char chr) override { ostream->put(chr); }
+  void internal_flush() override { ostream->flush(); }
+  std::ostream::pos_type internal_tellp() override { return ostream->tellp(); }
+  void internal_seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override { ostream->seekp(offset, dir); }
+
+public:
+  ObservableOStreamWrapper(OStreamLike* ostream_, bool take_ownership) : ostream(ostream_), owns_ostream(take_ownership) {}
+  ~ObservableOStreamWrapper() { if (owns_ostream) delete ostream; }
+
+  bool eof() override { return ostream->eof(); }
+  bool good() override { return ostream->good(); }
+  bool bad() override { return ostream->bad(); }
+  void clear() override { ostream->clear(); }
+};
+
 template <typename T>
 class ObservableOStreamIMPL: public T, public ObservableOStream {
 protected:

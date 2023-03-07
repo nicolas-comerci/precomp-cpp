@@ -473,11 +473,8 @@ void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags) {
 
   long long retval;
   if (recursion_used) {
-    recursion_result r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
-    auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    retval = def_part_bzip2(context, wrapped_istream_frecurse, *context.fout, level, decompressed_data_length, recompressed_data_length);
-    r.frecurse->close();
-    remove(r.file_name.c_str());
+    auto r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
+    retval = def_part_bzip2(context, *r, *context.fout, level, decompressed_data_length, recompressed_data_length);
   }
   else {
     retval = def_part_bzip2(context, *context.fin, *context.fout, level, decompressed_data_length, recompressed_data_length);

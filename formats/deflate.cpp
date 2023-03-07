@@ -544,13 +544,10 @@ void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, 
   // write decompressed data
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_length = fin_fget_vlint(*context.fin);
-    recursion_result r = recursion_decompress(context, recursion_data_length, filename);
+    auto r = recursion_decompress(context, recursion_data_length, filename);
     debug_pos(context);
-    auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    ok = try_reconstructing_deflate(context.precomp, wrapped_istream_frecurse, *context.fout, rdres);
+    ok = try_reconstructing_deflate(context.precomp, *r, *context.fout, rdres);
     debug_pos(context);
-    r.frecurse->close();
-    remove(r.file_name.c_str());
   }
   else {
     debug_pos(context);
