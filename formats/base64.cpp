@@ -67,7 +67,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(Precomp& precomp_mgr, IStreamLike& file_in, OStreamLike& file_out, size_t line_count, const unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF) {
+void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, size_t line_count, const unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF) {
   int line_nr = 0;
   unsigned int act_line_len = 0;
   long long avail_in;
@@ -303,7 +303,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       remove(frecomp_filename.c_str());
       PrecompTmpFile frecomp;
       frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-      base64_reencode(precomp_mgr, ftempout, frecomp, result.base64_line_len.size(), result.base64_line_len.data());
+      base64_reencode(ftempout, frecomp, result.base64_line_len.size(), result.base64_line_len.data());
 
       ftempout.close();
       compressed_size = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
@@ -434,14 +434,14 @@ void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
   // re-encode Base64
 
   if (recursion_used) {
-    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, temp_files_tag() + "_recomp_base64");
+    recursion_result r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_base64");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    base64_reencode(context.precomp, wrapped_istream_frecurse, *context.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
+    base64_reencode(wrapped_istream_frecurse, *context.fout, line_count, base64_line_len, r.file_length, decompressed_data_length);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    base64_reencode(context.precomp, *context.fin, *context.fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
+    base64_reencode(*context.fin, *context.fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
   }
 
   delete[] base64_line_len;

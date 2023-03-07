@@ -41,7 +41,7 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
 
 void debug_sums(RecursionContext& context, const recompress_deflate_result& rdres);
 
-void debug_pos(Precomp& precomp_mgr);
+void debug_pos(RecursionContext& context);
 
 deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
   const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename);

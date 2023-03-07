@@ -166,7 +166,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
         }
       }
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
 
       // write compressed data header (PDF) without 12 first bytes
       //   (/FlateDecode)
@@ -196,7 +196,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       }
         result.rdres = std::move(rdres);
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
     }
     else {
       if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);

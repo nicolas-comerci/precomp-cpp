@@ -175,5 +175,5 @@ struct recursion_result {
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, std::vector<unsigned char> in_memory = std::vector<unsigned char>());
-recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile);
+recursion_result recursion_decompress(RecursionContext& precomp_ctx, long long recursion_data_length, std::string tmpfile);
 #endif // PRECOMP_DLL_H

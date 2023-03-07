@@ -217,8 +217,8 @@ void debug_sums(RecursionContext& context, const recompress_deflate_result& rdre
     sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
 }
 
-void debug_pos(Precomp& precomp_mgr) {
-  print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)precomp_mgr.ctx->fin->tellg(), (uint64_t)precomp_mgr.ctx->fout->tellp());
+void debug_pos(RecursionContext& context) {
+  print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
 }
 
 deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
@@ -249,7 +249,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       // end uncompressed data
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
 
       // check recursion
       tmpfile->reopen();
@@ -265,7 +265,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
       }
 #endif
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
 
       result.flags = r.success ? std::byte{ 0b10000000 } : std::byte{ 0 };
       result.inc_last_hdr_byte = inc_last;
@@ -290,7 +290,7 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       result.rdres = std::move(rdres);
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
     }
     else {
       if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
@@ -544,18 +544,18 @@ void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, 
   // write decompressed data
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_length = fin_fget_vlint(*context.fin);
-    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, filename);
-    debug_pos(context.precomp);
+    recursion_result r = recursion_decompress(context, recursion_data_length, filename);
+    debug_pos(context);
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
     ok = try_reconstructing_deflate(context.precomp, wrapped_istream_frecurse, *context.fout, rdres);
-    debug_pos(context.precomp);
+    debug_pos(context);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    debug_pos(context.precomp);
+    debug_pos(context);
     ok = try_reconstructing_deflate(context.precomp, *context.fin, *context.fout, rdres);
-    debug_pos(context.precomp);
+    debug_pos(context);
   }
 
   debug_deflate_reconstruct(rdres, type.c_str(), hdr_length, recursion_data_length);

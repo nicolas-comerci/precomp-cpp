@@ -112,7 +112,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       result.success = true;
       result.format = idat_count > 1 ? D_MULTIPNG : D_PNG;
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
 
       result.idat_count = idat_count;
       result.idat_lengths = std::move(idat_lengths);
@@ -131,7 +131,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
       std::copy(zlib_header.begin(), zlib_header.end(), std::back_inserter(result.zlib_header));
       result.inc_last_hdr_byte = true;
 
-      debug_pos(precomp_mgr);
+      debug_pos(*precomp_mgr.ctx);
     }
     else {
       if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_original_pos - 2);
@@ -341,7 +341,7 @@ void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags)
 
   fin_fget_recon_data(*context.fin, rdres);
   debug_sums(context, rdres);
-  debug_pos(context.precomp);
+  debug_pos(context);
 
   debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
 

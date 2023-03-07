@@ -370,7 +370,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
   return result;
 }
 
-int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, int level, long long stream_size_in, long long stream_size_out) {
+int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLike& dest, int level, long long stream_size_in, long long stream_size_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -391,7 +391,7 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
   in_buf.resize(CHUNK);
   do {
     if ((stream_size_in - pos_in) > CHUNK) {
-      precomp_mgr.call_progress_callback();
+      precomp_ctx.precomp.call_progress_callback();
 
       source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
       strm.avail_in = source.gcount();
@@ -411,7 +411,7 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
 
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
+      strm.next_out = reinterpret_cast<char*>(precomp_ctx.tmp_out);
 
       ret = BZ2_bzCompress(&strm, flush);
 
@@ -422,7 +422,7 @@ int def_part_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest,
       }
       pos_out += have;
 
-      dest.write(reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out), have);
+      dest.write(reinterpret_cast<char*>(precomp_ctx.tmp_out), have);
       if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -473,14 +473,14 @@ void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags) {
 
   long long retval;
   if (recursion_used) {
-    recursion_result r = recursion_decompress(context.precomp, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
+    recursion_result r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
     auto wrapped_istream_frecurse = WrappedIStream(r.frecurse.get(), false);
-    retval = def_part_bzip2(context.precomp, wrapped_istream_frecurse, *context.fout, level, decompressed_data_length, recompressed_data_length);
+    retval = def_part_bzip2(context, wrapped_istream_frecurse, *context.fout, level, decompressed_data_length, recompressed_data_length);
     r.frecurse->close();
     remove(r.file_name.c_str());
   }
   else {
-    retval = def_part_bzip2(context.precomp, *context.fin, *context.fout, level, decompressed_data_length, recompressed_data_length);
+    retval = def_part_bzip2(context, *context.fin, *context.fout, level, decompressed_data_length, recompressed_data_length);
   }
 
   if (retval != BZ_OK) {

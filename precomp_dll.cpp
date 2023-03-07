@@ -795,7 +795,6 @@ int compress_file(Precomp& precomp_mgr)
 
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
-  precomp_ctx.precomp.enable_input_stream_otf_decompression();
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile_base = tmp_tag + "_recomp_";
@@ -894,9 +893,9 @@ while (precomp_ctx.fin->good()) {
   return RETURN_SUCCESS;
 }
 
-int decompress_file(Precomp& precomp_mgr)
+int decompress_file(RecursionContext& precomp_ctx)
 {
-  return wrap_with_exception_catch([&]() { return decompress_file_impl(*precomp_mgr.ctx); });
+  return wrap_with_exception_catch([&]() { return decompress_file_impl(precomp_ctx); });
 }
 
 int convert_file_impl(Precomp& precomp_mgr) {
@@ -1120,16 +1119,18 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
-void recursion_push(Precomp& precomp_mgr, long long recurse_stream_length) {
-  auto context_progress_range = precomp_mgr.ctx->global_max_percent - precomp_mgr.ctx->global_min_percent;
-  auto current_context_progress_percent = static_cast<float>(precomp_mgr.ctx->input_file_pos) / precomp_mgr.ctx->fin_length;
-  auto recursion_end_progress_percent = static_cast<float>(precomp_mgr.ctx->input_file_pos + recurse_stream_length) / precomp_mgr.ctx->fin_length;
+RecursionContext& recursion_push(RecursionContext& precomp_ctx, long long recurse_stream_length) {
+  auto context_progress_range = precomp_ctx.global_max_percent - precomp_ctx.global_min_percent;
+  auto current_context_progress_percent = static_cast<float>(precomp_ctx.input_file_pos) / precomp_ctx.fin_length;
+  auto recursion_end_progress_percent = static_cast<float>(precomp_ctx.input_file_pos + recurse_stream_length) / precomp_ctx.fin_length;
 
-  auto new_minimum = precomp_mgr.ctx->global_min_percent + (context_progress_range * current_context_progress_percent);
-  auto new_maximum = precomp_mgr.ctx->global_min_percent + (context_progress_range * recursion_end_progress_percent);
+  auto new_minimum = precomp_ctx.global_min_percent + (context_progress_range * current_context_progress_percent);
+  auto new_maximum = precomp_ctx.global_min_percent + (context_progress_range * recursion_end_progress_percent);
 
+  Precomp& precomp_mgr = precomp_ctx.precomp;
   precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
   precomp_mgr.ctx = std::make_unique<RecursionContext>(new_minimum, new_maximum, precomp_mgr);
+  return *precomp_mgr.ctx;
 }
 
 void recursion_pop(Precomp& precomp_mgr) {
@@ -1156,7 +1157,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   }
   tmpfile.close();
 
-  recursion_push(precomp_mgr, compressed_bytes);
+  recursion_push(*precomp_mgr.ctx, compressed_bytes);
 
   if (!deflate_type) {
     // shorten tempfile1 to decompressed_bytes
@@ -1223,40 +1224,45 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   return tmp_r;
 }
 
-recursion_result recursion_decompress(Precomp& precomp_mgr, long long recursion_data_length, std::string tmpfile) {
+recursion_result recursion_decompress(RecursionContext& precomp_ctx, long long recursion_data_length, std::string tmpfile) {
   recursion_result tmp_r;
+  auto& precomp_mgr = precomp_ctx.precomp;
 
-  auto original_pos = precomp_mgr.ctx->fin->tellg();
-  auto input_stream = std::move(precomp_mgr.ctx->fin);  // steal the input file from the context before pushing it
-  recursion_push(precomp_mgr, recursion_data_length);
+  auto original_pos = precomp_ctx.fin->tellg();
+  auto input_stream = std::move(precomp_ctx.fin);  // steal the input file from the context before pushing it
+  {
+    // This is just a way of getting a new RecursionContext
+    recursion_push(precomp_ctx, recursion_data_length);
+    auto new_precomp_ctx = std::move(precomp_mgr.ctx);
+    recursion_pop(precomp_mgr);
 
-  long long recursion_end_pos = original_pos + recursion_data_length;
-  precomp_mgr.ctx->fin_length = recursion_data_length;
-  // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
-  // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
-  auto fin_view = std::make_unique<IStreamLikeView>(input_stream.get(), recursion_end_pos);
-  precomp_mgr.ctx->fin = std::move(fin_view);
+    long long recursion_end_pos = original_pos + recursion_data_length;
+    new_precomp_ctx->fin_length = recursion_data_length;
+    // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
+    // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
+    auto fin_view = std::make_unique<IStreamLikeView>(input_stream.get(), recursion_end_pos);
+    new_precomp_ctx->fin = std::move(fin_view);
 
-  tmp_r.file_name = tmpfile;
-  auto fout = new std::ofstream();
-  fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-  precomp_mgr.ctx->set_output_stream(fout, true);
+    tmp_r.file_name = tmpfile;
+    auto fout = new std::ofstream();
+    fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
+    new_precomp_ctx->set_output_stream(fout, true);
 
-  // disable compression-on-the-fly in recursion - we don't want streams compressed many times
-  precomp_mgr.ctx->compression_otf_method = OTF_NONE;
+    // disable compression-on-the-fly in recursion - we don't want streams compressed many times
+    new_precomp_ctx->compression_otf_method = OTF_NONE;
 
-  precomp_mgr.recursion_depth++;
-  print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
-  const auto ret_code = decompress_file(precomp_mgr);
-  if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
+    new_precomp_ctx->precomp.recursion_depth++;
+    print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", new_precomp_ctx->precomp.recursion_depth);
+    const auto ret_code = decompress_file(*new_precomp_ctx);
+    if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
 
-  // TODO CHECK: Delete ctx?
+    // TODO CHECK: Delete ctx?
 
-  precomp_mgr.recursion_depth--;
-  recursion_pop(precomp_mgr);
-  precomp_mgr.ctx->fin = std::move(input_stream); // and set it on its original context
+    new_precomp_ctx->precomp.recursion_depth--;
+  }
+  precomp_ctx.fin = std::move(input_stream); // and set it on its original context
 
-  print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
+  print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_ctx.precomp.recursion_depth);
 
   // get recursion file size
   tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
@@ -1329,7 +1335,8 @@ int PrecompRecompress(CPrecomp* precomp_mgr) {
   precomp_mgr->start_time = get_time_ms();
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
-  return decompress_file(*internal_precomp_ptr);
+  internal_precomp_ptr->enable_input_stream_otf_decompression();
+  return decompress_file(*internal_precomp_ptr->ctx);
 }
 
 int PrecompConvert(CPrecomp* precomp_mgr) {
