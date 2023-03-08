@@ -5,15 +5,15 @@
 #include <span>
 
 struct recompress_deflate_result {
-  long long compressed_stream_size;
-  long long uncompressed_stream_size;
+  long long compressed_stream_size = -1;
+  long long uncompressed_stream_size = -1;
   std::vector<unsigned char> recon_data;
-  bool accepted;
+  bool accepted = false;
   std::vector<unsigned char> uncompressed_stream_mem;
-  bool zlib_perfect;
-  char zlib_comp_level;
-  char zlib_mem_level;
-  char zlib_window_bits;
+  bool zlib_perfect = false;
+  char zlib_comp_level = 0;
+  char zlib_mem_level = 0;
+  char zlib_window_bits = 0;
 };
 
 class deflate_precompression_result : public precompression_result {
