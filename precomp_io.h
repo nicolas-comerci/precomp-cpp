@@ -7,8 +7,6 @@
 #include <map>
 #include <span>
 
-#include "precomp_xz_params.h"
-
 #ifndef __unix
 #define PATH_DELIM '\\'
 #else
@@ -350,128 +348,6 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
   std::function<void(IStreamLike&, OStreamLike&)> copy_to_temp, long long max_memory_size
 );
 
-class CompressedOStreamBuffer;
 constexpr auto CHUNK = 262144; // 256 KB buffersize
 
-// compression-on-the-fly
-enum { OTF_NONE = 0, OTF_BZIP2 = 1, OTF_XZ_MT = 2 }; // uncompressed, bzip2, lzma2 multithreaded
-
-int lzma_max_memory_default();
-
-class CompressedIStreamBuffer: public std::streambuf {
-public:
-  std::unique_ptr<std::istream> wrapped_istream;
-  std::unique_ptr<char[]> otf_in;
-  std::unique_ptr<char[]> otf_dec;
-
-  explicit CompressedIStreamBuffer(std::unique_ptr<std::istream>&& istream);
-
-  std::streambuf::pos_type seekoff(std::streambuf::off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override;
-};
-
-// forward declare of bz_stream, but because it's a C typedef struct on implementation we will make a class that public inherits from it
-class precomp_bz_stream;
-class Bz2IStreamBuffer: public CompressedIStreamBuffer
-{
-public:
-  std::unique_ptr<precomp_bz_stream> otf_bz2_stream_d;
-
-  explicit Bz2IStreamBuffer(std::unique_ptr<std::istream>&& istream);
-
-  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream);
-
-  void init();
-
-  ~Bz2IStreamBuffer() override;
-
-  int underflow() override;
-};
-
-class precomp_lzma_stream;
-class XzIStreamBuffer: public CompressedIStreamBuffer
-{
-public:
-  std::unique_ptr<precomp_lzma_stream> otf_xz_stream_d;
-
-  explicit XzIStreamBuffer(std::unique_ptr<std::istream>&& istream);
-
-  static std::unique_ptr<std::istream> from_istream(std::unique_ptr<std::istream>&& istream);
-
-  void init();
-
-  ~XzIStreamBuffer() override;
-
-  int underflow() override;
-};
-
-WrappedIStream wrap_istream_otf_compression(std::unique_ptr<std::istream>&& istream, int otf_compression_method, bool take_ownership);
-
-class CompressedOStreamBuffer : public std::streambuf {
-public:
-  std::unique_ptr<std::ostream> wrapped_ostream;
-  bool is_stream_eof = false;
-  std::unique_ptr<char[]> otf_in;
-  std::unique_ptr<char[]> otf_out;
-
-  explicit CompressedOStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream);
-
-  std::streambuf::pos_type seekoff(std::streambuf::off_type offset, std::ios_base::seekdir dir, std::ios_base::openmode mode) override;
-
-  virtual int sync(bool final_byte) = 0;
-  int sync() override;
-
-  void set_stream_eof();
-
-  int overflow(int c) override;
-};
-
-class Bz2OStreamBuffer : public CompressedOStreamBuffer
-{
-public:
-  std::unique_ptr<precomp_bz_stream, std::function<void(precomp_bz_stream*)>> otf_bz2_stream_c;
-
-  explicit Bz2OStreamBuffer(std::unique_ptr<std::ostream>&& wrapped_ostream);
-
-  static std::unique_ptr<std::ostream> from_ostream(std::unique_ptr<std::ostream>&& ostream);
-
-  void init();
-
-  int sync(bool final_byte) override;
-};
-
-class XzOStreamBuffer : public CompressedOStreamBuffer
-{
-public:
-  uint64_t compression_otf_max_memory;
-  unsigned int compression_otf_thread_count;
-  std::unique_ptr<precomp_lzma_stream, std::function<void(precomp_lzma_stream*)>> otf_xz_stream_c;
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params;
-
-  XzOStreamBuffer(
-    std::unique_ptr<std::ostream>&& wrapped_ostream,
-    uint64_t compression_otf_max_memory,
-    unsigned int compression_otf_thread_count,
-    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params
-  );
-
-  static std::unique_ptr<std::ostream> from_ostream(
-    std::unique_ptr<std::ostream>&& ostream,
-    std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
-    uint64_t compression_otf_max_memory,
-    unsigned int compression_otf_thread_count
-  );
-
-  void init(std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params);
-
-  int sync(bool final_byte) override;
-};
-
-WrappedOStream wrap_ostream_otf_compression(
-  std::unique_ptr<std::ostream>&& ostream,
-  int otf_compression_method,
-  std::unique_ptr<lzma_init_mt_extra_parameters>&& otf_xz_extra_params,
-  uint64_t compression_otf_max_memory,
-  unsigned int compression_otf_thread_count,
-  bool take_ownership
-);
 #endif // PRECOMP_IO_H

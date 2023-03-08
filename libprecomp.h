@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "precomp_xz_params.h"
 
 #ifdef __cplusplus
 #define ExternC extern "C"
@@ -48,7 +47,6 @@ ExternC LIBPRECOMP void PrecompSetLoggingCallback(void(*callback)(PrecompLogging
 #define P_NONE 0
 #define P_PRECOMPRESS 1
 #define P_RECOMPRESS 2
-#define P_CONVERT 3
 
 ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
 
@@ -57,10 +55,6 @@ ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
 
 typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
-
-  int compression_method;        //compression method to use (default: OTF_XZ_MT)
-  unsigned long long compression_otf_max_memory;    // max. memory for LZMA compression method (default: 2 GiB)
-  unsigned int compression_otf_thread_count;  // max. thread count for LZMA compression method (default: auto-detect)
 
   bool intense_mode;             //intense mode (default: off)
   int intense_mode_depth_limit;
@@ -95,7 +89,6 @@ typedef struct {
 
 typedef struct {
   uintmax_t fin_length;
-  int compression_otf_method ;
 
   bool anything_was_used;
   bool non_zlib_was_used;
@@ -161,7 +154,6 @@ ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count);
 ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr);
 
 ExternC LIBPRECOMP typedef void* CPrecompIStream;
 ExternC LIBPRECOMP void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name);
@@ -174,8 +166,6 @@ ExternC LIBPRECOMP const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr);
 
 ExternC LIBPRECOMP int PrecompPrecompress(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP int PrecompRecompress(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP int PrecompConvert(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg);
-ExternC LIBPRECOMP void PrecompConvertHeader(CPrecomp* precomp_mgr);
 
 #endif

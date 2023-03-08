@@ -43,7 +43,6 @@ int precompress_file(char* in_file, char* out_file) {
   int filesize_err = 0;
   CRecursionContext* context = PrecompGetRecursionContext(precomp_mgr);
   context->fin_length = fileSize64(in_file, &filesize_err);
-  context->compression_otf_method = 0;
 
   FILE* fin = open_input_file(in_file, false);
   if (fin == NULL) { return 1; }

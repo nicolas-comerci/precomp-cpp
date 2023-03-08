@@ -109,7 +109,6 @@ public:
 
   Switches switches;
   ResultStatistics statistics;
-  std::unique_ptr<lzma_init_mt_extra_parameters> otf_xz_extra_params = std::make_unique<lzma_init_mt_extra_parameters>();
   std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(0, 100, *this);
   std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
@@ -121,9 +120,6 @@ public:
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
   void set_output_stream(std::ostream* ostream, bool take_ownership = true);
   void set_output_stream(FILE* fhandle, bool take_ownership = true);
-  // Input stream OTF decompression method has to be set AFTER the Precomp header has been read, as the compressed stream starts just after it
-  void enable_input_stream_otf_decompression();
-  void enable_output_stream_otf_compression(int otf_compression_method);
 
   void set_progress_callback(std::function<void(float)> callback);
   void call_progress_callback();

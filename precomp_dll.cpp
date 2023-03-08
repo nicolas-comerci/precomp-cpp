@@ -192,13 +192,6 @@ const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
 
 //Switches constructor
 Switches::Switches(): CSwitches() {
-  compression_method = OTF_XZ_MT;
-  compression_otf_max_memory = 2048;
-  compression_otf_thread_count = std::thread::hardware_concurrency();
-  if (compression_otf_thread_count == 0) {
-    compression_otf_thread_count = 2;
-  }
-
   intense_mode = false;
   intense_mode_depth_limit = -1;
   fast_mode = false;
@@ -230,10 +223,7 @@ Switches::Switches(): CSwitches() {
 }
 
 RecursionContext::RecursionContext(float min_percent, float max_percent, Precomp& precomp_):
-    CRecursionContext(), precomp(precomp_), global_min_percent(min_percent), global_max_percent(max_percent)
-{
-  compression_otf_method = OTF_XZ_MT;
-}
+    CRecursionContext(), precomp(precomp_), global_min_percent(min_percent), global_max_percent(max_percent) {}
 
 
 void RecursionContext::set_input_stream(std::istream* istream, bool take_ownership) {
@@ -319,39 +309,6 @@ void Precomp::set_output_stream(FILE* fhandle, bool take_ownership) {
     orig_context->set_output_stream(fhandle, take_ownership);
   }
   register_output_observer_callbacks();
-}
-
-void Precomp::enable_input_stream_otf_decompression() {
-  const auto& orig_context = this->get_original_context();
-  if (recursion_depth > 0 || orig_context->compression_otf_method == OTF_NONE) return;
-  auto wrapped_istream = dynamic_cast<WrappedIStream*>(orig_context->fin.get());
-  if (!wrapped_istream) throw std::runtime_error("Compression only supported when using C++'s std::istream or std::ostream, sorry if you are using the C API");
-  const bool take_ownership = wrapped_istream->is_owns_wrapped_stream();
-  set_input_stream(
-    wrap_istream_otf_compression(
-      std::unique_ptr<std::istream>(wrapped_istream->release()), orig_context->compression_otf_method, false
-    ).release(),
-    take_ownership
-  );
-}
-
-void Precomp::enable_output_stream_otf_compression(int otf_compression_method) {
-  const auto& orig_context = this->get_original_context();
-  if (&orig_context != &ctx || otf_compression_method == OTF_NONE) return;
-  auto wrapped_ostream = dynamic_cast<WrappedOStream*>(orig_context->fout.get());
-  if (!wrapped_ostream) throw std::runtime_error("Compression only supported when using C++'s std::istream or std::ostream, sorry if you are using the C API");
-  const bool take_ownership = wrapped_ostream->is_owns_wrapped_stream();
-  set_output_stream(
-    wrap_ostream_otf_compression(
-      std::unique_ptr<std::ostream>(wrapped_ostream->release()),
-      otf_compression_method,
-      std::move(this->otf_xz_extra_params),
-      this->switches.compression_otf_max_memory,
-      this->switches.compression_otf_thread_count,
-      false
-    ).release(),
-    take_ownership
-  );
 }
 
 void Precomp::set_progress_callback(std::function<void(float)> callback) {
@@ -447,8 +404,8 @@ void write_header(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fout->put(V_MINOR);
   precomp_mgr.ctx->fout->put(V_MINOR2);
 
-  // compression-on-the-fly method used
-  precomp_mgr.ctx->fout->put(precomp_mgr.ctx->compression_otf_method);
+  // compression-on-the-fly method used, 0, as OTF compression no longer supported
+  precomp_mgr.ctx->fout->put(0);
 
   // write input file name without path
   const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
@@ -469,7 +426,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
   if (precomp_mgr.recursion_depth == 0) write_header(precomp_mgr);
-  precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.ctx->compression_otf_method);
 
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
 
@@ -884,10 +840,6 @@ while (precomp_ctx.fin->good()) {
   }
 
   fin_pos = precomp_ctx.fin->tellg();
-  if (precomp_ctx.compression_otf_method != OTF_NONE) {
-    if (precomp_ctx.fin->eof()) break;
-    if (fin_pos >= precomp_ctx.fin_length) fin_pos = precomp_ctx.fin_length - 1;
-  }
 }
 
   return RETURN_SUCCESS;
@@ -896,49 +848,6 @@ while (precomp_ctx.fin->good()) {
 int decompress_file(RecursionContext& precomp_ctx)
 {
   return wrap_with_exception_catch([&]() { return decompress_file_impl(precomp_ctx); });
-}
-
-int convert_file_impl(Precomp& precomp_mgr) {
-  constexpr auto COPY_BUF_SIZE = 512;
-  long long bytes_read;
-  unsigned char convbuf[COPY_BUF_SIZE];
-  long long int conv_bytes = -1;
-  std::array<unsigned char, COPY_BUF_SIZE> copybuf{};
-
-  precomp_mgr.ctx->comp_decomp_state = P_CONVERT;
-  precomp_mgr.enable_input_stream_otf_decompression();
-  precomp_mgr.enable_output_stream_otf_compression(precomp_mgr.conversion_to_method);
-
-  for (;;) {
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(copybuf.data()), COPY_BUF_SIZE);
-    bytes_read = precomp_mgr.ctx->fin->gcount();
-    // truncate by 9 bytes (Precomp on-the-fly delimiter) if converting from compressed data
-    if ((precomp_mgr.conversion_from_method > OTF_NONE) && (bytes_read < COPY_BUF_SIZE)) {
-      bytes_read -= 9;
-      if (bytes_read < 0) {
-        conv_bytes += bytes_read;
-        bytes_read = 0;
-      }
-    }
-    if (conv_bytes > -1) precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
-    for (int i = 0; i < bytes_read; i++) {
-      convbuf[i] = copybuf[i];
-    }
-    conv_bytes = bytes_read;
-    if (bytes_read < COPY_BUF_SIZE) {
-      break;
-    }
-
-    precomp_mgr.call_progress_callback();
-  }
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(convbuf), conv_bytes);
-
-  return RETURN_SUCCESS;
-}
-
-int convert_file(Precomp& precomp_mgr)
-{
-  return wrap_with_exception_catch([&]() { return convert_file_impl(precomp_mgr); });
 }
 
 void read_header(Precomp& precomp_mgr) {
@@ -960,7 +869,10 @@ void read_header(Precomp& precomp_mgr) {
   }
 
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 1);
-  precomp_mgr.ctx->compression_otf_method = hdr[0];
+  if (hdr[0] != 0) throw PrecompError(
+    ERR_PCF_HEADER_INCOMPATIBLE_VERSION,
+    "OTF compression no longer supported, use original Precomp and use the -nn conversion option to get an uncompressed Precomp stream that should work here"
+  );
 
   std::string header_filename;
   char c;
@@ -973,46 +885,6 @@ void read_header(Precomp& precomp_mgr) {
     precomp_mgr.output_file_name = header_filename;
   }
   precomp_mgr.header_already_read = true;
-}
-
-void convert_header(Precomp& precomp_mgr) {
-  precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
-
-  unsigned char hdr[3];
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
-  if ((hdr[0] == 'P') && (hdr[1] == 'C') && (hdr[2] == 'F')) {
-  } else {
-    throw std::runtime_error(make_cstyle_format_string("Input stream has no valid PCF header\n"));
-  }
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 3);
-
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
-  if ((hdr[0] == V_MAJOR) && (hdr[1] == V_MINOR) && (hdr[2] == V_MINOR2)) {
-  } else {
-    throw std::runtime_error(make_cstyle_format_string(
-      "Input stream was made with a different Precomp version\n"
-      "PCF version info: %i.%i.%i\n",
-      hdr[0], hdr[1], hdr[2]
-    ));
-  }
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 3);
-
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 1);
-  precomp_mgr.conversion_from_method = hdr[0];
-  if (precomp_mgr.conversion_from_method == precomp_mgr.conversion_to_method) {
-    throw std::runtime_error(make_cstyle_format_string("Input file doesn't need to be converted\n"));
-  }
-  hdr[0] = precomp_mgr.conversion_to_method;
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(hdr), 1);
-
-  std::string header_filename;
-  char c;
-  do {
-    c = precomp_mgr.ctx->fin->get();
-    if (c != 0) header_filename += c;
-  } while (c != 0);
-  ostream_printf(*precomp_mgr.ctx->fout, header_filename);
-  precomp_mgr.ctx->fout->put(0);
 }
 
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
@@ -1178,9 +1050,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
 
-  // disable compression-on-the-fly in recursion - we don't want compressed compressed streams
-  precomp_mgr.ctx->compression_otf_method = OTF_NONE;
-
   precomp_mgr.recursion_depth++;
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
   const auto ret_code = compress_file(precomp_mgr);
@@ -1230,8 +1099,6 @@ RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionCo
   buffer.reserve(CHUNK);
 
   ctx->fout = std::make_unique<ObservableOStreamWrapper>(this, false);
-  // disable compression-on-the-fly in recursion - we don't want streams compressed many times
-  ctx->compression_otf_method = OTF_NONE;
 
   //const auto ret_code = decompress_file(ctx->precomp);
   //if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
@@ -1424,7 +1291,6 @@ void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* 
 }
 CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
 CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
-lzma_init_mt_extra_parameters* PrecompGetXzParameters(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->otf_xz_extra_params.get(); }
 
 int PrecompPrecompress(CPrecomp* precomp_mgr) {
   precomp_mgr->start_time = get_time_ms();
@@ -1435,13 +1301,7 @@ int PrecompRecompress(CPrecomp* precomp_mgr) {
   precomp_mgr->start_time = get_time_ms();
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
-  internal_precomp_ptr->enable_input_stream_otf_decompression();
   return decompress_file(*internal_precomp_ptr->ctx);
-}
-
-int PrecompConvert(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  return convert_file(*reinterpret_cast<Precomp*>(precomp_mgr));
 }
 
 int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
@@ -1454,8 +1314,4 @@ int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
     return err.error_code;
   }
   return 0;
-}
-
-void PrecompConvertHeader(CPrecomp* precomp_mgr) {
-  convert_header(*reinterpret_cast<Precomp*>(precomp_mgr));
 }
