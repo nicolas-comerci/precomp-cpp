@@ -833,7 +833,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
 
 int main(int argc, char* argv[])
 {
-  std::unique_ptr<CPrecomp> precomp_mgr = std::unique_ptr<CPrecomp>(PrecompCreate());
+  auto precomp_mgr = std::unique_ptr<CPrecomp, std::function<void(CPrecomp*)>>(PrecompCreate(), [](CPrecomp* ptr) { PrecompDestroy(ptr); });
   CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
   PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
     auto new_progress_txt = get_progress_txt(percent);

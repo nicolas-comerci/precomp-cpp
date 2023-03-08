@@ -52,7 +52,9 @@ int precompress_file(char* in_file, char* out_file) {
 
   PrecompSetInputFile(precomp_mgr, fin, in_file);
   PrecompSetOutputFile(precomp_mgr, fout, out_file);
-  return PrecompPrecompress(precomp_mgr);
+  int result = PrecompPrecompress(precomp_mgr);
+  PrecompDestroy(precomp_mgr);
+  return result;
 }
 
 int recompress_file(char* in_file, char* out_file) {
@@ -68,7 +70,9 @@ int recompress_file(char* in_file, char* out_file) {
 
   PrecompSetInputFile(precomp_mgr, fin, in_file);
   PrecompSetOutputFile(precomp_mgr, fout, out_file);
-  return PrecompRecompress(precomp_mgr);
+  int result = PrecompRecompress(precomp_mgr);
+  PrecompDestroy(precomp_mgr);
+  return result;
 }
 
 const int precomp_arg_count = 3;

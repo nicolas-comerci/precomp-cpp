@@ -1277,6 +1277,9 @@ CPrecomp* PrecompCreate() { return new Precomp(); }
 void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
   reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
 }
+void PrecompDestroy(CPrecomp* precomp_mgr) {
+  delete precomp_mgr;
+}
 CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
 void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count) {
   reinterpret_cast<Switches*>(precomp_switches)->ignore_set = std::set(ignore_pos_list, ignore_pos_list + ignore_post_list_count);

@@ -148,6 +148,7 @@ typedef struct {
 void packjpg_mp3_dll_msg();
 
 ExternC LIBPRECOMP CPrecomp* PrecompCreate();
+ExternC LIBPRECOMP void PrecompDestroy(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
 ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
 // This COPIES the list into the Switches structure, so you are free to well, free the ignore_pos_list memory after setting it
@@ -161,11 +162,11 @@ ExternC LIBPRECOMP void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle
 ExternC LIBPRECOMP typedef void* CPrecompOStream;
 ExternC LIBPRECOMP void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
 ExternC LIBPRECOMP void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name);
-// Mostly useful to run after a successful PrecompReadHeader, to know the original filename of the precompressed file
-ExternC LIBPRECOMP const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr);
 
 ExternC LIBPRECOMP int PrecompPrecompress(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP int PrecompRecompress(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg);
+// Mostly useful to run after a successful PrecompReadHeader, to know the original filename of the precompressed file
+ExternC LIBPRECOMP const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr);
 
 #endif
