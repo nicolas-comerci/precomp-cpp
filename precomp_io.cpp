@@ -303,6 +303,13 @@ void fast_copy(IStreamLike& file1, OStreamLike& file2, long long bytecount) {
   }
 }
 
+void dump_to_file(IStreamLike& istream, std::string filename, long long bytecount) {
+  WrappedFStream ftempout;
+  ftempout.open(filename, std::ios_base::out | std::ios_base::binary);
+  fast_copy(istream, ftempout, bytecount);
+  ftempout.close();
+}
+
 bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiostream>& memstream_buf, char* target_buf, int minimum_gcount, long long& cur_pos) {
   memstream_buf->read(target_buf, minimum_gcount);
   if (memstream_buf->gcount() == minimum_gcount) {

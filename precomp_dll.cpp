@@ -752,17 +752,9 @@ int compress_file(Precomp& precomp_mgr)
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
 
-  std::string tmp_tag = temp_files_tag();
-  std::string tempfile_base = tmp_tag + "_recomp_";
-  std::string tempfile2_base = tmp_tag + "_recomp2_";
-  std::string tempfile;
-  std::string tempfile2;
-
   long long fin_pos = precomp_ctx.fin->tellg();
 
 while (precomp_ctx.fin->good()) {
-  tempfile = tempfile_base;
-  tempfile2 = tempfile2_base;
 
   std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
   if (!precomp_ctx.fin->good()) break;
@@ -802,7 +794,7 @@ while (precomp_ctx.fin->good()) {
     }
     case D_GIF: { // GIF recompression
       print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - GIF\n");
-      try_recompression_gif(precomp_ctx, header1, tempfile, tempfile2);
+      try_recompression_gif(precomp_ctx, header1);
       break;
     }
     case D_JPG: { // JPG recompression

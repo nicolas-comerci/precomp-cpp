@@ -67,7 +67,7 @@ unsigned char base64_char_decode(unsigned char c) {
   return 65; // invalid
 }
 
-void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, size_t line_count, const unsigned int* base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF) {
+void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, const std::vector<unsigned int>& base64_line_len, long long max_in_count = 0x7FFFFFFFFFFFFFFF, long long max_byte_count = 0x7FFFFFFFFFFFFFFF) {
   int line_nr = 0;
   unsigned int act_line_len = 0;
   long long avail_in;
@@ -96,60 +96,35 @@ void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, size_t line_co
       avail_in++;
     }
 
+    auto process_byte_check_end = [&]() {
+      act_byte_count++;
+      act_line_len++;
+      if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
+        if (act_byte_count < max_byte_count) file_out.put(13);
+        act_byte_count++;
+        if (act_byte_count < max_byte_count) file_out.put(10);
+        act_byte_count++;
+        act_line_len = 0;
+        line_nr++;
+        if (line_nr == base64_line_len.size()) return true;
+      }
+      return false;
+    };
+
     for (i = 0; i < (avail_in / 3); i++) {
       a = in_buf[i * 3];
       b = in_buf[i * 3 + 1];
       c = in_buf[i * 3 + 2];
       if (act_byte_count < max_byte_count) file_out.put(b64[a >> 2]);
-      act_byte_count++;
-      act_line_len++;
-      if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-        if (act_byte_count < max_byte_count) file_out.put(13);
-        act_byte_count++;
-        if (act_byte_count < max_byte_count) file_out.put(10);
-        act_byte_count++;
-        act_line_len = 0;
-        line_nr++;
-        if (line_nr == line_count) break;
-      }
+      if (process_byte_check_end()) break;
       if (act_byte_count < max_byte_count) file_out.put(b64[((a & 0x03) << 4) | (b >> 4)]);
-      act_byte_count++;
-      act_line_len++;
-      if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-        if (act_byte_count < max_byte_count) file_out.put(13);
-        act_byte_count++;
-        if (act_byte_count < max_byte_count) file_out.put(10);
-        act_byte_count++;
-        act_line_len = 0;
-        line_nr++;
-        if (line_nr == line_count) break;
-      }
+      if (process_byte_check_end()) break;
       if (act_byte_count < max_byte_count) file_out.put(b64[((b & 0x0F) << 2) | (c >> 6)]);
-      act_byte_count++;
-      act_line_len++;
-      if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-        if (act_byte_count < max_byte_count) file_out.put(13);
-        act_byte_count++;
-        if (act_byte_count < max_byte_count) file_out.put(10);
-        act_byte_count++;
-        act_line_len = 0;
-        line_nr++;
-        if (line_nr == line_count) break;
-      }
+      if (process_byte_check_end()) break;
       if (act_byte_count < max_byte_count) file_out.put(b64[c & 63]);
-      act_byte_count++;
-      act_line_len++;
-      if (act_line_len == base64_line_len[line_nr]) { // end of line, write CRLF
-        if (act_byte_count < max_byte_count) file_out.put(13);
-        act_byte_count++;
-        if (act_byte_count < max_byte_count) file_out.put(10);
-        act_byte_count++;
-        act_line_len = 0;
-        line_nr++;
-        if (line_nr == line_count) break;
-      }
+      if (process_byte_check_end()) break;
     }
-    if (line_nr == line_count) break;
+    if (line_nr == base64_line_len.size()) break;
   } while ((remaining_bytes > 0) && (avail_in > 0));
 }
 
@@ -178,8 +153,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
 
   {
     uint16_t k = 0;
-    std::fstream ftempout;
-    ftempout.open(tmpfile->file_path, std::ios_base::out | std::ios_base::binary);
+    tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::out | std::ios_base::binary);
     std::vector<unsigned char> in_buf{};
     in_buf.resize(CHUNK);
     do {
@@ -236,9 +210,9 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
           b = base64_data[(j << 2) + 1];
           c = base64_data[(j << 2) + 2];
           d = base64_data[(j << 2) + 3];
-          ftempout.put((a << 2) | (b >> 4));
-          ftempout.put(((b << 4) & 0xFF) | (c >> 2));
-          ftempout.put(((c << 6) & 0xFF) | d);
+          tmpfile->put((a << 2) | (b >> 4));
+          tmpfile->put(((b << 4) & 0xFF) | (c >> 2));
+          tmpfile->put(((c << 6) & 0xFF) | d);
         }
         if (stream_finished) break;
         for (auto j = 0; j < (k % 4); j++) {
@@ -255,7 +229,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
         break;
       }
     }
-    ftempout.close();
+    tmpfile->close();
   }
 
   if (!decoding_failed) {
@@ -280,12 +254,9 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     precomp_mgr.statistics.decompressed_base64_count++;
 
     long long decoded_size;
-    {
-      WrappedFStream ftempout;
-      ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-      ftempout.seekg(0, std::ios_base::end);
-      decoded_size = ftempout.tellg();
-    }
+    tmpfile->reopen();
+    tmpfile->seekg(0, std::ios_base::end);
+    decoded_size = tmpfile->tellg();
 
     print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result.base64_line_len.size(), original_input_pos);
     print_to_log(PRECOMP_DEBUG_LOG, "Can be decoded to %lli bytes\n", decoded_size);
@@ -293,9 +264,8 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     long long compressed_size;
     // try to re-encode Base64 data
     {
-      WrappedFStream ftempout;
-      ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-      if (!ftempout.is_open()) {
+      tmpfile->reopen();
+      if (!tmpfile->is_open()) {
         throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
       }
 
@@ -303,9 +273,9 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       remove(frecomp_filename.c_str());
       PrecompTmpFile frecomp;
       frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-      base64_reencode(ftempout, frecomp, result.base64_line_len.size(), result.base64_line_len.data());
+      base64_reencode(*tmpfile, frecomp, result.base64_line_len);
 
-      ftempout.close();
+      tmpfile->close();
       compressed_size = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
     }
 
@@ -401,7 +371,8 @@ void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
   // read line length list
   auto line_count = fin_fget_vlint(*context.fin);
 
-  auto base64_line_len = new unsigned int[line_count];
+  auto base64_line_len = std::vector<unsigned int> {};
+  base64_line_len.resize(line_count);
 
   if (line_case == 2) {
     for (int i = 0; i < line_count; i++) {
@@ -435,11 +406,9 @@ void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
 
   if (recursion_used) {
     auto r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_base64");
-    base64_reencode(*r, *context.fout, line_count, base64_line_len, 0x7FFFFFFFFFFFFFFF, decompressed_data_length);
+    base64_reencode(*r, *context.fout, base64_line_len, 0x7FFFFFFFFFFFFFFF, decompressed_data_length);
   }
   else {
-    base64_reencode(*context.fin, *context.fout, line_count, base64_line_len, recompressed_data_length, decompressed_data_length);
+    base64_reencode(*context.fin, *context.fout, base64_line_len, recompressed_data_length, decompressed_data_length);
   }
-
-  delete[] base64_line_len;
 }

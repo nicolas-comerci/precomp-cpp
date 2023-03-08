@@ -380,8 +380,7 @@ bool recompress_gif(IStreamLike& srcfile, OStreamLike& dstfile, unsigned char bl
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
 
-void try_recompression_gif(RecursionContext& context, std::byte header1, std::string& tempfile, std::string& tempfile2)
-{
+void try_recompression_gif(RecursionContext& context, std::byte header1) {
   unsigned char block_size = 255;
 
   const bool penalty_bytes_stored = ((header1 & std::byte{ 0b10 }) == std::byte{ 0b10 });
@@ -412,16 +411,11 @@ void try_recompression_gif(RecursionContext& context, std::byte header1, std::st
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
 
-  tempfile += "gif";
-  tempfile2 += "gif";
-  remove(tempfile.c_str());
-  {
-    WrappedFStream ftempout;
-    ftempout.open(tempfile, std::ios_base::out | std::ios_base::binary);
-    fast_copy(*context.fin, ftempout, decompressed_data_length);
-    ftempout.close();
-  }
+  std::string tmp_tag = temp_files_tag();
+  std::string tempfile = tmp_tag + "_precompressed_gif";
+  std::string tempfile2 = tmp_tag + "_recompressed_gif";
 
+  dump_to_file(*context.fin, tempfile, decompressed_data_length);
   bool recompress_success = false;
 
   {
@@ -479,7 +473,7 @@ void try_recompression_gif(RecursionContext& context, std::byte header1, std::st
 
 gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   gif_precompression_result result = gif_precompression_result();
-  std::unique_ptr<PrecompTmpFile> tmpfile{ new PrecompTmpFile() };
+  std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(temp_files_tag() + "_decomp_gif", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
   unsigned char version[5];
@@ -505,12 +499,9 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<
 
   // read GIF file
   {
-    WrappedFStream ftempout;
-    ftempout.open(tmpfile->file_path, std::ios_base::out | std::ios_base::binary);
-
-    if (!decompress_gif(precomp_mgr, *precomp_mgr.ctx->fin, ftempout, original_input_pos, gif_length, decomp_length, block_size, &gCode)) {
-      ftempout.close();
-      remove(tmpfile->file_path.c_str());
+    tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::out | std::ios_base::binary);
+    if (!decompress_gif(precomp_mgr, *precomp_mgr.ctx->fin, *tmpfile, original_input_pos, gif_length, decomp_length, block_size, &gCode)) {
+      tmpfile->close();
       GifDiffFree(&gDiff);
       GifCodeFree(&gCode);
       return result;
@@ -523,14 +514,13 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<
   precomp_mgr.statistics.decompressed_gif_count++;
 
   std::string tempfile2 = tmpfile->file_path + "_rec_";
-  WrappedFStream ftempout;
-  ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
+  tmpfile->reopen();
   PrecompTmpFile frecomp;
   frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
-  if (recompress_gif(ftempout, frecomp, block_size, &gCode, &gDiff)) {
+  if (recompress_gif(*tmpfile, frecomp, block_size, &gCode, &gDiff)) {
 
     frecomp.close();
-    ftempout.close();
+    tmpfile->close();
 
     WrappedFStream frecomp2;
     frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);

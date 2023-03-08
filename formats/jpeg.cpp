@@ -266,11 +266,10 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       jpg_new_length = jpg_mem_out_size;
     }
     else {
-      WrappedFStream ftempout;
-      ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-      ftempout.seekg(0, std::ios_base::end);
-      jpg_new_length = ftempout.tellg();
-      ftempout.close();
+      tmpfile->reopen();
+      tmpfile->seekg(0, std::ios_base::end);
+      jpg_new_length = tmpfile->tellg();
+      tmpfile->close();
     }
 
     if (jpg_new_length.has_value()) {
@@ -454,14 +453,7 @@ void recompress_jpg(RecursionContext& context, std::byte flags) {
     }
   }
   else {
-    remove(precompressed_filename.c_str());
-
-    {
-      WrappedFStream ftempout;
-      ftempout.open(precompressed_filename, std::ios_base::out | std::ios_base::binary);
-      fast_copy(*context.fin, ftempout, precompressed_data_length);
-      ftempout.close();
-    }
+    dump_to_file(*context.fin, precompressed_filename, precompressed_data_length);
 
     remove(recompressed_filename.c_str());
 

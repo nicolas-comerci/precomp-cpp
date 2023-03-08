@@ -272,14 +272,11 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_strea
 
   precomp_mgr.call_progress_callback();
 
-  remove(decompressed_stream.file_path.c_str());
-  WrappedFStream ftempout;
-  ftempout.open(decompressed_stream.file_path, std::ios_base::out | std::ios_base::binary);
+  decompressed_stream.reopen();
 
   bzip2_stream.seekg(&bzip2_stream == precomp_mgr.ctx->fin.get() ? original_input_pos : 0, std::ios_base::beg);
 
-  r = inf_bzip2(precomp_mgr, bzip2_stream, ftempout, compressed_stream_size, decompressed_stream_size);
-  ftempout.close();
+  r = inf_bzip2(precomp_mgr, bzip2_stream, decompressed_stream, compressed_stream_size, decompressed_stream_size);
   if (r == BZ_OK) return decompressed_stream_size;
 
   return r;
@@ -291,7 +288,9 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
   if ((compression_level < 1) || (compression_level > 9)) return result;
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_original_bzip2", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  auto tmpfile_name = temp_files_tag() + "_original_bzip2";
+  remove(tmpfile_name.c_str());
+  tmpfile->open(tmpfile_name, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
   long long compressed_stream_size = -1;
@@ -305,11 +304,11 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
     print_to_log(PRECOMP_DEBUG_LOG, "Possible bZip2-Stream found at position %lli, compression level = %i\n", original_input_pos, compression_level);
     print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", compressed_stream_size);
 
-    WrappedFStream ftempout;
-    ftempout.open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-    ftempout.seekg(0, std::ios_base::end);
-    print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", ftempout.tellg());
-    ftempout.close();
+    if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
+      tmpfile->reopen();
+      tmpfile->seekg(0, std::ios_base::end);
+      print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", tmpfile->tellg());
+    }
   }
 
   tmpfile->reopen();
