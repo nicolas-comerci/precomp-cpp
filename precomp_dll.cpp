@@ -201,7 +201,6 @@ Switches::Switches(): CSwitches() {
   prog_only = false;
   use_mjpeg = true;
   use_brunsli = true;
-  use_brotli = false;
   use_packjpg_fallback = true;
   min_ident_size = 4;
 

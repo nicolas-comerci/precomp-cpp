@@ -65,7 +65,6 @@ typedef struct {
   bool prog_only;                //recompress progressive JPGs only (default: off)
   bool use_mjpeg;                //insert huffman table for MJPEG recompression (default: on)
   bool use_brunsli;              //use brunsli for JPG compression (default: on)
-  bool use_brotli;               //use brotli for JPG metadata when brunsli is used (default: off)
   bool use_packjpg_fallback;     //use packJPG for JPG compression (fallback when brunsli fails) (default: on)
   unsigned int min_ident_size;   //minimal identical bytes (default: 4)
 

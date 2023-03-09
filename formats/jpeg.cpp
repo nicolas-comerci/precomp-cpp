@@ -52,7 +52,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   bool recompress_success = false;
   bool mjpg_dht_used = false;
   bool brunsli_used = false;
-  bool brotli_used = precomp_mgr.switches.use_brotli;
   char recompress_msg[256];
   std::vector<unsigned char> jpg_mem_in {};
   std::unique_ptr<unsigned char[]> jpg_mem_out;
@@ -73,7 +72,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       if (brunsli::ReadJpeg(jpg_mem_in.data(), jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
         size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
         jpg_mem_out = std::unique_ptr<unsigned char[]>(new unsigned char[output_size]);
-        if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size, precomp_mgr.switches.use_brotli)) {
+        if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size)) {
           recompress_success = true;
           brunsli_success = true;
           brunsli_used = true;
@@ -114,7 +113,7 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
             if (brunsli::ReadJpeg(jpg_mem_in.data(), jpg_length + MJPGDHT_LEN, brunsli::JPEG_READ_ALL, &jpegData)) {
               size_t output_size = brunsli::GetMaximumBrunsliEncodedSize(jpegData);
               jpg_mem_out = std::unique_ptr<unsigned char[]>(new unsigned char[output_size]);
-              if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size, precomp_mgr.switches.use_brotli)) {
+              if (brunsli::BrunsliEncodeJpeg(jpegData, jpg_mem_out.get(), &output_size)) {
                 recompress_success = true;
                 brunsli_success = true;
                 brunsli_used = true;
@@ -148,7 +147,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       pjglib_init_streams(jpg_mem_in.data(), 1, jpg_length, mem, 1);
       recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
       brunsli_used = false;
-      brotli_used = false;
       jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
     }
   }
@@ -175,7 +173,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
 
     recompress_success = pjglib_convert_file2file(const_cast<char*>(decompressed_jpg_filename.c_str()), const_cast<char*>(tmpfile->file_path.c_str()), recompress_msg);
     brunsli_used = false;
-    brotli_used = false;
   }
 
   if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (precomp_mgr.switches.use_mjpeg) && (precomp_mgr.switches.use_packjpg_fallback)) {
@@ -295,7 +292,6 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
     std::byte jpg_flags{ 0b1 }; // no penalty bytes
     if (mjpg_dht_used) jpg_flags |= std::byte{ 0b100 }; // motion JPG DHT used
     if (brunsli_used) jpg_flags |= std::byte{ 0b1000 };
-    if (brotli_used) jpg_flags |= std::byte{ 0b10000 };
     result.flags = jpg_flags;
 
     if (in_memory) {
@@ -406,7 +402,12 @@ void recompress_jpg(RecursionContext& context, std::byte flags) {
 
   bool mjpg_dht_used = (flags & std::byte{ 0b100 }) == std::byte{ 0b100 };
   bool brunsli_used = (flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };
-  bool brotli_used = (flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
+  {
+    bool brotli_used = (flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
+    if (brotli_used) {
+      throw PrecompError(ERR_BROTLI_NO_LONGER_SUPPORTED);
+    }
+  }
 
   long long recompressed_data_length = fin_fget_vlint(*context.fin);
   long long precompressed_data_length = fin_fget_vlint(*context.fin);
@@ -427,7 +428,7 @@ void recompress_jpg(RecursionContext& context, std::byte flags) {
 
     if (brunsli_used) {
       brunsli::JPEGData jpegData;
-      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in.data(), precompressed_data_length, &jpegData, brotli_used) == brunsli::BRUNSLI_OK) {
+      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in.data(), precompressed_data_length, &jpegData) == brunsli::BRUNSLI_OK) {
         if (mjpg_dht_used) {
           auto mem = new unsigned char[recompressed_data_length + MJPGDHT_LEN];
           jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);

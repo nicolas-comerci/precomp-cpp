@@ -839,20 +839,14 @@ bool EncodeMetaData(const JPEGData& jpg, State* s, uint8_t* data, size_t* len) {
   size_t compressed_size = *len - pos;
   const uint8_t* metadata_ptr =
       reinterpret_cast<const uint8_t*>(metadata.data());
-  if (s->use_brotli) {
-	  if (!BrotliEncoderCompress(kBrotliQuality, kBrotliWindowBits,
-		  BROTLI_DEFAULT_MODE, metadata.size(), metadata_ptr,
-		  &compressed_size, &data[pos])) {
-		  BRUNSLI_LOG_ERROR() << "Brotli compression failed:"
-			  << " input size = " << metadata.size()
-			  << " pos = " << pos << " len = " << *len
-			  << BRUNSLI_ENDL();
-		  return false;
-	  }
-  }
-  else {
-	  memcpy(&data[pos], metadata_ptr, metadata.size());
-	  compressed_size = metadata.size();
+  if (!BrotliEncoderCompress(kBrotliQuality, kBrotliWindowBits,
+                             BROTLI_DEFAULT_MODE, metadata.size(), metadata_ptr,
+                             &compressed_size, &data[pos])) {
+    BRUNSLI_LOG_ERROR() << "Brotli compression failed:"
+                        << " input size = " << metadata.size()
+                        << " pos = " << pos << " len = " << *len
+                        << BRUNSLI_ENDL();
+    return false;
   }
   pos += compressed_size;
   *len = pos;
@@ -1377,10 +1371,8 @@ bool BrunsliSerialize(State* state, const JPEGData& jpg, uint32_t skip_sections,
  *
  * For "groups" workflow, few more stages are required, see comments.
  */
-bool BrunsliEncodeJpeg(const JPEGData& jpg, uint8_t* data, size_t* len, bool use_brotli) {
+bool BrunsliEncodeJpeg(const JPEGData& jpg, uint8_t* data, size_t* len) {
   State state;
-  state.use_brotli = use_brotli;
-
   std::vector<ComponentMeta>& meta = state.meta;
   size_t num_components = jpg.components.size();
 

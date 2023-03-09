@@ -88,15 +88,10 @@ include_directories(AFTER "${SRCDIR}/contrib/brunsli/c/common"
                           "${SRCDIR}/contrib/brunsli/c/include")
 
 set(BROTLI_SRC "")
-add_stem2file(BROTLI_SRC "${SRCDIR}/contrib/brotli/c/common/%STEM%.c"
-              "dictionary;transform")
 add_stem2file(BROTLI_SRC "${SRCDIR}/contrib/brotli/c/dec/%STEM%.c"
-              "bit_reader;decode;huffman;state")
+              "decode;")
 add_stem2file(BROTLI_SRC "${SRCDIR}/contrib/brotli/c/enc/%STEM%.c"
-              "backward_references;backward_references_hq;bit_cost;block_splitter;\
-               brotli_bit_stream;cluster;compress_fragment;compress_fragment_two_pass;\
-               dictionary_hash;encode;encoder_dict;entropy_encode;histogram;literal_cost;\
-               memory;metablock;static_dict;utf8_util")
+              "encode;")
 include_directories(AFTER "${SRCDIR}/contrib/brotli/c/include")
 
 if ("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")

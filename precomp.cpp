@@ -407,8 +407,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
             precomp_switches.brute_mode_depth_limit = parseIntUntilEnd(argv[i] + 6, "brute mode level limit", ERR_BRUTE_MODE_LIMIT_TOO_BIG);
           }
         }
-        else if (!parseSwitch(precomp_switches.use_brunsli, argv[i] + 1, "brunsli")
-          && !parseSwitch(precomp_switches.use_brotli, argv[i] + 1, "brotli")) {
+        else if (!parseSwitch(precomp_switches.use_brunsli, argv[i] + 1, "brunsli")) {
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;

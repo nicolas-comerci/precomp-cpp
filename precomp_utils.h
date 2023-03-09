@@ -54,6 +54,7 @@ constexpr auto ERR_ONLY_SET_LZMA_FILTERS_ONCE = 18;
 constexpr auto ERR_DURING_RECOMPRESSION = 19;
 constexpr auto ERR_NO_PCF_HEADER = 20;
 constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = 21;
+constexpr auto ERR_BROTLI_NO_LONGER_SUPPORTED = 22;
 
 class PrecompError: public std::exception {
 public:

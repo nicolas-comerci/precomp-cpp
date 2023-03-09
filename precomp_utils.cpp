@@ -111,6 +111,8 @@ std::string precomp_error_msg(int error_nr, const char* extra_info) {
     if (extra_info != nullptr) txt += "\n" + std::string(extra_info);
     return txt;
   }
+  case ERR_BROTLI_NO_LONGER_SUPPORTED:
+    return "Precompressed stream has a precompressed JPG using Brunsli with Brotli metadata compression, Brotli is no longer supported by precomp";
   default:
     return "Unknown error";
   }

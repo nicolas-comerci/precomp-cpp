@@ -81,8 +81,6 @@ struct State {
   bool shallow_histograms = false;
   size_t num_contexts = 0;
   size_t num_histograms = 0;
-
-  bool use_brotli;
 };
 
 // Use in "headerless" mode, after jpg is filled, but before decoding.
