@@ -41,6 +41,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <set>
+#include <span>
 
 #ifndef __unix
 #include <windows.h>
@@ -66,7 +67,6 @@
 #include "formats/png.h"
 #include "formats/swf.h"
 #include "formats/base64.h"
-#include <span>
 
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
@@ -1086,27 +1086,41 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 }
 
 
+void RecursionPasstroughStream::unlock_everything() {
+  // Any locked thread that wakes up after EOF should not lock again on read/write, and should hopefully check eof() and realize it can't continue and fail gracefully
+  write_eof = true;
+  read_eof = true;
+  data_needed_cv.notify_all();
+  data_available_cv.notify_all();
+}
 
-RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_) : ctx(std::move(ctx_)) {
+
+RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_) : ctx(std::move(ctx_)), owner_thread_id(std::this_thread::get_id()) {
   buffer.reserve(CHUNK);
 
   ctx->fout = std::make_unique<ObservableOStreamWrapper>(this, false);
 
-  //const auto ret_code = decompress_file(ctx->precomp);
-  //if (ret_code != RETURN_SUCCESS) throw PrecompError(ret_code);
-  thread = std::thread([&ctx_capture = ctx, &write_eof_capture = write_eof] {
-    auto retval = decompress_file(*ctx_capture);
-    write_eof_capture = true;
-    return retval;
+  thread = std::thread([this] {
+    thread_return_code = decompress_file(*ctx);
+    unlock_everything();
   });
 }
 
 RecursionPasstroughStream::~RecursionPasstroughStream() {
+  unlock_everything();
   if (thread.joinable()) thread.join();
+}
+
+int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) {
+  unlock_everything();
+  if (thread.joinable()) thread.join();
+  if (throw_on_failure && thread_return_code != RETURN_SUCCESS) throw PrecompError(thread_return_code);
+  return thread_return_code;
 }
 
 RecursionPasstroughStream& RecursionPasstroughStream::read(char* buff, std::streamsize count) {
   if (read_eof) {
+    if (std::this_thread::get_id() != owner_thread_id) throw PrecompError(thread_return_code);
     _gcount = 0;
     return *this;
   }
@@ -1121,7 +1135,8 @@ RecursionPasstroughStream& RecursionPasstroughStream::read(char* buff, std::stre
     if (iteration_read_count == 0) {
       // If we don't have any data in the buffer we need to wait for more
       // unless we already reached the write_eof, in which case we know no more data will ever arrive
-      if (write_eof) { break; }
+      // or if read_eof is true, which given that we were already in the middle of reading it probably means the stream was forcefully truncated (most likely to destroy it)
+      if (read_eof || write_eof) { break; }
 
       data_needed_cv.notify_one();
       //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WAITING FOR DATA AVAILABLE FOR READ!\n\n", static_cast<void*>(this));
@@ -1161,10 +1176,14 @@ RecursionPasstroughStream& RecursionPasstroughStream::seekg(std::istream::off_ty
 std::istream::pos_type RecursionPasstroughStream::tellg() { return accumulated_already_read_count + buffer_already_read_count; }
 bool RecursionPasstroughStream::eof() { return write_eof && read_eof; }
 bool RecursionPasstroughStream::good() { return true; }
-bool RecursionPasstroughStream::bad() { return false; }
+bool RecursionPasstroughStream::bad() { return eof(); }
 void RecursionPasstroughStream::clear() { throw std::runtime_error("CANT CLEAR ON A RecursionPassthroughStream!"); }
 
 RecursionPasstroughStream& RecursionPasstroughStream::write(const char* buf, std::streamsize count) {
+  if (write_eof) {
+    if (std::this_thread::get_id() != owner_thread_id) throw PrecompError(thread_return_code);
+    return *this;
+  }
   //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: TAKING LOCK FOR WRITE!\n\n", static_cast<void*>(this));
   std::unique_lock lock(mtx);
   //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: LOCK TAKEN FOR WRITE!\n\n", static_cast<void*>(this));
@@ -1176,6 +1195,12 @@ RecursionPasstroughStream& RecursionPasstroughStream::write(const char* buf, std
     if (data_available()) {
       data_available_cv.notify_one();
       data_needed_cv.wait(lock);
+      // Check if data is actually needed or we were woken up to be terminated
+      if (write_eof || read_eof) {
+        if (std::this_thread::get_id() != owner_thread_id) throw PrecompError(thread_return_code);
+        write_eof = true;
+        return *this;
+      }
     }
     //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: WOKE UP FROM WAITING FOR MORE DATA NEEDED FOR WRITE!\n\n", static_cast<void*>(this));
 

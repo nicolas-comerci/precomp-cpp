@@ -179,7 +179,11 @@ class RecursionPasstroughStream : public IStreamLike, public OStreamLike {
   unsigned int buffer_already_read_count = 0;
   unsigned int accumulated_already_read_count = 0;
 
+  // With this we will be able to check for some error conditions when reading or writing from the spawned thread and throw exceptions to force it to end if needed.
+  // Some of the places we throw might be overkill for general usage, like if trying to read/write past eof, but works for our purposes, at least for now.
+  std::thread::id owner_thread_id;
   std::thread thread;
+  int thread_return_code;
   std::mutex mtx;
   std::condition_variable data_needed_cv;  // this is used to signal that reads had to stop because all buffered data was already used
   std::condition_variable data_available_cv;  // this is used to signal that writes had to stop because the buffer is full
@@ -192,11 +196,16 @@ class RecursionPasstroughStream : public IStreamLike, public OStreamLike {
   unsigned int data_available() const { return buffer.size() - buffer_already_read_count; }
   const unsigned char* buffer_current_pos() const { return buffer.data() + buffer_already_read_count; }
 
+  void unlock_everything();
+
 public:
   std::unique_ptr<RecursionContext> ctx;
 
   RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_);
-  ~RecursionPasstroughStream();
+  ~RecursionPasstroughStream() override;
+  // This ensures the recursion thread is finished and gets the return code, optionally (but by default) throwing an exception if the recursion thread failed.
+  // The destructor will ensure the recursion thread is finished executing anyways, but if you want to react to a possible failure (and you should), this is how you do it.
+  int get_recursion_return_code(bool throw_on_failure = true);
 
   RecursionPasstroughStream& read(char* buff, std::streamsize count) override;
 

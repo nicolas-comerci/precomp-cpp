@@ -548,6 +548,7 @@ void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, 
     debug_pos(context);
     ok = try_reconstructing_deflate(context.precomp, *r, *context.fout, rdres);
     debug_pos(context);
+    r->get_recursion_return_code();
   }
   else {
     debug_pos(context);

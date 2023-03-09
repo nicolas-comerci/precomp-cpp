@@ -407,6 +407,7 @@ void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
   if (recursion_used) {
     auto r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_base64");
     base64_reencode(*r, *context.fout, base64_line_len, 0x7FFFFFFFFFFFFFFF, decompressed_data_length);
+    r->get_recursion_return_code();
   }
   else {
     base64_reencode(*context.fin, *context.fout, base64_line_len, recompressed_data_length, decompressed_data_length);
