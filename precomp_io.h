@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <span>
+#include <vector>
 
 #ifndef __unix
 #define PATH_DELIM '\\'

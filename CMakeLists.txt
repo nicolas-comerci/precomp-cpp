@@ -66,6 +66,7 @@ if (MSVC)
   add_definitions(-D_UNICODE -DUNICODE)
 endif (MSVC)
 
+# Not the cleanest thing ever, but we just make Mac compilation use unix/linux code, for now it works
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     add_definitions(-D__unix)
     add_definitions(-D__linux)
@@ -161,7 +162,9 @@ add_executable(precomp ${LIBPRECOMP_HDR} ${PRECOMP_SRC} )
 target_link_libraries(precomp PRIVATE precomp_dll_static)
 
 if (UNIX)
-  target_link_libraries(precomp Threads::Threads)
+    target_link_libraries(precomp PRIVATE Threads::Threads precomp_dll_static)
+else()
+    target_link_libraries(precomp PRIVATE precomp_dll_static)
 endif()
 
 install(TARGETS precomp DESTINATION bin)

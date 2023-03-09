@@ -57,7 +57,7 @@ int otf_xz_filter_used_count = 0;
 
 std::string libprecomp_error_msg(int error_code)
 {
-  return make_cstyle_format_string("\nERROR %i: %s", error_code, precomp_error_msg(error_code));
+  return make_cstyle_format_string("\nERROR %i: %s", error_code, precomp_error_msg(error_code).c_str());
 }
 
 bool parsePrefixText(const char* c, const char* ref) {
