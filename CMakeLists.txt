@@ -60,43 +60,6 @@ add_stem2file(PACKMP3_SRC "${SRCDIR}/contrib/packmp3/%STEM%.cpp"
               "huffmp3;packmp3")
 add_definitions(-DBUILD_LIB)
 
-set(LZMA_SRC "")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/common/%STEM%.c" 
-              "tuklib_physmem;tuklib_cpucores;common;block_util;easy_preset;\
-               filter_common;hardware_physmem;index;stream_flags_common;\
-               vli_size;alone_encoder;block_buffer_encoder;block_encoder;\
-               block_header_encoder;easy_buffer_encoder;easy_encoder;\
-               easy_encoder_memusage;filter_buffer_encoder;filter_encoder;\
-               filter_flags_encoder;index_encoder;stream_buffer_encoder;\
-               stream_encoder;stream_flags_encoder;vli_encoder;\
-               hardware_cputhreads;outqueue;stream_encoder_mt;alone_decoder;\
-               auto_decoder;block_buffer_decoder;block_decoder;block_header_decoder;\
-               easy_decoder_memusage;filter_buffer_decoder;filter_decoder;\
-               filter_flags_decoder;index_decoder;index_hash;stream_decoder;\
-               stream_buffer_decoder;stream_flags_decoder;vli_decoder")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/check/%STEM%.c" 
-              "check;crc32_table;crc32_fast;crc64_table;crc64_fast;sha256")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/lz/%STEM%.c" 
-              "lz_encoder;lz_encoder_mf;lz_decoder")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/lzma/%STEM%.c" 
-              "lzma_encoder;lzma_encoder_presets;lzma_encoder_optimum_fast;\
-               lzma_encoder_optimum_normal;fastpos_table;lzma_decoder;\
-               lzma2_encoder;lzma2_decoder")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/rangecoder/%STEM%.c" 
-              "price_table")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/delta/%STEM%.c" 
-              "delta_common;delta_encoder;delta_decoder")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/simple/%STEM%.c" 
-              "simple_coder;simple_encoder;simple_decoder;x86;powerpc;ia64;arm;armthumb;sparc")
-add_stem2file(LZMA_SRC "${SRCDIR}/contrib/liblzma/%STEM%.cpp" 
-              "compress_easy_mt")
-
-include_directories(AFTER "${SRCDIR}" "${SRCDIR}/contrib/liblzma"
-                          "${SRCDIR}/contrib/liblzma/api" "${SRCDIR}/contrib/liblzma/check"
-                          "${SRCDIR}/contrib/liblzma/common"
-                          "${SRCDIR}/contrib/liblzma/delta" "${SRCDIR}/contrib/liblzma/lz"
-                          "${SRCDIR}/contrib/liblzma/lzma" "${SRCDIR}/contrib/liblzma/rangecoder"
-                          "${SRCDIR}/contrib/liblzma/simple")
 add_definitions(-DHAVE_BOOL)
 if (MSVC)
   include_directories(AFTER "msinttypes")
@@ -170,19 +133,31 @@ add_stem2file(FORMAT_HANDLERS_SRC "${SRCDIR}/formats/%STEM%.cpp"
               "base64;bzip2;deflate;gif;gzip;jpeg;mp3;pdf;png;swf;zip;zlib;")
 include_directories(AFTER "${SRCDIR}/formats")
 
+if (MSVC)
+    # Disabling Incremental Linking might be useful for example to use SizeBench to analyze compiled binary size contributions from different parts of the code
+    add_link_options($<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>)
+    #add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
+
+    if (WIN32 AND NOT MSVC_VERSION VERSION_LESS 142)
+        # This should enable hot reload for VS2022
+        add_link_options($<$<CONFIG:Debug>:/INCREMENTAL>)
+        add_compile_options($<$<CONFIG:Debug>:/ZI>)
+    endif()
+endif()
+
 add_library(precomp_dll_shared SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
-                               ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
+                               ${PACKJPG_SRC} ${PACKMP3_SRC} ${PREFLATE_SRC}
                                ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${FORMAT_HANDLERS_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll_shared PRIVATE -DPRECOMPDLL)
 add_library(precomp_dll_static STATIC ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
-                               ${PACKJPG_SRC} ${PACKMP3_SRC} ${LZMA_SRC} ${PREFLATE_SRC}
+                               ${PACKJPG_SRC} ${PACKMP3_SRC} ${PREFLATE_SRC}
                                ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${FORMAT_HANDLERS_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
 target_compile_definitions(precomp_dll_static PRIVATE -DPRECOMPDLL)
 
 add_executable(dlltest ${LIBPRECOMP_HDR} ${DLLTEST_SRC})
 target_link_libraries(dlltest PRIVATE precomp_dll_shared)
 
-add_executable(precomp ${LIBPRECOMP_HDR} ${PRECOMP_SRC} ${LZMA_SRC} )
+add_executable(precomp ${LIBPRECOMP_HDR} ${PRECOMP_SRC} )
 target_link_libraries(precomp PRIVATE precomp_dll_static)
 
 if (UNIX)

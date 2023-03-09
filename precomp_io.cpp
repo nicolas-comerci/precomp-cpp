@@ -7,9 +7,6 @@
 #include <filesystem>
 #include <memory>
 
-#include "contrib/bzip2/bzlib.h"
-#include "contrib/liblzma/precomp_xz.h"
-
 size_t ostream_printf(OStreamLike& out, const std::string& str) {
   for (char character : str) {
     out.put(character);
