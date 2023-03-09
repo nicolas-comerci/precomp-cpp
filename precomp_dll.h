@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <mutex>
+#include <condition_variable>
 
 static constexpr int MAX_PENALTY_BYTES = 16384;
 
