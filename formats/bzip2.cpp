@@ -327,8 +327,10 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
     result.success = true;
 
     // check recursion
-    tmpfile->reopen();
-    const recursion_result r = recursion_compress(precomp_mgr, recompressed_size, decompressed_size, *tmpfile);
+    tmpfile->close();
+    tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
+    const recursion_result r = recursion_compress(precomp_mgr, recompressed_size, decompressed_size, *tmpfile, tmpfile->file_path + "_");
+    tmpfile->close();
 
     // write compressed data header (bZip2)
 

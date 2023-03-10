@@ -172,7 +172,7 @@ struct recursion_result {
   long long file_length;
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type = false, std::vector<unsigned char> in_memory = std::vector<unsigned char>());
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
 
 class RecursionPasstroughStream : public IStreamLike, public OStreamLike {
   // boost::circular_buffer would be a good idea here

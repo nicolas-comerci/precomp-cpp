@@ -287,8 +287,10 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       result.success = true;
 
       // check recursion
-      tmpfile->reopen();
-      recursion_result r = recursion_compress(precomp_mgr, compressed_size, decoded_size, *tmpfile);
+      tmpfile->close();
+      tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
+      recursion_result r = recursion_compress(precomp_mgr, compressed_size, decoded_size, *tmpfile, tmpfile->file_path + "_");
+      tmpfile->close();
 
       // write compressed data header (Base64)
       std::byte header_byte = std::byte{ 0b1 } | (line_case << 2);

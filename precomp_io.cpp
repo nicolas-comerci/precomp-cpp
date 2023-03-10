@@ -153,7 +153,7 @@ std::istream::int_type IStreamLikeView::get() {
   return istream->gcount() == 1 ? chr[0] : EOF;
 }
 std::streamsize IStreamLikeView::gcount() { return istream->gcount(); }
-std::istream::pos_type IStreamLikeView::tellg() { return current_stream_pos - starting_stream_pos; }
+std::istream::pos_type IStreamLikeView::tellg() { return _eof ? -1 : current_stream_pos - starting_stream_pos; }
 bool IStreamLikeView::eof() { return _eof; }
 bool IStreamLikeView::good() { return istream->good() && !eof(); }
 bool IStreamLikeView::bad() { return istream->bad(); }
@@ -162,9 +162,12 @@ void IStreamLikeView::clear() {
   istream->clear();
 }
 IStreamLikeView& IStreamLikeView::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
-  istream->seekg(offset, dir);
+  if (bad()) {
+    throw std::runtime_error(make_cstyle_format_string("Input stream went bad"));
+  }
+  clear();
   if (dir == std::ios_base::beg) {
-    current_stream_pos = offset;
+    current_stream_pos = starting_stream_pos + offset;
   }
   else if (dir == std::ios_base::end) {
     current_stream_pos = final_allowed_stream_pos - offset;
@@ -172,6 +175,7 @@ IStreamLikeView& IStreamLikeView::seekg(std::istream::off_type offset, std::ios_
   else {
     current_stream_pos += offset;
   }
+  istream->seekg(current_stream_pos, std::ios_base::beg);
   return *this;
 }
 

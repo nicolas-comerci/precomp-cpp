@@ -252,8 +252,20 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
       debug_pos(*precomp_mgr.ctx);
 
       // check recursion
-      tmpfile->reopen();
-      recursion_result r = recursion_compress(precomp_mgr, rdres.compressed_stream_size, rdres.uncompressed_stream_size, *tmpfile, true, rdres.uncompressed_stream_mem);
+      std::unique_ptr<memiostream> recurse_memstream;
+      IStreamLike* recurse_istream;
+      if (!rdres.uncompressed_stream_mem.empty()) {
+        auto decomp_io_buf_ptr = rdres.uncompressed_stream_mem.data();
+        recurse_memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + rdres.uncompressed_stream_size);
+        recurse_istream = recurse_memstream.get();
+      }
+      else {
+        tmpfile->close();
+        tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
+        recurse_istream = tmpfile.get();
+      }
+      recursion_result r = recursion_compress(precomp_mgr, rdres.compressed_stream_size, rdres.uncompressed_stream_size, *recurse_istream, tmpfile->file_path + "_");
+      tmpfile->close();
 
 #if 0
       // Do we really want to allow uncompressed streams that are smaller than the compressed

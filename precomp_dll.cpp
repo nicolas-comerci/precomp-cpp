@@ -1001,7 +1001,7 @@ void recursion_pop(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.pop_back();
 }
 
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, PrecompTmpFile& tmpfile, bool deflate_type, std::vector<unsigned char> in_memory) {
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {
   recursion_result tmp_r;
   tmp_r.success = false;
 
@@ -1013,30 +1013,13 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     return tmp_r;
   }
 
-  if (deflate_type && !in_memory.empty()) {
-    auto decomp_io_buf_ptr = in_memory.data();
-    auto memstream = memiostream::make(decomp_io_buf_ptr, decomp_io_buf_ptr + decompressed_bytes);
-    fast_copy(*memstream, tmpfile, decompressed_bytes);
-  }
-  tmpfile.close();
-
   recursion_push(*precomp_mgr.ctx, compressed_bytes);
 
-  if (!deflate_type) {
-    // shorten tempfile1 to decompressed_bytes
-    std::filesystem::resize_file(tmpfile.file_path, decompressed_bytes);
-  }
+  precomp_mgr.ctx->fin_length = decompressed_bytes;
+  precomp_mgr.ctx->fin = std::make_unique<IStreamLikeView>(&tmpfile, decompressed_bytes);
+  //precomp_mgr.ctx->set_input_stream(fin);
 
-  precomp_mgr.ctx->fin_length = std::filesystem::file_size(tmpfile.file_path.c_str());
-  auto fin = new std::ifstream();
-  fin->open(tmpfile.file_path, std::ios_base::in | std::ios_base::binary);
-  if (!fin->is_open()) {
-    throw std::runtime_error(make_cstyle_format_string("ERROR: Recursion input file \"%s\" doesn't exist\n", tmpfile.file_path.c_str()));
-  }
-  precomp_mgr.ctx->set_input_stream(fin);
-
-  tmp_r.file_name = tmpfile.file_path;
-  tmp_r.file_name += '_';
+  tmp_r.file_name = out_filename;
   auto fout = new std::ofstream();
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   precomp_mgr.ctx->set_output_stream(fout, true);
