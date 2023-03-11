@@ -56,7 +56,6 @@ public:
 // It's meant to allow ultimate and unlimited flexibility. Where are we reading from? Memory? A socket? A file? Some other type of handle? Data piped from other process?
 // Only who constructed the instance knows! What is the difference from just implementing IStreamLike? That we can expose a function to create these from plain C!
 class GenericIStreamLike: public IStreamLike {
-private:
   void* backing_structure;
   size_t _gcount = 0;
   bool _bad = false;
@@ -69,6 +68,7 @@ private:
   std::function<bool(void*)> eof_func;
   std::function<bool(void*)> bad_func;
   std::function<void(void*)> clear_func;
+
 public:
   GenericIStreamLike(
     void* backing_structure_,
@@ -104,6 +104,66 @@ public:
 
   std::istream::pos_type tellg() override {
     return tellg_func(backing_structure);
+  }
+
+  bool eof() override { return eof_func(backing_structure); }
+  bool bad() override {
+    if (bad_func(backing_structure)) _bad = true;
+    return _bad;
+  }
+  bool good() override { return !eof() && !bad(); }
+  void clear() override {
+    _bad = false;
+    clear_func(backing_structure);
+  }
+};
+
+// Analogue of GenericIStreamLike for OStreamLike
+class GenericOStreamLike: public OStreamLike {
+  void* backing_structure;
+  bool _bad = false;
+
+  std::function<size_t(void*, char const*, long long)> write_func;
+  std::function<int(void*, int)> put_func;
+  std::function<void(void*)> flush_func;
+  std::function<long long(void*)> tellp_func;
+  std::function<int(void*, long long, int)> seekp_func;
+
+  std::function<bool(void*)> eof_func;
+  std::function<bool(void*)> bad_func;
+  std::function<void(void*)> clear_func;
+
+public:
+  GenericOStreamLike(
+    void* backing_structure_,
+    std::function<size_t(void*, char const*, long long)> write_func_,
+    std::function<int(void*, int)> put_func_,
+    std::function<long long(void*)> tellp_func_,
+    std::function<int(void*, long long, int)> seekp_func_,
+
+    std::function<bool(void*)> eof_func_,
+    std::function<bool(void*)> bad_func_,
+    std::function<void(void*)> clear_func_
+  ): backing_structure(backing_structure_), write_func(std::move(write_func_)), put_func(std::move(put_func_)),
+     tellp_func(std::move(tellp_func_)), seekp_func(std::move(seekp_func_)),
+     eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+
+  OStreamLike& write(const char* buf, std::streamsize count) override {
+    write_func(backing_structure, buf, count);
+    return *this;
+  }
+
+  OStreamLike& put(char chr) override {
+    put_func(backing_structure, chr);
+    return *this;
+  }
+
+  void flush() override { flush_func(backing_structure); }
+  std::ostream::pos_type tellp() override { return tellp_func(backing_structure); }
+  OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
+    auto result = seekp_func(backing_structure, offset, dir);
+    if (result != 0) _bad = true;
+    return *this;
   }
 
   bool eof() override { return eof_func(backing_structure); }

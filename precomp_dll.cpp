@@ -201,6 +201,23 @@ void PrecompSetGenericInputStream(
     backing_structure, read_func, get_func, seekg_func, tellg_func, eof_func, bad_func, clear_func);
 }
 
+void PrecompSetGenericOutputStream(
+  CPrecomp* precomp_mgr, const char* output_file_name, void* backing_structure,
+  size_t(*write_func)(void*, char const*, long long),
+  int (*put_func)(void*, int),
+  int (*seekp_func)(void*, long long, int),
+  long long (*tellp_func)(void*),
+  bool (*eof_func)(void*),
+  bool (*bad_func)(void*),
+  void (*clear_func)(void*)
+) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->output_file_name = output_file_name;
+  auto gen_ostream = std::make_unique<GenericOStreamLike>(backing_structure, write_func, put_func, tellp_func, seekp_func, eof_func, bad_func, clear_func);
+  internal_precomp_ptr->get_original_context()->fout = std::unique_ptr<ObservableOStream>(new ObservableOStreamWrapper(gen_ostream.release(), true));
+  
+}
+
 const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   return internal_precomp_ptr->output_file_name.c_str();

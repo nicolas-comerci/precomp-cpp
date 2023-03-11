@@ -188,6 +188,23 @@ ExternC LIBPRECOMP void PrecompSetGenericInputStream(
 ExternC LIBPRECOMP typedef void* CPrecompOStream;
 ExternC LIBPRECOMP void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
 ExternC LIBPRECOMP void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name);
+// Same thing as PrecompSetGenericInputStream but for the output
+ExternC LIBPRECOMP void PrecompSetGenericOutputStream(
+  CPrecomp* precomp_mgr, const char* output_file_name, void* backing_structure,
+  // The write function gives a buffer and a byte count to your backing structure, which should read that count of bytes from the buffer and write/dump them somewhere
+  size_t(*write_func)(void*, char const*, long long),
+  // The put function puts a single character into your backing structure
+  int (*put_func)(void*, int),
+  // Idem seekg on the PrecompSetGenericInputStream, however seeking should not be required for either precompression nor recompression... maybe I should remove this param
+  int (*seekp_func)(void*, long long, int),
+  // Idem PrecompSetGenericInputStream tellg
+  long long (*tellp_func)(void*),
+
+  // These 3 parameters are identical to those on PrecompSetGenericInputStream
+  bool (*eof_func)(void*),
+  bool (*bad_func)(void*),
+  void (*clear_func)(void*)
+);
 
 ExternC LIBPRECOMP int PrecompPrecompress(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP int PrecompRecompress(CPrecomp* precomp_mgr);

@@ -48,14 +48,29 @@ bool error_file(void* backing_structure) { ferror(backing_structure); }
 void clear_file_error(void* backing_structure) { clearerr(backing_structure); }
 
 bool set_precomp_input(CPrecomp* precomp_mgr, char* filename, bool use_generic_streams) {
+  FILE* fin = open_input_file(filename, false);
+  if (fin == NULL) { return false; }
   if (use_generic_streams) {
-    FILE* fin = open_input_file(filename, false);
     PrecompSetGenericInputStream(precomp_mgr, filename, fin, &read_from_file, &getc_from_file, &seek_file, &tell_file, &eof_file, &error_file, &clear_file_error);
   }
   else {
-    FILE* fin = open_input_file(filename, false);
-    if (fin == NULL) { return false; }
     PrecompSetInputFile(precomp_mgr, fin, filename);
+  }
+  return true;
+}
+
+// Generic OStream File functions
+size_t write_to_file(void* backing_structure, char const* buff, long long count) { return fwrite(buff, 1, count, backing_structure); }
+int putc_to_file(void* backing_structure, int chr) { return fputc(chr, backing_structure); }
+
+bool set_precomp_output(CPrecomp* precomp_mgr, char* filename, bool use_generic_streams) {
+  FILE* fout = open_output_file(filename);
+  if (fout == NULL) { return false; }
+  if (use_generic_streams) {
+    PrecompSetGenericOutputStream(precomp_mgr, filename, fout, &write_to_file, &putc_to_file, &seek_file, &tell_file, &eof_file, &error_file, &clear_file_error);
+  }
+  else {
+    PrecompSetOutputFile(precomp_mgr, fout, filename);
   }
   return true;
 }
@@ -69,10 +84,9 @@ int precompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams);
   if (!input_success) return 1;
 
-  FILE* fout = open_output_file(out_file);
-  if (fout == NULL) { return 1; }
-  
-  PrecompSetOutputFile(precomp_mgr, fout, out_file);
+  bool output_success = set_precomp_output(precomp_mgr, out_file, use_generic_streams);
+  if (!output_success) return 1;
+
   int result = PrecompPrecompress(precomp_mgr);
   PrecompDestroy(precomp_mgr);
   return result;
@@ -86,10 +100,9 @@ int recompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams);
   if (!input_success) return 1;
 
-  FILE* fout = open_output_file(out_file);
-  if (fout == NULL) { return 1; }
+  bool output_success = set_precomp_output(precomp_mgr, out_file, use_generic_streams);
+  if (!output_success) return 1;
 
-  PrecompSetOutputFile(precomp_mgr, fout, out_file);
   int result = PrecompRecompress(precomp_mgr);
   PrecompDestroy(precomp_mgr);
   return result;
