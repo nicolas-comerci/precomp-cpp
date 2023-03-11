@@ -185,6 +185,22 @@ void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* outp
   internal_precomp_ptr->set_output_stream(fhandle);
 }
 
+void PrecompSetGenericInputStream(
+  CPrecomp* precomp_mgr, const char* input_file_name, void* backing_structure,
+  size_t(*read_func)(void*, char*, long long),
+  int (*get_func)(void*),
+  int (*seekg_func)(void*, long long, int),
+  long long (*tellg_func)(void*),
+  bool (*eof_func)(void*),
+  bool (*bad_func)(void*),
+  void (*clear_func)(void*)
+) {
+  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
+  internal_precomp_ptr->input_file_name = input_file_name;
+  internal_precomp_ptr->get_original_context()->fin = std::make_unique<GenericIStreamLike>(
+    backing_structure, read_func, get_func, seekg_func, tellg_func, eof_func, bad_func, clear_func);
+}
+
 const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
   auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
   return internal_precomp_ptr->output_file_name.c_str();

@@ -155,9 +155,36 @@ ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches
 ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
 ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
 
+// IMPORTANT!! Input streams for precompression HAVE to be seekable, else it WILL fail.
+// For recompression no seeking is done so in those cases its okay to have input streams that can't seek.
 ExternC LIBPRECOMP typedef void* CPrecompIStream;
 ExternC LIBPRECOMP void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name);
 ExternC LIBPRECOMP void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* input_file_name);
+// This allows you to customize exactly how you would like data to be fed to Precomp.
+// You can use an instance ptr of anything you may want (Socket, Handle, something custom from your application) and functions you define about how to operate
+// with that instance to do all of the different operations a C++ IStream might do, which is what Precomp uses (sort of).
+ExternC LIBPRECOMP void PrecompSetGenericInputStream(
+  CPrecomp* precomp_mgr, const char* input_file_name, void* backing_structure,
+  // The read function uses your backing structure and somehow reads up to the long long param amount of bytes into the char* buffer
+  size_t (*read_func)(void*, char*, long long),
+  // The get function reads a single character using your backing structure, should return EOF if no more data is to be received anymore
+  int (*get_func)(void*),
+  // The seekg function semantics are the same as fseek, only difference being that it uses your backing structure instead of a FILE
+  // As previously stated, for recompression no seeking is performed and thus you can just give a null pointer here if you are recompressing.
+  int (*seekg_func)(void*, long long, int),
+  // Similarily, tellg function is analogue to ftell
+  long long (*tellg_func)(void*),
+
+  // eof function returns true if EOF has been reached and no more data can be read from the backing structure, false otherwise
+  bool (*eof_func)(void*),
+  // bad function returns true if some unrecoverable error happened and the stream will no longer be usable, signals to Precomp that it should fail
+  bool (*bad_func)(void*),
+  // clear function clears the eof and bad flags, the backing structure should be set to attempt to continue as if everything is fine.
+  // This is a lot of the time meaningless as any further operation is doomed to immediately hit EOF or an unrecoverable error again.
+  // You might as well feed it an empty function if you don't want to bother.
+  void (*clear_func)(void*)
+);
+
 ExternC LIBPRECOMP typedef void* CPrecompOStream;
 ExternC LIBPRECOMP void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
 ExternC LIBPRECOMP void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name);

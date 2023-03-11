@@ -52,6 +52,72 @@ public:
   virtual OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) = 0;
 };
 
+// GenericIStreamLike is an IStreamLike that can be whatever we need it to be, as its constructed with and uses arbitrary functions using an arbitrary backing structure.
+// It's meant to allow ultimate and unlimited flexibility. Where are we reading from? Memory? A socket? A file? Some other type of handle? Data piped from other process?
+// Only who constructed the instance knows! What is the difference from just implementing IStreamLike? That we can expose a function to create these from plain C!
+class GenericIStreamLike: public IStreamLike {
+private:
+  void* backing_structure;
+  size_t _gcount = 0;
+  bool _bad = false;
+
+  std::function<size_t(void*, char*, long long)> read_func;
+  std::function<int(void*)> get_func;
+  std::function<int(void*, long long, int)> seekg_func;
+  std::function<long long(void*)> tellg_func;
+
+  std::function<bool(void*)> eof_func;
+  std::function<bool(void*)> bad_func;
+  std::function<void(void*)> clear_func;
+public:
+  GenericIStreamLike(
+    void* backing_structure_,
+    std::function<size_t(void*, char*, long long)> read_func_,
+    std::function<int(void*)> get_func_,
+    std::function<int(void*, long long, int)> seekg_func_,
+    std::function<long long(void*)> tellg_func_,
+
+    std::function<bool(void*)> eof_func_,
+    std::function<bool(void*)> bad_func_,
+    std::function<void(void*)> clear_func_
+  ): backing_structure(backing_structure_), read_func(std::move(read_func_)), get_func(std::move(get_func_)), seekg_func(std::move(seekg_func_)),
+     tellg_func(std::move(tellg_func_)), eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+
+  IStreamLike& read(char* buff, std::streamsize count) override  {
+    _gcount = read_func(backing_structure, buff, count);
+    return *this;
+  }
+
+  std::istream::int_type get() override {
+    auto chr = get_func(backing_structure);
+    _gcount = chr != EOF ? 1 : 0;
+    return chr;
+  }
+
+  std::streamsize gcount() override { return _gcount; }
+
+  IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    auto result = seekg_func(backing_structure, offset, dir);
+    if (result != 0) _bad = true;
+    return *this;
+  }
+
+  std::istream::pos_type tellg() override {
+    return tellg_func(backing_structure);
+  }
+
+  bool eof() override { return eof_func(backing_structure); }
+  bool bad() override {
+    if (bad_func(backing_structure)) _bad = true;
+    return _bad;
+  }
+  bool good() override { return !eof() && !bad(); }
+  void clear() override {
+    _bad = false;
+    clear_func(backing_structure);
+  }
+};
+
 template <typename T>
 class WrappedStream: public StreamLikeCommon {
 protected:
