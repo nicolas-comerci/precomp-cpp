@@ -55,6 +55,12 @@ std::string input_file_name;
 std::string output_file_name;
 int otf_xz_filter_used_count = 0;
 
+void(*log_output_func)(const std::string&) = &print_to_console;
+
+void print_to_stderr(const std::string& msg) {
+  std::cerr << msg;
+}
+
 std::string libprecomp_error_msg(int error_code)
 {
   return make_cstyle_format_string("\nERROR %i: %s", error_code, precomp_error_msg(error_code).c_str());
@@ -144,7 +150,7 @@ bool file_exists(const char* filename) {
 }
 
 [[noreturn]] void ctrl_c_handler(int sig) {
-  print_to_console("\n\nCTRL-C detected\n");
+  log_output_func("\n\nCTRL-C detected\n");
   (void) signal(SIGINT, SIG_DFL);
 
   throw std::runtime_error(libprecomp_error_msg(ERR_CTRL_C));
@@ -153,21 +159,21 @@ bool file_exists(const char* filename) {
 // nice time output, input t in ms
 // 2^32 ms maximum, so will display incorrect negative values after about 49 days
 void printf_time(long long t) {
-  print_to_console("Time: ");
+  log_output_func("Time: ");
   if (t < 1000) { // several milliseconds
-    print_to_console("%li millisecond(s)\n", (long)t);
+    log_output_func(make_cstyle_format_string("%li millisecond(s)\n", (long)t));
   }
   else if (t < 1000 * 60) { // several seconds
-    print_to_console("%li second(s), %li millisecond(s)\n", (long)(t / 1000), (long)(t % 1000));
+    log_output_func(make_cstyle_format_string("%li second(s), %li millisecond(s)\n", (long)(t / 1000), (long)(t % 1000)));
   }
   else if (t < 1000 * 60 * 60) { // several minutes
-    print_to_console("%li minute(s), %li second(s)\n", (long)(t / (1000 * 60)), (long)((t / 1000) % 60));
+    log_output_func(make_cstyle_format_string("%li minute(s), %li second(s)\n", (long)(t / (1000 * 60)), (long)((t / 1000) % 60)));
   }
   else if (t < 1000 * 60 * 60 * 24) { // several hours
-    print_to_console("%li hour(s), %li minute(s), %li second(s)\n", (long)(t / (1000 * 60 * 60)), (long)((t / (1000 * 60)) % 60), (long)((t / 1000) % 60));
+    log_output_func(make_cstyle_format_string("%li hour(s), %li minute(s), %li second(s)\n", (long)(t / (1000 * 60 * 60)), (long)((t / (1000 * 60)) % 60), (long)((t / 1000) % 60)));
   }
   else {
-    print_to_console("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000 * 60 * 60 * 24)), (long)((t / (1000 * 60 * 60)) % 24), (long)((t / (1000 * 60)) % 60));
+    log_output_func(make_cstyle_format_string("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000 * 60 * 60 * 24)), (long)((t / (1000 * 60 * 60)) % 24), (long)((t / (1000 * 60)) % 60)));
   }
 }
 
@@ -180,7 +186,7 @@ std::string next_work_sign() {
 
 std::string current_progress_txt;
 void delete_current_progress_text() {
-  print_to_console(std::string(current_progress_txt.length(), '\b'));
+  log_output_func(std::string(current_progress_txt.length(), '\b'));
 }
 
 long long sec_time;
@@ -201,12 +207,12 @@ void print_results(CPrecomp& precomp_mgr, bool print_new_size) {
   if (print_new_size && output_file_name != "stdout") {
     auto fout_length = std::filesystem::file_size(output_file_name.c_str());
     std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "     \n";
-    print_to_console("100.00% - " + result_print);
+    log_output_func("100.00% - " + result_print);
   }
   else {
-    print_to_console("100.00%%");
+    log_output_func("100.00%%");
   }
-  print_to_console("\nDone.\n");
+  log_output_func("\nDone.\n");
   printf_time(get_time_ms() - precomp_mgr.start_time);
 }
 
@@ -216,24 +222,24 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
 
   if (!precomp_context->anything_was_used) {
     if (!precomp_context->non_zlib_was_used) {
-      print_to_console("\nNone of the given compression and memory levels could be used.\n");
-      print_to_console("There will be no gain compressing the output file.\n");
+      log_output_func("\nNone of the given compression and memory levels could be used.\n");
+      log_output_func("There will be no gain compressing the output file.\n");
     } else {
       if ((!precomp_mgr.max_recursion_depth_reached) && (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth)) {
-          print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-          print_to_console("-d");
-          print_to_console("%i\n", precomp_mgr.max_recursion_depth_used);
+          log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+          log_output_func("-d");
+          log_output_func(make_cstyle_format_string("%i\n", precomp_mgr.max_recursion_depth_used));
       }
     }
     if (precomp_mgr.max_recursion_depth_reached) {
-      print_to_console("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth);
+      log_output_func(make_cstyle_format_string("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth));
     }
     return;
   }
   
   int level_count = 0;
-  print_to_console("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-  print_to_console("-zl");
+  log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+  log_output_func("-zl");
 
   std::string disable_methods;
   std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
@@ -252,26 +258,26 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
       if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
   }
   if ( disable_methods.length() > 0 ) {
-      print_to_console(" -t-%s",disable_methods.c_str());
+      log_output_func(make_cstyle_format_string(" -t-%s",disable_methods.c_str()));
   }
 
   if (precomp_mgr.max_recursion_depth_reached) {
-      print_to_console("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth);
+      log_output_func(make_cstyle_format_string("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth));
   } else if (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth) {
-      print_to_console(" -d");
-      print_to_console("%i", precomp_mgr.max_recursion_depth_used);
+      log_output_func(" -d");
+      log_output_func(make_cstyle_format_string("%i", precomp_mgr.max_recursion_depth_used));
   }
 
   if ((level_count == 1) && (!precomp_switches.fast_mode)) {
-      print_to_console("\n\nFast mode does exactly the same for this file, only faster.\n");
+      log_output_func("\n\nFast mode does exactly the same for this file, only faster.\n");
   }
 
-  print_to_console("\n");
+  log_output_func("\n");
 }
 
 void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
   auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
-  print_to_console("\nRecompressed streams: %i/%i\n", precomp_statistics->recompressed_streams_count, precomp_statistics->decompressed_streams_count);
+  log_output_func(make_cstyle_format_string("\nRecompressed streams: %i/%i\n", precomp_statistics->recompressed_streams_count, precomp_statistics->decompressed_streams_count));
 
   if ((precomp_statistics->recompressed_streams_count > 0) || (precomp_statistics->decompressed_streams_count > 0)) {
     std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{ {
@@ -298,7 +304,7 @@ void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
       unsigned int recompressed_count = std::get<2>(format_stats);
       std::string format_tag = std::get<3>(format_stats);
       if (condition && ((recompressed_count > 0) || (decompressed_count > 0)))
-        print_to_console(format_tag + " streams: " + std::to_string(recompressed_count) + "/" + std::to_string(decompressed_count) + "\n");
+        log_output_func(format_tag + " streams: " + std::to_string(recompressed_count) + "/" + std::to_string(decompressed_count) + "\n");
     }
   }
 
@@ -308,9 +314,9 @@ void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
 void log_handler(PrecompLoggingLevels level, char* msg) {
   if (level >= PRECOMP_DEBUG_LOG) {
     // This way even with debug logging we keep the progress percent with work sign at the end
-    print_to_console("\n" + std::string(msg) + "\n" + current_progress_txt);
+    log_output_func("\n" + std::string(msg) + "\n" + current_progress_txt);
   } else {
-    print_to_console(msg);
+    log_output_func(msg);
   }
 }
 
@@ -324,17 +330,17 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   int i, j;
   bool appended_pcf = false;
 
-  print_to_console("\n");
+  log_output_func("\n");
   if (V_MINOR2 == 0) {
-    print_to_console("Precomp v%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_OS, V_BIT, V_STATE);
+    log_output_func(make_cstyle_format_string("Precomp v%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_OS, V_BIT, V_STATE));
   }
   else {
-    print_to_console("Precomp v%i.%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_MINOR2, V_OS, V_BIT, V_STATE);
+    log_output_func(make_cstyle_format_string("Precomp v%i.%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_MINOR2, V_OS, V_BIT, V_STATE));
   }
-  print_to_console(" - %s\n", V_MSG);
-  print_to_console("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
-  print_to_console("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
-  print_to_console("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
+  log_output_func(make_cstyle_format_string(" - %s\n", V_MSG));
+  log_output_func("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
+  log_output_func("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
+  log_output_func("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
 
   bool valid_syntax = false;
   bool input_file_given = false;
@@ -532,8 +538,13 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       }
       case 'V':
       {
-        PRECOMP_VERBOSITY_LEVEL = PRECOMP_DEBUG_LOG;
-        if (argv[i][2] != 0) { // Extra Parameters?
+        if (strlen(argv[i]) == 2) {
+          PRECOMP_VERBOSITY_LEVEL = PRECOMP_DEBUG_LOG;
+        }
+        else if (strlen(argv[i]) == 8 && parsePrefixText(argv[i] + 1, "vstderr")) {
+          log_output_func = &print_to_stderr;
+        }
+        else { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
@@ -722,53 +733,54 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   }
 
   if (!valid_syntax) {
-    print_to_console("Usage: precomp [-switches] input_file\n\n");
+    log_output_func("Usage: precomp [-switches] input_file\n\n");
     if (long_help) {
-      print_to_console("Switches (and their <default values>):\n");
+      log_output_func("Switches (and their <default values>):\n");
     }
     else {
-      print_to_console("Common switches (and their <default values>):\n");
+      log_output_func("Common switches (and their <default values>):\n");
     }
-    print_to_console("  comfort      Read input stream for a PCF header and recompress original stream if found\n");
-    print_to_console("               (ignoring any compression parameters), if not precompress the stream instead\n");
-    print_to_console("  r            \"Recompress\" PCF file (restore original file)\n");
-    print_to_console("  o[filename]  Write output to [filename] <[input_file].pcf or file in header>\n");
-    print_to_console("  e            preserve original extension of input name for output name <off>\n");
-    print_to_console("  v            Verbose (debug) mode <off>\n");
-    print_to_console("  d[depth]     Set maximal recursion depth <10>\n");
-    //print_to_console("  zl[1..9][1..9] zLib levels to try for compression (comma separated) <all>\n");
+    log_output_func("  comfort      Read input stream for a PCF header and recompress original stream if found\n");
+    log_output_func("               (ignoring any compression parameters), if not precompress the stream instead\n");
+    log_output_func("  r            \"Recompress\" PCF file (restore original file)\n");
+    log_output_func("  o[filename]  Write output to [filename] <[input_file].pcf or file in header>\n");
+    log_output_func("  e            preserve original extension of input name for output name <off>\n");
+    log_output_func("  v            Verbose (debug) mode <off>\n");
+    log_output_func("  vstderr      Output messages to stderr instead of directly to the console <off>\n");
+    log_output_func("  d[depth]     Set maximal recursion depth <10>\n");
+    //log_output_func("  zl[1..9][1..9] zLib levels to try for compression (comma separated) <all>\n");
     if (long_help) {
-      print_to_console("  pfmeta[amount] Split deflate streams into meta blocks of this size in KiB <2048>\n");
-      print_to_console("  pfverify       Force preflate to verify its generated reconstruction data\n");
+      log_output_func("  pfmeta[amount] Split deflate streams into meta blocks of this size in KiB <2048>\n");
+      log_output_func("  pfverify       Force preflate to verify its generated reconstruction data\n");
     }
-    print_to_console("  intense      Detect raw zLib headers, too. Slower and more sensitive <off>\n");
+    log_output_func("  intense      Detect raw zLib headers, too. Slower and more sensitive <off>\n");
     if (long_help) {
-      print_to_console("  brute        Brute force zLib detection. VERY Slow and most sensitive <off>\n");
+      log_output_func("  brute        Brute force zLib detection. VERY Slow and most sensitive <off>\n");
     }
-    print_to_console("  t[+-][pzgnfjsmb3] Compression type switch <all enabled>\n");
-    print_to_console("              t+ = enable these types only, t- = enable all types except these\n");
-    print_to_console("              P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG\n");
-    print_to_console("              S = SWF, M = MIME Base64, B = bZip2, 3 = MP3\n");
+    log_output_func("  t[+-][pzgnfjsmb3] Compression type switch <all enabled>\n");
+    log_output_func("              t+ = enable these types only, t- = enable all types except these\n");
+    log_output_func("              P = PDF, Z = ZIP, G = GZip, N = PNG, F = GIF, J = JPG\n");
+    log_output_func("              S = SWF, M = MIME Base64, B = bZip2, 3 = MP3\n");
 
     if (!long_help) {
-      print_to_console("  longhelp     Show long help\n");
+      log_output_func("  longhelp     Show long help\n");
     }
     else {
-      print_to_console("  f            Fast mode, use first found compression lvl for all streams <off>\n");
-      print_to_console("  i[pos]       Ignore stream at input file position [pos] <none>\n");
-      print_to_console("  s[size]      Set minimal identical byte size to [size] <4 (64 intense mode)>\n");
-      print_to_console("  pdfbmp[+-]   Wrap a BMP header around PDF images <off>\n");
-      print_to_console("  progonly[+-] Recompress progressive JPGs only (useful for PAQ) <off>\n");
-      print_to_console("  mjpeg[+-]    Insert huffman table for MJPEG recompression <on>\n");
-      print_to_console("  brunsli[+-]  Prefer brunsli to packJPG for JPG streams <on>\n");
-      print_to_console("  brotli[+-]   Use brotli to compress metadata in JPG streams <off>\n");
-      print_to_console("  packjpg[+-]  Use packJPG for JPG streams and fallback if brunsli fails <on>\n");
-      print_to_console("\n");
-      print_to_console("  You can use an optional number following -intense and -brute to set a\n");
-      print_to_console("  limit for how deep in recursion they should be used. E.g. -intense0 means\n");
-      print_to_console("  that intense mode will be used but not in recursion, -intense2 that only\n");
-      print_to_console("  streams up to recursion depth 2 will be treated intense (3 or higher in\n");
-      print_to_console("  this case won't). Using a sensible setting here can save you some time.\n");
+      log_output_func("  f            Fast mode, use first found compression lvl for all streams <off>\n");
+      log_output_func("  i[pos]       Ignore stream at input file position [pos] <none>\n");
+      log_output_func("  s[size]      Set minimal identical byte size to [size] <4 (64 intense mode)>\n");
+      log_output_func("  pdfbmp[+-]   Wrap a BMP header around PDF images <off>\n");
+      log_output_func("  progonly[+-] Recompress progressive JPGs only (useful for PAQ) <off>\n");
+      log_output_func("  mjpeg[+-]    Insert huffman table for MJPEG recompression <on>\n");
+      log_output_func("  brunsli[+-]  Prefer brunsli to packJPG for JPG streams <on>\n");
+      log_output_func("  brotli[+-]   Use brotli to compress metadata in JPG streams <off>\n");
+      log_output_func("  packjpg[+-]  Use packJPG for JPG streams and fallback if brunsli fails <on>\n");
+      log_output_func("\n");
+      log_output_func("  You can use an optional number following -intense and -brute to set a\n");
+      log_output_func("  limit for how deep in recursion they should be used. E.g. -intense0 means\n");
+      log_output_func("  that intense mode will be used but not in recursion, -intense2 that only\n");
+      log_output_func("  streams up to recursion depth 2 will be treated intense (3 or higher in\n");
+      log_output_func("  this case won't). Using a sensible setting here can save you some time.\n");
     }
 
     exit(1);
@@ -780,17 +792,17 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   }
   else {
     if (file_exists(output_file_name.c_str())) {
-      print_to_console("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name.c_str());
+      log_output_func(make_cstyle_format_string("Output file \"%s\" exists. Overwrite (y/n)? ", output_file_name.c_str()));
       char ch = get_char_with_echo();
       if ((ch != 'Y') && (ch != 'y')) {
-        print_to_console("\n");
+        log_output_func("\n");
         exit(0);
       }
       else {
 #ifndef __unix
-        print_to_console("\n\n");
+        log_output_func("\n\n");
 #else
-        print_to_console("\n");
+        log_output_func("\n");
 #endif
       }
     }
@@ -805,20 +817,20 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
   PrecompSetOutStream(&precomp_mgr, output_stream, output_file_name.c_str());
 
 
-  print_to_console("Input file: %s\n", input_file_name.c_str());
-  print_to_console("Output file: %s\n\n", output_file_name.c_str());
+  log_output_func(make_cstyle_format_string("Input file: %s\n", input_file_name.c_str()));
+  log_output_func(make_cstyle_format_string("Output file: %s\n\n", output_file_name.c_str()));
   if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
     if (min_ident_size_set) {
-      print_to_console("\n");
-      print_to_console("Minimal ident size set to %i bytes\n", precomp_switches.min_ident_size);
+      log_output_func("\n");
+      log_output_func(make_cstyle_format_string("Minimal ident size set to %i bytes\n", precomp_switches.min_ident_size));
     }
     if (!ignore_list.empty()) {
-      print_to_console("\n");
-      print_to_console("Ignore position list:\n");
+      log_output_func("\n");
+      log_output_func("Ignore position list:\n");
       for (auto ignore_pos : ignore_list) {
         std::cout << ignore_pos << std::endl;
       }
-      print_to_console("\n");
+      log_output_func("\n");
     }
   }
 
@@ -837,7 +849,7 @@ int main(int argc, char* argv[])
   PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
     auto new_progress_txt = get_progress_txt(percent);
     if (!new_progress_txt) return;
-    print_to_console(current_progress_txt);
+    log_output_func(current_progress_txt);
   });
   PrecompSetLoggingCallback(&log_handler);
   int return_errorlevel = 0;
@@ -881,8 +893,8 @@ int main(int argc, char* argv[])
   }
   catch (const std::runtime_error& err)
   {
-    print_to_console(err.what());
-    print_to_console("\n");
+    log_output_func(err.what());
+    log_output_func("\n");
     return_errorlevel = return_errorlevel == 0 ? 1 : return_errorlevel;
   }
 
