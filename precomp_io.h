@@ -80,42 +80,18 @@ public:
     std::function<bool(void*)> eof_func_,
     std::function<bool(void*)> bad_func_,
     std::function<void(void*)> clear_func_
-  ): backing_structure(backing_structure_), read_func(std::move(read_func_)), get_func(std::move(get_func_)), seekg_func(std::move(seekg_func_)),
-     tellg_func(std::move(tellg_func_)), eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+  );
 
-  IStreamLike& read(char* buff, std::streamsize count) override  {
-    _gcount = read_func(backing_structure, buff, count);
-    return *this;
-  }
+  GenericIStreamLike& read(char* buff, std::streamsize count) override;
+  std::istream::int_type get() override;
+  std::streamsize gcount() override;
+  GenericIStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+  std::istream::pos_type tellg() override;
 
-  std::istream::int_type get() override {
-    auto chr = get_func(backing_structure);
-    _gcount = chr != EOF ? 1 : 0;
-    return chr;
-  }
-
-  std::streamsize gcount() override { return _gcount; }
-
-  IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
-    auto result = seekg_func(backing_structure, offset, dir);
-    if (result != 0) _bad = true;
-    return *this;
-  }
-
-  std::istream::pos_type tellg() override {
-    return tellg_func(backing_structure);
-  }
-
-  bool eof() override { return eof_func(backing_structure); }
-  bool bad() override {
-    if (bad_func(backing_structure)) _bad = true;
-    return _bad;
-  }
-  bool good() override { return !eof() && !bad(); }
-  void clear() override {
-    _bad = false;
-    clear_func(backing_structure);
-  }
+  bool eof() override;
+  bool bad() override;
+  bool good() override;
+  void clear() override;
 };
 
 // Analogue of GenericIStreamLike for OStreamLike
@@ -144,38 +120,18 @@ public:
     std::function<bool(void*)> eof_func_,
     std::function<bool(void*)> bad_func_,
     std::function<void(void*)> clear_func_
-  ): backing_structure(backing_structure_), write_func(std::move(write_func_)), put_func(std::move(put_func_)),
-     tellp_func(std::move(tellp_func_)), seekp_func(std::move(seekp_func_)),
-     eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+  );
 
-  OStreamLike& write(const char* buf, std::streamsize count) override {
-    write_func(backing_structure, buf, count);
-    return *this;
-  }
+  GenericOStreamLike& write(const char* buf, std::streamsize count) override;
+  GenericOStreamLike& put(char chr) override;
+  void flush() override;
+  std::ostream::pos_type tellp() override;
+  GenericOStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 
-  OStreamLike& put(char chr) override {
-    put_func(backing_structure, chr);
-    return *this;
-  }
-
-  void flush() override { flush_func(backing_structure); }
-  std::ostream::pos_type tellp() override { return tellp_func(backing_structure); }
-  OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
-    auto result = seekp_func(backing_structure, offset, dir);
-    if (result != 0) _bad = true;
-    return *this;
-  }
-
-  bool eof() override { return eof_func(backing_structure); }
-  bool bad() override {
-    if (bad_func(backing_structure)) _bad = true;
-    return _bad;
-  }
-  bool good() override { return !eof() && !bad(); }
-  void clear() override {
-    _bad = false;
-    clear_func(backing_structure);
-  }
+  bool eof() override;
+  bool bad() override;
+  bool good() override;
+  void clear() override;
 };
 
 template <typename T>

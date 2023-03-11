@@ -31,6 +31,84 @@ void fseek64(FILE* file_ptr, unsigned long long pos, std::ios_base::seekdir dir)
 #endif
 }
 
+GenericIStreamLike::GenericIStreamLike(
+  void* backing_structure_,
+  std::function<size_t(void*, char*, long long)> read_func_,
+  std::function<int(void*)> get_func_,
+  std::function<int(void*, long long, int)> seekg_func_,
+  std::function<long long(void*)> tellg_func_,
+
+  std::function<bool(void*)> eof_func_,
+  std::function<bool(void*)> bad_func_,
+  std::function<void(void*)> clear_func_
+) : backing_structure(backing_structure_), read_func(std::move(read_func_)), get_func(std::move(get_func_)), seekg_func(std::move(seekg_func_)),
+tellg_func(std::move(tellg_func_)), eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+GenericIStreamLike& GenericIStreamLike::read(char* buff, std::streamsize count) {
+  _gcount = read_func(backing_structure, buff, count);
+  return *this;
+}
+std::istream::int_type GenericIStreamLike::get() {
+  auto chr = get_func(backing_structure);
+  _gcount = chr != EOF ? 1 : 0;
+  return chr;
+}
+std::streamsize GenericIStreamLike::gcount() { return _gcount; }
+GenericIStreamLike& GenericIStreamLike::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  auto result = seekg_func(backing_structure, offset, dir);
+  if (result != 0) _bad = true;
+  return *this;
+}
+std::istream::pos_type GenericIStreamLike::tellg() { return tellg_func(backing_structure); }
+bool GenericIStreamLike::eof() { return eof_func(backing_structure); }
+bool GenericIStreamLike::bad() {
+  if (bad_func(backing_structure)) _bad = true;
+  return _bad;
+}
+bool GenericIStreamLike::good() { return !eof() && !bad(); }
+void GenericIStreamLike::clear() {
+  _bad = false;
+  clear_func(backing_structure);
+}
+
+GenericOStreamLike::GenericOStreamLike(
+  void* backing_structure_,
+  std::function<size_t(void*, char const*, long long)> write_func_,
+  std::function<int(void*, int)> put_func_,
+  std::function<long long(void*)> tellp_func_,
+  std::function<int(void*, long long, int)> seekp_func_,
+
+  std::function<bool(void*)> eof_func_,
+  std::function<bool(void*)> bad_func_,
+  std::function<void(void*)> clear_func_
+) : backing_structure(backing_structure_), write_func(std::move(write_func_)), put_func(std::move(put_func_)),
+tellp_func(std::move(tellp_func_)), seekp_func(std::move(seekp_func_)),
+eof_func(std::move(eof_func_)), bad_func(std::move(bad_func_)), clear_func(std::move(clear_func_)) {}
+GenericOStreamLike& GenericOStreamLike::write(const char* buf, std::streamsize count) {
+  write_func(backing_structure, buf, count);
+  return *this;
+}
+GenericOStreamLike& GenericOStreamLike::put(char chr) {
+  put_func(backing_structure, chr);
+  return *this;
+}
+void GenericOStreamLike::flush() { flush_func(backing_structure); }
+std::ostream::pos_type GenericOStreamLike::tellp() { return tellp_func(backing_structure); }
+GenericOStreamLike& GenericOStreamLike::seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) {
+  auto result = seekp_func(backing_structure, offset, dir);
+  if (result != 0) _bad = true;
+  return *this;
+}
+bool GenericOStreamLike::eof() { return eof_func(backing_structure); }
+bool GenericOStreamLike::bad() {
+  if (bad_func(backing_structure)) _bad = true;
+  return _bad;
+}
+bool GenericOStreamLike::good() { return !eof() && !bad(); }
+void GenericOStreamLike::clear() {
+  _bad = false;
+  clear_func(backing_structure);
+}
+
 WrappedOStream::WrappedOStream(std::ostream* stream, bool take_ownership) : WrappedStream(stream, take_ownership) { }
 WrappedOStream::~WrappedOStream() = default;
 bool WrappedOStream::eof() { return WrappedStream::eof(); }
