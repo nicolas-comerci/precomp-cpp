@@ -773,7 +773,6 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
       log_output_func("  progonly[+-] Recompress progressive JPGs only (useful for PAQ) <off>\n");
       log_output_func("  mjpeg[+-]    Insert huffman table for MJPEG recompression <on>\n");
       log_output_func("  brunsli[+-]  Prefer brunsli to packJPG for JPG streams <on>\n");
-      log_output_func("  brotli[+-]   Use brotli to compress metadata in JPG streams <off>\n");
       log_output_func("  packjpg[+-]  Use packJPG for JPG streams and fallback if brunsli fails <on>\n");
       log_output_func("\n");
       log_output_func("  You can use an optional number following -intense and -brute to set a\n");
