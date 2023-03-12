@@ -331,19 +331,24 @@ memiostream::membuf::~membuf() {
   if (owns_ptr) delete[] data_ptr;
 }
 std::streambuf::pos_type memiostream::membuf::seekoff(std::streambuf::off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which) {
+  auto new_gptr = gptr();
+  auto new_pptr = pptr();
   if (dir == std::ios_base::cur) {
-    gbump(off);
-    pbump(off);
+    if (which & std::ios_base::in) new_gptr += off;
+    if (which & std::ios_base::out) new_pptr += off;
   }
   else if (dir == std::ios_base::end) {
-    setg(eback(), egptr() + off, egptr());
-    setg(pbase(), epptr() + off, epptr());
+    if (which & std::ios_base::in) new_gptr = egptr() + off;
+    if (which & std::ios_base::out) new_pptr = epptr() + off;
   }
   else if (dir == std::ios_base::beg) {
-    setg(eback(), eback() + off, egptr());
-    setg(pbase(), pbase() + off, epptr());
+    if (which & std::ios_base::in) new_gptr = eback() + off;
+    if (which & std::ios_base::out) new_pptr = pbase() + off;
   }
-  return gptr() - eback();
+  if (new_gptr < eback() || new_gptr > egptr() || new_pptr < pbase() || new_pptr > epptr()) return pos_type(off_type(-1));
+  if (which & std::ios_base::in) setg(eback(), new_gptr, egptr());
+  if (which & std::ios_base::out) setg(pbase(), new_pptr, epptr());
+  return which & std::ios_base::in ? gptr() - eback() : pptr() - epptr();
 }
 std::streambuf::pos_type memiostream::membuf::seekpos(std::streambuf::pos_type sp, std::ios_base::openmode which) {
   return seekoff(sp - pos_type(off_type(0)), std::ios_base::beg, which);
