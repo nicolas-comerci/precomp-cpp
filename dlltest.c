@@ -47,8 +47,8 @@ bool eof_file(void* backing_structure) { feof(backing_structure); }
 bool error_file(void* backing_structure) { ferror(backing_structure); }
 void clear_file_error(void* backing_structure) { clearerr(backing_structure); }
 
-bool set_precomp_input(CPrecomp* precomp_mgr, char* filename, bool use_generic_streams) {
-  FILE* fin = open_input_file(filename, false);
+bool set_precomp_input(CPrecomp* precomp_mgr, char* filename, bool use_generic_streams, bool allow_stdin) {
+  FILE* fin = open_input_file(filename, allow_stdin);
   if (fin == NULL) { return false; }
   if (use_generic_streams) {
     PrecompSetGenericInputStream(precomp_mgr, filename, fin, &read_from_file, &getc_from_file, &seek_file, &tell_file, &eof_file, &error_file, &clear_file_error);
@@ -81,7 +81,7 @@ int precompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   CRecursionContext* context = PrecompGetRecursionContext(precomp_mgr);
   context->fin_length = fileSize64(in_file, &filesize_err);
 
-  bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams);
+  bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams, false);
   if (!input_success) return 1;
 
   bool output_success = set_precomp_output(precomp_mgr, out_file, use_generic_streams);
@@ -97,7 +97,7 @@ int recompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   int filesize_err = 0;
   PrecompGetRecursionContext(precomp_mgr)->fin_length = fileSize64(in_file, &filesize_err);
 
-  bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams);
+  bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams, true);
   if (!input_success) return 1;
 
   bool output_success = set_precomp_output(precomp_mgr, out_file, use_generic_streams);
