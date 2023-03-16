@@ -42,15 +42,16 @@ FILE* open_output_file(char* out_file) {
 size_t read_from_file(void* backing_structure, char* buff, long long count) { return fread(buff, 1, count, backing_structure); }
 int getc_from_file(void* backing_structure) { return fgetc(backing_structure); }
 int seek_file(void* backing_structure, long long pos, int dir) { return fseek(backing_structure, pos, dir); }
-long long tell_file(void* backing_structure) { ftell(backing_structure); }
-bool eof_file(void* backing_structure) { feof(backing_structure); }
-bool error_file(void* backing_structure) { ferror(backing_structure); }
+long long tell_file(void* backing_structure) { return ftell(backing_structure); }
+bool eof_file(void* backing_structure) { return feof(backing_structure); }
+bool error_file(void* backing_structure) { return ferror(backing_structure); }
 void clear_file_error(void* backing_structure) { clearerr(backing_structure); }
 
 bool set_precomp_input(CPrecomp* precomp_mgr, char* filename, bool use_generic_streams, bool allow_stdin) {
   FILE* fin = open_input_file(filename, allow_stdin);
   if (fin == NULL) { return false; }
   if (use_generic_streams) {
+    if (fin == stdin) set_std_handle_binary_mode(STDIN_HANDLE);
     PrecompSetGenericInputStream(precomp_mgr, filename, fin, &read_from_file, &getc_from_file, &seek_file, &tell_file, &eof_file, &error_file, &clear_file_error);
   }
   else {
@@ -67,6 +68,7 @@ bool set_precomp_output(CPrecomp* precomp_mgr, char* filename, bool use_generic_
   FILE* fout = open_output_file(filename);
   if (fout == NULL) { return false; }
   if (use_generic_streams) {
+    if (fout == stdout) set_std_handle_binary_mode(STDOUT_HANDLE);
     PrecompSetGenericOutputStream(precomp_mgr, filename, fout, &write_to_file, &putc_to_file, &seek_file, &tell_file, &eof_file, &error_file, &clear_file_error);
   }
   else {

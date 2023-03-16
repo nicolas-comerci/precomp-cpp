@@ -71,13 +71,10 @@
 // This I shamelessly lifted from https://web.archive.org/web/20090907131154/http://www.cs.toronto.edu:80/~ramona/cosmin/TA/prog/sysconf/
 // (credit to this StackOverflow answer for pointing me to it https://stackoverflow.com/a/1613677)
 // It allows us to portably (at least for Windows/Linux/Mac) set a std stream as binary
-#define STDIN  0
-#define STDOUT 1
-#define STDERR 2
 #ifndef __unix
-# define SET_BINARY_MODE(handle) setmode(handle, O_BINARY)
+void set_std_handle_binary_mode(StdHandles handle) { setmode(handle, O_BINARY); }
 #else
-# define SET_BINARY_MODE(handle) ((void)0)
+void set_std_handle_binary_mode(StdHandles handle) {}
 #endif
 
 PrecompLoggingLevels PRECOMP_VERBOSITY_LEVEL = PRECOMP_NORMAL_LOG;
@@ -288,8 +285,8 @@ Precomp::Precomp(): CPrecomp() {
 }
 
 void Precomp::set_input_stdin() {
-  // Read binary to stdin
-  SET_BINARY_MODE(STDIN);
+  // Read binary from stdin
+  set_std_handle_binary_mode(StdHandles::STDIN_HANDLE);
   auto new_fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   new_fin->rdbuf(std::cin.rdbuf());
   this->get_original_context()->fin = std::move(new_fin);
@@ -311,7 +308,7 @@ void Precomp::set_input_stream(FILE* fhandle, bool take_ownership) {
 void Precomp::set_output_stdout() {
   // Read binary to stdin
   // Write binary to stdout
-  SET_BINARY_MODE(STDOUT);
+  set_std_handle_binary_mode(StdHandles::STDOUT_HANDLE);
   auto new_fout = std::make_unique<ObservableWrappedOStream>(new std::ofstream(), true);
   new_fout->rdbuf(std::cout.rdbuf());
   this->get_original_context()->fout = std::move(new_fout);

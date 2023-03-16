@@ -34,6 +34,19 @@ ExternC LIBPRECOMP void print_to_terminal(const char* fmt, ...);
 
 typedef enum
 {
+  STDIN_HANDLE =  0,
+  STDOUT_HANDLE = 1,
+  STDERR_HANDLE = 2,
+} StdHandles;
+// If you are going to feed Precomp, or output from Precomp using a STD handle, you need to ensure it is set to work in binary mode.
+// On Unix systems this is just how it is, but on Windows it needs to be set explicitly.
+// You can just use this function to ensure your program works in both, if on unix it will just be a no-op.
+// NOTE: Precomp will autodetect if given a FILE*/(i|o)stream that happens to be stdin or stdout, and set binary mode on its own,
+// so you might get away with not calling this at any point, but if you use stderr or a generic input/output stream that autodetection will NOT happen.
+ExternC LIBPRECOMP void set_std_handle_binary_mode(StdHandles handle);
+
+typedef enum
+{
   PRECOMP_NORMAL_LOG,
   PRECOMP_DEBUG_LOG
 } PrecompLoggingLevels;
