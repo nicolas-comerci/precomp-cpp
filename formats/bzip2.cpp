@@ -7,8 +7,8 @@
 
 bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 void bzip2_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
-  auto out_size = recursion_used ? recursion_filesize : precompressed_size;
+  if (recursion_filesize.has_value()) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize.value());
+  auto out_size = recursion_filesize.has_value() ? recursion_filesize.value() : precompressed_size;
   fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
 }
 void bzip2_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
@@ -138,7 +138,7 @@ std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& p
       }
 
       if (have > 0) {
-        if ((unsigned int)identical_bytes_compare < (have >> 1)) {
+        if (static_cast<unsigned int>(identical_bytes_compare) < (have >> 1)) {
           (void)BZ2_bzCompressEnd(&strm);
 
           if ((rek_penalty_bytes_len > 0) && (use_penalty_bytes)) penalty_bytes.resize(rek_penalty_bytes_len);
@@ -189,7 +189,7 @@ std::tuple<long long, long long, std::vector<char>> file_recompress_bzip2(Precom
     // so the ratio is (1000/1000)/(5/1000) = 200 which is too high. With 5 of 1000 decompressed bytes or
     // 1000 of 1000 identical recompressed bytes, ratio would've been 1 and we'd accept it.
 
-    float partial_ratio = ((float)identical_bytes_decomp / decomp_bytes_total) / ((float)identical_bytes / compressed_stream_size);
+    float partial_ratio = (static_cast<float>(identical_bytes_decomp) / decomp_bytes_total) / (static_cast<float>(identical_bytes) / compressed_stream_size);
     if (partial_ratio < 3.0f) {
       best_identical_bytes_decomp = identical_bytes_decomp;
       best_identical_bytes = identical_bytes;
@@ -360,7 +360,6 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
       rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
       result.precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
       result.recursion_filesize = r.file_length;
-      result.recursion_used = true;
     }
     else {
       tmpfile->reopen();
@@ -380,10 +379,10 @@ void get_next_penalty_byte_and_pos(long long& penalty_bytes_index, std::optional
     next_penalty_byte_pos = std::nullopt;
     return;
   }
-  uint32_t pb_pos = (unsigned char)penalty_bytes[penalty_bytes_index] << 24;
-  pb_pos += (unsigned char)penalty_bytes[penalty_bytes_index + 1] << 16;
-  pb_pos += (unsigned char)penalty_bytes[penalty_bytes_index + 2] << 8;
-  pb_pos += (unsigned char)penalty_bytes[penalty_bytes_index + 3];
+  uint32_t pb_pos = static_cast<unsigned char>(penalty_bytes[penalty_bytes_index]) << 24;
+  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 1]) << 16;
+  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 2]) << 8;
+  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 3]);
   next_penalty_byte_pos = pb_pos;
 
   next_penalty_byte = penalty_bytes[penalty_bytes_index + 4];

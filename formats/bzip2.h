@@ -6,8 +6,7 @@
 
 class bzip2_precompression_result : public precompression_result {
 public:
-  bool recursion_used = false;
-  long long recursion_filesize;
+  std::optional<long long> recursion_filesize;
   int compression_level;
 
   explicit bzip2_precompression_result(int compression_level);

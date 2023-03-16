@@ -184,7 +184,7 @@ class RecursionPasstroughStream : public IStreamLike, public OStreamLike {
   // Some of the places we throw might be overkill for general usage, like if trying to read/write past eof, but works for our purposes, at least for now.
   std::thread::id owner_thread_id;
   std::thread thread;
-  int thread_return_code;
+  std::optional<int> thread_return_code;
   std::mutex mtx;
   std::condition_variable data_needed_cv;  // this is used to signal that reads had to stop because all buffered data was already used
   std::condition_variable data_available_cv;  // this is used to signal that writes had to stop because the buffer is full
