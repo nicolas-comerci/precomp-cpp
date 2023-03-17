@@ -332,15 +332,15 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
 
   log_output_func("\n");
   if (V_MINOR2 == 0) {
-    log_output_func(make_cstyle_format_string("Precomp v%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_OS, V_BIT, V_STATE));
+    log_output_func(make_cstyle_format_string("Precomp Neo v%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_OS, V_BIT, V_STATE));
   }
   else {
-    log_output_func(make_cstyle_format_string("Precomp v%i.%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_MINOR2, V_OS, V_BIT, V_STATE));
+    log_output_func(make_cstyle_format_string("Precomp Neo v%i.%i.%i %s %s - %s version", V_MAJOR, V_MINOR, V_MINOR2, V_OS, V_BIT, V_STATE));
   }
   log_output_func(make_cstyle_format_string(" - %s\n", V_MSG));
-  log_output_func("Apache 2.0 License - Copyright 2006-2021 by Christian Schneider\n");
-  log_output_func("  preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
-  log_output_func("  stdin/stdout support fork - Copyright 2022 by Nicolas Comerci\n\n");
+  log_output_func("Apache 2.0 License - Precomp - Copyright 2006-2021 by Christian Schneider\n");
+  log_output_func("  Preflate v0.3.5 support - Copyright 2018 by Dirk Steinke\n");
+  log_output_func("  Precomp Neo fork - Copyright 2022-2023 by Nicolas Comerci\n\n");
 
   bool valid_syntax = false;
   bool input_file_given = false;

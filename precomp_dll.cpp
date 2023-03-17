@@ -354,9 +354,9 @@ void Precomp::call_progress_callback() {
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   if (V_MINOR2 == 0) {
-    sprintf(msg, "Precomp DLL v%i.%i (c) 2006-2021 by Christian Schneider",V_MAJOR,V_MINOR);
+    sprintf(msg, "Precomp Neo Library v%i.%i (c) 2006-2021 by Christian Schneider/2022-2023 by Nicolas Comerci",V_MAJOR,V_MINOR);
   } else {
-    sprintf(msg, "Precomp DLL v%i.%i.%i (c) 2006-2021 by Christian Schneider",V_MAJOR,V_MINOR,V_MINOR2);
+    sprintf(msg, "Precomp Neo Library v%i.%i.%i (c) 2006-2021 by Christian Schneider/2022-2023 by Nicolas Comerci",V_MAJOR,V_MINOR,V_MINOR2);
   }
 }
 
