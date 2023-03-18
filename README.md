@@ -19,8 +19,9 @@ Okay, but in the end what are the changes in this fork?
 -------------------------------------------------------
 - **LibPrecomp C API which allows other programs/libraries to use precomp's capabilities**
     - New libprecomp.h header defines the C API
-    - Precomp is now just a program that uses LibPrecomp, it has no privileged access to LibPrecomp's internals at all
-        - Moved most of the code actually relevant to Precomp from precomp.cpp to precomp_dll.cpp
+    - Precomp is now just a program that uses LibPrecomp, it has no privileged access to LibPrecomp's internals at all.
+        - Moved most of the code actually relevant to Precomp from precomp.cpp to precomp_dll.cpp.
+        - precomp.cpp still actually uses precomp_utils and precomp_io directly so that might be considered privileged access, should be easy to remove.
     - dlltest.cpp is now dlltest.c, a pure C program, still WAY less capable than precomp.cpp, but showcases how LibPrecomp can be used from non C++, actual C.
     - All of the prints to the console/terminal got changed for a rudimentary logging system which allows consumers of the library to get the feedback and decide what to do with it.
         - So we don't spam the library consumer program's terminal with unwanted printing.
@@ -58,6 +59,7 @@ Okay, but in the end what are the changes in this fork?
     - During recompression recursion we don't need to output to a temporary file either, the output is generated from a separate thread that does the recursive recompression and the calling thread reads it as its available.
     - These 2 changes mean that the free space requirements + IO load of recompression is heavily decreased.
     - Bzip2 recompression penalty bytes are patched as the recompressed data is being written, instead of having to seek on the output stream to patch the data (which is not possible on piped output).
+    - Temporary files are prepended with a random string, so multiple instances of precomp can work on the same directory without overwriting/reading other instances files. (fixes https://github.com/schnaader/precomp-cpp/issues/102, very likely renders https://github.com/schnaader/precomp-cpp/issues/74 irrelevant/unnecessary) 
 
 Despite the large amount of changes, Precomp Neo should be mostly compatible and be able to recompress Precomp v0.4.8 PCF files.
 The previously mentioned exceptions apply, OTF compressed files or files using Brotli won't work.

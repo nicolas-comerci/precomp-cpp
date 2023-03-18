@@ -873,7 +873,7 @@ int main(int argc, char* argv[])
     }
 
     }
-    if (return_errorlevel != 0) throw std::runtime_error(libprecomp_error_msg(return_errorlevel));
+    if (return_errorlevel != 0 && !(return_errorlevel == 2 && op == P_PRECOMPRESS)) throw std::runtime_error(libprecomp_error_msg(return_errorlevel));
 
     switch (op) {
 

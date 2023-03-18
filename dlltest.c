@@ -156,6 +156,10 @@ int main(int argc, char* argv[]) {
     if (precomp_ret_code == 0) {
       print_to_terminal("File %s was precompressed successfully to %s.\n", input_file_name, output_file_name);
     }
+    else if (precomp_ret_code == 2) {
+      print_to_terminal("File %s was processed to %s, but nothing was actually precompressed.\n", input_file_name, output_file_name);
+      precomp_ret_code = 0;  // just so we don't report an error later
+    }
   } else {
     print_to_terminal("\nRecompressing %s into %s:\n", input_file_name, output_file_name);
     precomp_ret_code = recompress_file(input_file_name, output_file_name, use_generic_streams);
