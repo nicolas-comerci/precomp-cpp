@@ -97,6 +97,10 @@ typedef struct {
 
   size_t preflate_meta_block_size;
   bool preflate_verify;
+
+  int max_recursion_depth;
+
+  int conversion_to_method;
 } CSwitches;
 
 typedef struct {
@@ -142,42 +146,37 @@ typedef struct {
   unsigned int decompressed_bzip2_count;
   unsigned int decompressed_zlib_count;    // intense mode
   unsigned int decompressed_brute_count;   // brute mode
-} CResultStatistics;
-
-typedef struct {
-  long long start_time;
-  bool header_already_read;
-
-  int conversion_to_method;
 
   // recursion
-  int recursion_depth;
-  int max_recursion_depth;
   int max_recursion_depth_used;
   bool max_recursion_depth_reached;
-} CPrecomp;
+
+  bool header_already_read;
+} CResultStatistics;
+
+typedef struct Precomp Precomp;
 
 void packjpg_mp3_dll_msg();
 
-ExternC LIBPRECOMP CPrecomp* PrecompCreate();
-ExternC LIBPRECOMP void PrecompDestroy(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float));
-ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP Precomp* PrecompCreate();
+ExternC LIBPRECOMP void PrecompDestroy(Precomp* precomp_mgr);
+ExternC LIBPRECOMP void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float));
+ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(Precomp* precomp_mgr);
 // This COPIES the list into the Switches structure, so you are free to well, free the ignore_pos_list memory after setting it
 ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count);
-ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr);
+ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr);
+ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr);
 
 // IMPORTANT!! Input streams for precompression HAVE to be seekable, else it WILL fail.
 // For recompression no seeking is done so in those cases its okay to have input streams that can't seek.
-ExternC LIBPRECOMP typedef void* CPrecompIStream;
-ExternC LIBPRECOMP void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name);
-ExternC LIBPRECOMP void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* input_file_name);
+ExternC LIBPRECOMP typedef void* PrecompIStream;
+ExternC LIBPRECOMP void PrecompSetInputStream(Precomp* precomp_mgr, PrecompIStream istream, const char* input_file_name);
+ExternC LIBPRECOMP void PrecompSetInputFile(Precomp* precomp_mgr, FILE* fhandle, const char* input_file_name);
 // This allows you to customize exactly how you would like data to be fed to Precomp.
 // You can use an instance ptr of anything you may want (Socket, Handle, something custom from your application) and functions you define about how to operate
 // with that instance to do all of the different operations a C++ IStream might do, which is what Precomp uses (sort of).
 ExternC LIBPRECOMP void PrecompSetGenericInputStream(
-  CPrecomp* precomp_mgr, const char* input_file_name, void* backing_structure,
+  Precomp* precomp_mgr, const char* input_file_name, void* backing_structure,
   // The read function uses your backing structure and somehow reads up to the long long param amount of bytes into the char* buffer
   size_t (*read_func)(void*, char*, long long),
   // The get function reads a single character using your backing structure, should return EOF if no more data is to be received anymore
@@ -198,12 +197,12 @@ ExternC LIBPRECOMP void PrecompSetGenericInputStream(
   void (*clear_func)(void*)
 );
 
-ExternC LIBPRECOMP typedef void* CPrecompOStream;
-ExternC LIBPRECOMP void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name);
-ExternC LIBPRECOMP void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name);
+ExternC LIBPRECOMP typedef void* PrecompOStream;
+ExternC LIBPRECOMP void PrecompSetOutStream(Precomp* precomp_mgr, PrecompOStream ostream, const char* output_file_name);
+ExternC LIBPRECOMP void PrecompSetOutputFile(Precomp* precomp_mgr, FILE* fhandle, const char* output_file_name);
 // Same thing as PrecompSetGenericInputStream but for the output
 ExternC LIBPRECOMP void PrecompSetGenericOutputStream(
-  CPrecomp* precomp_mgr, const char* output_file_name, void* backing_structure,
+  Precomp* precomp_mgr, const char* output_file_name, void* backing_structure,
   // The write function gives a buffer and a byte count to your backing structure, which should read that count of bytes from the buffer and write/dump them somewhere
   size_t(*write_func)(void*, char const*, long long),
   // The put function puts a single character into your backing structure
@@ -219,10 +218,9 @@ ExternC LIBPRECOMP void PrecompSetGenericOutputStream(
   void (*clear_func)(void*)
 );
 
-ExternC LIBPRECOMP int PrecompPrecompress(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP int PrecompRecompress(CPrecomp* precomp_mgr);
-ExternC LIBPRECOMP int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg);
+ExternC LIBPRECOMP int PrecompPrecompress(Precomp* precomp_mgr);
+ExternC LIBPRECOMP int PrecompRecompress(Precomp* precomp_mgr);
+ExternC LIBPRECOMP int PrecompReadHeader(Precomp* precomp_mgr, bool seek_to_beg);
 // Mostly useful to run after a successful PrecompReadHeader, to know the original filename of the precompressed file
-ExternC LIBPRECOMP const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr);
-
+ExternC LIBPRECOMP const char* PrecompGetOutputFilename(Precomp* precomp_mgr);
 #endif

@@ -158,32 +158,33 @@ ResultStatistics::ResultStatistics(): CResultStatistics() {
   decompressed_bzip2_count = 0;
   decompressed_zlib_count = 0;    // intense mode
   decompressed_brute_count = 0;   // brute mode
+
+  header_already_read = false;
+
+  max_recursion_depth_used = 0;
+  max_recursion_depth_reached = false;
 }
 
-void PrecompSetInputStream(CPrecomp* precomp_mgr, CPrecompIStream istream, const char* input_file_name) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->input_file_name = input_file_name;
-  internal_precomp_ptr->set_input_stream(static_cast<std::istream*>(istream));
+void PrecompSetInputStream(Precomp* precomp_mgr, PrecompIStream istream, const char* input_file_name) {
+  precomp_mgr->input_file_name = input_file_name;
+  precomp_mgr->set_input_stream(static_cast<std::istream*>(istream));
 }
-void PrecompSetInputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* input_file_name) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->input_file_name = input_file_name;
-  internal_precomp_ptr->set_input_stream(fhandle);
+void PrecompSetInputFile(Precomp* precomp_mgr, FILE* fhandle, const char* input_file_name) {
+  precomp_mgr->input_file_name = input_file_name;
+  precomp_mgr->set_input_stream(fhandle);
 }
 
-void PrecompSetOutStream(CPrecomp* precomp_mgr, CPrecompOStream ostream, const char* output_file_name) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->output_file_name = output_file_name;
-  internal_precomp_ptr->set_output_stream(static_cast<std::ostream*>(ostream));
+void PrecompSetOutStream(Precomp* precomp_mgr, PrecompOStream ostream, const char* output_file_name) {
+  precomp_mgr->output_file_name = output_file_name;
+  precomp_mgr->set_output_stream(static_cast<std::ostream*>(ostream));
 }
-void PrecompSetOutputFile(CPrecomp* precomp_mgr, FILE* fhandle, const char* output_file_name) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->output_file_name = output_file_name;
-  internal_precomp_ptr->set_output_stream(fhandle);
+void PrecompSetOutputFile(Precomp* precomp_mgr, FILE* fhandle, const char* output_file_name) {
+  precomp_mgr->output_file_name = output_file_name;
+  precomp_mgr->set_output_stream(fhandle);
 }
 
 void PrecompSetGenericInputStream(
-  CPrecomp* precomp_mgr, const char* input_file_name, void* backing_structure,
+  Precomp* precomp_mgr, const char* input_file_name, void* backing_structure,
   size_t(*read_func)(void*, char*, long long),
   int (*get_func)(void*),
   int (*seekg_func)(void*, long long, int),
@@ -192,14 +193,13 @@ void PrecompSetGenericInputStream(
   bool (*bad_func)(void*),
   void (*clear_func)(void*)
 ) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->input_file_name = input_file_name;
-  internal_precomp_ptr->get_original_context()->fin = std::make_unique<GenericIStreamLike>(
+  precomp_mgr->input_file_name = input_file_name;
+  precomp_mgr->get_original_context()->fin = std::make_unique<GenericIStreamLike>(
     backing_structure, read_func, get_func, seekg_func, tellg_func, eof_func, bad_func, clear_func);
 }
 
 void PrecompSetGenericOutputStream(
-  CPrecomp* precomp_mgr, const char* output_file_name, void* backing_structure,
+  Precomp* precomp_mgr, const char* output_file_name, void* backing_structure,
   size_t(*write_func)(void*, char const*, long long),
   int (*put_func)(void*, int),
   int (*seekp_func)(void*, long long, int),
@@ -208,16 +208,14 @@ void PrecompSetGenericOutputStream(
   bool (*bad_func)(void*),
   void (*clear_func)(void*)
 ) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  internal_precomp_ptr->output_file_name = output_file_name;
+  precomp_mgr->output_file_name = output_file_name;
   auto gen_ostream = std::make_unique<GenericOStreamLike>(backing_structure, write_func, put_func, tellp_func, seekp_func, eof_func, bad_func, clear_func);
-  internal_precomp_ptr->get_original_context()->fout = std::unique_ptr<ObservableOStream>(new ObservableOStreamWrapper(gen_ostream.release(), true));
+  precomp_mgr->get_original_context()->fout = std::unique_ptr<ObservableOStream>(new ObservableOStreamWrapper(gen_ostream.release(), true));
   
 }
 
-const char* PrecompGetOutputFilename(CPrecomp* precomp_mgr) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  return internal_precomp_ptr->output_file_name.c_str();
+const char* PrecompGetOutputFilename(Precomp* precomp_mgr) {
+  return precomp_mgr->output_file_name.c_str();
 }
 
 //Switches constructor
@@ -249,6 +247,8 @@ Switches::Switches(): CSwitches() {
   // preflate config
   preflate_meta_block_size = 1 << 21; // 2 MB blocks by default
   preflate_verify = false;
+
+  max_recursion_depth = 10;
 }
 
 RecursionContext::RecursionContext(float min_percent, float max_percent, Precomp& precomp_):
@@ -276,12 +276,8 @@ std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
   return recursion_contexts_stack[0];
 }
 
-Precomp::Precomp(): CPrecomp() {
-  header_already_read = false;
+Precomp::Precomp() {
   recursion_depth = 0;
-  max_recursion_depth = 10;
-  max_recursion_depth_used = 0;
-  max_recursion_depth_reached = false;
 }
 
 void Precomp::set_input_stdin() {
@@ -872,7 +868,7 @@ int decompress_file(RecursionContext& precomp_ctx)
 }
 
 void read_header(Precomp& precomp_mgr) {
-  if (precomp_mgr.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
+  if (precomp_mgr.statistics.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
   unsigned char hdr[3];
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
   if ((hdr[0] == 'P') && (hdr[1] == 'C') && (hdr[2] == 'F')) {
@@ -905,7 +901,7 @@ void read_header(Precomp& precomp_mgr) {
   if (precomp_mgr.output_file_name.empty()) {
     precomp_mgr.output_file_name = header_filename;
   }
-  precomp_mgr.header_already_read = true;
+  precomp_mgr.statistics.header_already_read = true;
 }
 
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
@@ -1038,8 +1034,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   bool rescue_anything_was_used = false;
   bool rescue_non_zlib_was_used = false;
 
-  if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.max_recursion_depth) {
-    precomp_mgr.max_recursion_depth_reached = true;
+  if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.switches.max_recursion_depth) {
+    precomp_mgr.statistics.max_recursion_depth_reached = true;
     return tmp_r;
   }
 
@@ -1088,8 +1084,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     remove(tmp_r.file_name.c_str());
     tmp_r.file_name = "";
   } else {
-    if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.max_recursion_depth_used)
-      precomp_mgr.max_recursion_depth_used = (precomp_mgr.recursion_depth + 1);
+    if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.statistics.max_recursion_depth_used)
+      precomp_mgr.statistics.max_recursion_depth_used = (precomp_mgr.recursion_depth + 1);
     // get recursion file size
     tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
   }
@@ -1311,37 +1307,29 @@ long long fin_fget_vlint(IStreamLike& input) {
 }
 
 // C API STUFF
-CPrecomp* PrecompCreate() { return new Precomp(); }
-void PrecompSetProgressCallback(CPrecomp* precomp_mgr, void(*callback)(float)) {
-  reinterpret_cast<Precomp*>(precomp_mgr)->set_progress_callback(callback);
-}
-void PrecompDestroy(CPrecomp* precomp_mgr) {
-  delete precomp_mgr;
-}
-CSwitches* PrecompGetSwitches(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->switches; }
+Precomp* PrecompCreate() { return new Precomp(); }
+void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float)) { precomp_mgr->set_progress_callback(callback); }
+void PrecompDestroy(Precomp* precomp_mgr) { delete precomp_mgr; }
+CSwitches* PrecompGetSwitches(Precomp* precomp_mgr) { return &precomp_mgr->switches; }
 void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count) {
   reinterpret_cast<Switches*>(precomp_switches)->ignore_set = std::set(ignore_pos_list, ignore_pos_list + ignore_post_list_count);
 }
-CRecursionContext* PrecompGetRecursionContext(CPrecomp* precomp_mgr) { return reinterpret_cast<Precomp*>(precomp_mgr)->ctx.get(); }
-CResultStatistics* PrecompGetResultStatistics(CPrecomp* precomp_mgr) { return &reinterpret_cast<Precomp*>(precomp_mgr)->statistics; }
+CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
+CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) { return &precomp_mgr->statistics; }
 
-int PrecompPrecompress(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  return compress_file(*reinterpret_cast<Precomp*>(precomp_mgr));
+int PrecompPrecompress(Precomp* precomp_mgr) {
+  return compress_file(*precomp_mgr);
 }
 
-int PrecompRecompress(CPrecomp* precomp_mgr) {
-  precomp_mgr->start_time = get_time_ms();
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  if (!precomp_mgr->header_already_read) read_header(*internal_precomp_ptr);
-  return decompress_file(*internal_precomp_ptr->ctx);
+int PrecompRecompress(Precomp* precomp_mgr) {
+  if (!precomp_mgr->statistics.header_already_read) read_header(*precomp_mgr);
+  return decompress_file(*precomp_mgr->ctx);
 }
 
-int PrecompReadHeader(CPrecomp* precomp_mgr, bool seek_to_beg) {
-  auto internal_precomp_ptr = reinterpret_cast<Precomp*>(precomp_mgr);
-  if (seek_to_beg) internal_precomp_ptr->ctx->fin->seekg(0, std::ios_base::beg);
+int PrecompReadHeader(Precomp* precomp_mgr, bool seek_to_beg) {
+  if (seek_to_beg) precomp_mgr->ctx->fin->seekg(0, std::ios_base::beg);
   try {
-    read_header(*internal_precomp_ptr);
+    read_header(*precomp_mgr);
   }
   catch (const PrecompError& err) {
     return err.error_code;

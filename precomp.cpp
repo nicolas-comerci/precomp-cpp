@@ -202,7 +202,7 @@ bool get_progress_txt(float percent) {
   return true;
 }
 
-void print_results(CPrecomp& precomp_mgr, bool print_new_size) {
+void print_results(Precomp& precomp_mgr, bool print_new_size, long long start_time) {
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
     auto fout_length = std::filesystem::file_size(output_file_name.c_str());
@@ -213,10 +213,10 @@ void print_results(CPrecomp& precomp_mgr, bool print_new_size) {
     log_output_func("100.00%%");
   }
   log_output_func("\nDone.\n");
-  printf_time(get_time_ms() - precomp_mgr.start_time);
+  printf_time(get_time_ms() - start_time);
 }
 
-void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
+void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
   auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
 
@@ -225,14 +225,14 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
       log_output_func("\nNone of the given compression and memory levels could be used.\n");
       log_output_func("There will be no gain compressing the output file.\n");
     } else {
-      if ((!precomp_mgr.max_recursion_depth_reached) && (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth)) {
+      if ((!precomp_statistics->max_recursion_depth_reached) && (precomp_statistics->max_recursion_depth_used != precomp_switches.max_recursion_depth)) {
           log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
           log_output_func("-d");
-          log_output_func(make_cstyle_format_string("%i\n", precomp_mgr.max_recursion_depth_used));
+          log_output_func(make_cstyle_format_string("%i\n", precomp_statistics->max_recursion_depth_used));
       }
     }
-    if (precomp_mgr.max_recursion_depth_reached) {
-      log_output_func(make_cstyle_format_string("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth));
+    if (precomp_statistics->max_recursion_depth_reached) {
+      log_output_func(make_cstyle_format_string("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_switches.max_recursion_depth));
     }
     return;
   }
@@ -261,11 +261,11 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
       log_output_func(make_cstyle_format_string(" -t-%s",disable_methods.c_str()));
   }
 
-  if (precomp_mgr.max_recursion_depth_reached) {
-      log_output_func(make_cstyle_format_string("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_mgr.max_recursion_depth));
-  } else if (precomp_mgr.max_recursion_depth_used != precomp_mgr.max_recursion_depth) {
+  if (precomp_statistics->max_recursion_depth_reached) {
+      log_output_func(make_cstyle_format_string("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_switches.max_recursion_depth));
+  } else if (precomp_statistics->max_recursion_depth_used != precomp_switches.max_recursion_depth) {
       log_output_func(" -d");
-      log_output_func(make_cstyle_format_string("%i", precomp_mgr.max_recursion_depth_used));
+      log_output_func(make_cstyle_format_string("%i", precomp_statistics->max_recursion_depth_used));
   }
 
   if ((level_count == 1) && (!precomp_switches.fast_mode)) {
@@ -275,7 +275,7 @@ void show_used_levels(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
   log_output_func("\n");
 }
 
-void print_statistics(CPrecomp& precomp_mgr, CSwitches& precomp_switches) {
+void print_statistics(Precomp& precomp_mgr, CSwitches& precomp_switches) {
   auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
   log_output_func(make_cstyle_format_string("\nRecompressed streams: %i/%i\n", precomp_statistics->recompressed_streams_count, precomp_statistics->decompressed_streams_count));
 
@@ -324,7 +324,7 @@ void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long l
   PrecompSwitchesSetIgnoreList(&precomp_switches, ignore_list.data(), ignore_list.size());
 }
 
-int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
+int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
   auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
 
   int i, j;
@@ -392,7 +392,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
         if (recursion_depth_set) {
           throw std::runtime_error(libprecomp_error_msg(ERR_ONLY_SET_RECURSION_DEPTH_ONCE));
         }
-        precomp_mgr.max_recursion_depth = parseIntUntilEnd(argv[i] + 2, "maximal recursion depth", ERR_RECURSION_DEPTH_TOO_BIG);
+        precomp_switches.max_recursion_depth = parseIntUntilEnd(argv[i] + 2, "maximal recursion depth", ERR_RECURSION_DEPTH_TOO_BIG);
         recursion_depth_set = true;
         break;
       }
@@ -843,7 +843,7 @@ int init(CPrecomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* arg
 
 int main(int argc, char* argv[])
 {
-  auto precomp_mgr = std::unique_ptr<CPrecomp, std::function<void(CPrecomp*)>>(PrecompCreate(), [](CPrecomp* ptr) { PrecompDestroy(ptr); });
+  auto precomp_mgr = std::unique_ptr<Precomp, std::function<void(Precomp*)>>(PrecompCreate(), [](Precomp* ptr) { PrecompDestroy(ptr); });
   CSwitches* precomp_switches = PrecompGetSwitches(precomp_mgr.get());
   PrecompSetProgressCallback(precomp_mgr.get(), [](float percent) {
     auto new_progress_txt = get_progress_txt(percent);
@@ -858,6 +858,7 @@ int main(int argc, char* argv[])
 
   try {
     int op = init(*precomp_mgr, *precomp_switches, argc, argv);
+    auto start_time = get_time_ms();
     switch (op) {
 
     case P_PRECOMPRESS:
@@ -879,13 +880,13 @@ int main(int argc, char* argv[])
 
       case P_PRECOMPRESS:
       {
-        print_results(*precomp_mgr, true);
+        print_results(*precomp_mgr, true, start_time);
         print_statistics(*precomp_mgr, *precomp_switches);
         break;
       }
       case P_RECOMPRESS:
       {
-        print_results(*precomp_mgr, false);
+        print_results(*precomp_mgr, false, start_time);
         break;
       }
     }

@@ -99,7 +99,7 @@ public:
   long long uncompressed_bytes_total = 0;
 };
 
-class Precomp: public CPrecomp {
+class Precomp {
   std::function<void(float)> progress_callback;
   void set_input_stdin();
   void set_output_stdout();
@@ -126,6 +126,8 @@ public:
   void call_progress_callback();
 
   int conversion_from_method;
+
+  int recursion_depth = 0;
   
 };
 
