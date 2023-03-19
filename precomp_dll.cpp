@@ -51,6 +51,9 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <unistd.h>
+#include <cstring>
+#include <cstdarg>
+
 #endif
 
 #include "precomp_dll.h"

@@ -3,6 +3,7 @@
 #include "contrib/giflib/precomp_gif.h"
 
 #include <cstddef>
+#include <cstring>
 
 gif_precompression_result::gif_precompression_result() : precompression_result(D_GIF) {}
 void gif_precompression_result::dump_gif_diff_to_outfile(Precomp& precomp_mgr) {

@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <cstring>
 
 bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 void bzip2_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
