@@ -343,7 +343,7 @@ void Precomp::set_progress_callback(std::function<void(float)> callback) {
   progress_callback = callback;
 }
 void Precomp::call_progress_callback() {
-  if (!this->progress_callback) return;
+  if (!this->progress_callback || !this->ctx) return;
   auto context_progress_range = this->ctx->global_max_percent - this->ctx->global_min_percent;
   auto inner_context_progress_percent = static_cast<float>(this->ctx->input_file_pos) / this->ctx->fin_length;
   this->progress_callback(this->ctx->global_min_percent + (context_progress_range * inner_context_progress_percent));
