@@ -56,3 +56,9 @@ cmake-build-release/
 CMakeSettings.json
 cmake-build-minsizerel/
 cmake-build-relwithdebinfo/
+7zPlugin/lzham_codec_devel/lzhamlib/x64/
+7zPlugin/bin/
+7zPlugin/lzham_codec_devel/lzhamdecomp/x64/
+7zPlugin/lzham_codec_devel/lzhamcomp/x64/
+7zPlugin/lzham_codec_devel/lzham7zip/x64/
+7zPlugin/lzham_codec_devel/lzham7zip/lib/
