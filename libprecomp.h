@@ -21,10 +21,12 @@
 #define IMPORT
 #endif
 
-#ifdef PRECOMPDLL
+#if PRECOMPDLL
 #define LIBPRECOMP EXPORT
-#else
+#elif !defined(PRECOMPSTATIC)
 #define LIBPRECOMP IMPORT
+#else
+#define LIBPRECOMP
 #endif
 
 // This is provided as a courtesy for C users, as checking the size of a file in a compliant and portable way is unnecessarily hard, but pretty much trivial for us on C++17

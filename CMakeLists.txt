@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 3.15)
+cmake_policy(SET CMP0091 NEW)
 
 project(precomp)
 
@@ -148,7 +149,7 @@ target_compile_definitions(precomp_dll_shared PRIVATE -DPRECOMPDLL)
 add_library(precomp_dll_static STATIC ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${PREFLATE_SRC}
                                ${BRUNSLI_SRC} ${BROTLI_SRC} ${PRECOMP_UTILS_SRC} ${PRECOMP_IO_SRC} ${FORMAT_HANDLERS_SRC} ${PRECOMP_DLL_SRC} ${LIBPRECOMP_HDR} ${PRECOMP_DLL_HDR})
-target_compile_definitions(precomp_dll_static PRIVATE -DPRECOMPDLL)
+target_compile_definitions(precomp_dll_static PRIVATE -DPRECOMPSTATIC)
 
 add_executable(dlltest ${LIBPRECOMP_HDR} ${DLLTEST_SRC})
 target_link_libraries(dlltest PRIVATE precomp_dll_shared)

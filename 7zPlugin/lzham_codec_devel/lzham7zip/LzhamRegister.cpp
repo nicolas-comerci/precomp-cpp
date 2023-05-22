@@ -1,4 +1,4 @@
-// LzhamRegister.cpp
+// PrecompRegister.cpp
 // Portions of this module are from 7-zip, by Igor Pavlov, which you can download here:
 // http://www.7-zip.org/
 
@@ -13,18 +13,111 @@
 #include "../../CPP/7zip/Common/RegisterCodec.h"
 
 #include "lzham_static_lib.h"
+#include "libprecomp.h"
+#include <precomp_utils.h>
 
 #if 0
 #include <stdio.h>
 #define LZHAMCODEC_DEBUG_OUTPUT 1
 #endif
 
-#define LZHAM_PROPS_VER (Byte)(LZHAM_DLL_VERSION)
+#define PRECOMP_PROPS_VER (Byte)(LZHAM_DLL_VERSION)
+
+UInt64 dumpInStreamToFile(ISequentialInStream* inStream, FILE* outfile) {
+    UInt32 inPos = 0;
+    UInt32 inSize = 0;
+    Byte buffer[512];
+    UInt64 totalInSize = 0;
+
+    for (;;)
+    {
+        if (inPos == inSize)
+        {
+            inPos = inSize = 0;
+            inStream->Read(buffer, 512, &inSize);
+            if (!inSize) break;
+        }
+
+        fwrite(buffer, 1, inSize, outfile);
+        totalInSize += inSize;
+        inSize = 0;
+    }
+    return totalInSize;
+}
 
 namespace NCompress
 {
-   namespace NLzham
+   namespace NPrecomp
    {
+      class StreamWrapper {
+      public:
+          UInt64 streamSize;
+          UInt64 pos;
+      protected:
+          StreamWrapper(UInt64 _StreamSize) : streamSize(_StreamSize), pos(0) {};
+      };
+
+      // Precomp Generic OStream ISequentialInStream implementation stuff
+      class InStreamWrapper : public StreamWrapper {
+      public:
+          ISequentialInStream* inStream;
+          UInt32 inBufferAllocatedSize;
+
+          InStreamWrapper(ISequentialInStream* _inStream, UInt64 _inStreamSize, UInt32 _inBufferAllocatedSize) :
+              inStream(_inStream), StreamWrapper(_inStreamSize), inBufferAllocatedSize(_inBufferAllocatedSize) {}
+      };
+
+      size_t read_from_seqinstream(void* backing_structure, char* buff, long long count) {
+          auto inStreamWrapper = static_cast<InStreamWrapper*>(backing_structure);
+          UInt32 readSize = 0;
+          inStreamWrapper->inStream->Read(buff, count, &readSize);
+          inStreamWrapper->pos += readSize;
+          return readSize;
+      }
+      int getc_from_seqinstream(void* backing_structure) {
+          auto inStreamWrapper = static_cast<InStreamWrapper*>(backing_structure);
+          UInt32 readSize = 0;
+          char buf[1];
+          inStreamWrapper->inStream->Read(buf, 1, &readSize);
+          inStreamWrapper->pos += readSize;
+          return readSize == 1 ? buf[0] : EOF;
+      }
+
+      // Precomp Generic OStream ISequentialOutStream implementation stuff
+      class OutStreamWrapper: public StreamWrapper {
+      public:
+          ISequentialOutStream* outStream;
+
+          OutStreamWrapper(ISequentialOutStream* _outStream, UInt64 _outStreamSize):
+              outStream(_outStream), StreamWrapper(_outStreamSize) {}
+      };
+
+      size_t write_to_seqoutstream(void* outStream, char const* buff, long long count) {
+          auto outStreamWrapper = static_cast<OutStreamWrapper*>(outStream);
+          auto result = WriteStream(outStreamWrapper->outStream, buff, count);
+          outStreamWrapper->pos += count;
+          return result != 0 ? 0 : count;
+      }
+      int putc_to_seqoutstream(void* outStream, int chr) {
+          char buf[1];
+          buf[0] = chr;
+          auto amt_written = write_to_seqoutstream(outStream, buf, 1);
+          return amt_written == 1 ? chr : EOF;
+      }
+
+      // Precomp Generic IStream/OStream shared implementation functions
+
+      // This one is okay because we don't seek on outStreams, and we only use the inStream directly on recompression
+      // and we don't need seeking on recompression so we just return a non implementation
+      int seek_seqstream(void* backing_structure, long long pos, int dir) { return 0; }
+      long long tell_seqstream(void* backing_structure) { return static_cast<StreamWrapper*>(backing_structure)->pos; }
+      bool eof_seqstream(void* backing_structure) {
+          auto streamWrapper = static_cast<StreamWrapper*>(backing_structure);
+          return streamWrapper->pos < streamWrapper->streamSize ? false : true;
+      }
+      bool error_seqstream(void* backing_structure) { return false; }
+      void clear_seqstream_error(void* backing_structure) {}
+
       struct CProps
       {
          CProps() { clear(); }
@@ -32,7 +125,7 @@ namespace NCompress
          void clear() 
 		 { 
 			 memset(this, 0, sizeof(*this)); 
-			 _ver = LZHAM_PROPS_VER; 
+			 _ver = PRECOMP_PROPS_VER; 
 			 _dict_size = 0; 
 			 _level = LZHAM_COMP_LEVEL_UBER; 
 			 _flags = 0; 
@@ -61,8 +154,10 @@ namespace NCompress
          Byte *_outBuf;
          UInt32 _inPos;
          UInt32 _inSize;
+         UInt64 inStreamSize;
          
          lzham_decompress_state_ptr _state;
+         Precomp* _precomp;
 
          CProps _props;
          bool _propsWereSet;
@@ -132,6 +227,7 @@ namespace NCompress
 
       CDecoder::~CDecoder()
       {
+         //if (_precomp) PrecompDestroy(_precomp);
          lzham_decompress_deinit(_state);
          MyFree(_inBuf);
          MyFree(_outBuf);
@@ -179,7 +275,7 @@ namespace NCompress
          if (size != sizeof(CProps))
             return E_FAIL;
 
-         if (pProps->_ver != LZHAM_PROPS_VER)
+         if (pProps->_ver != PRECOMP_PROPS_VER)
             return E_FAIL;
 
          memcpy(&_props, pProps, sizeof(CProps));
@@ -194,6 +290,8 @@ namespace NCompress
          if (!_propsWereSet)
             return E_FAIL;
          
+         _precomp = PrecompCreate();
+
          lzham_decompress_params params;
          memset(&params, 0, sizeof(params));
          params.m_struct_size = sizeof(lzham_decompress_params);
@@ -239,7 +337,38 @@ namespace NCompress
          }
 
          UInt64 startInProgress = _inSizeProcessed;
-         
+
+         Precomp* precomp = PrecompCreate();
+
+         auto filenamePCF = "C:\\whocares.pcf";
+         FILE* fpcf = fopen(filenamePCF, "a+b");
+         UInt64 totalInSize = dumpInStreamToFile(inStream, fpcf);
+         /*
+         InStreamWrapper inStreamWrapper{ inStream, inStreamSize, 0 };
+         PrecompSetGenericInputStream(
+             precomp, "whocares", &inStreamWrapper,
+             &read_from_seqinstream, &getc_from_seqinstream,
+             &seek_seqstream, &tell_seqstream,
+             &eof_seqstream, &error_seqstream, &clear_seqstream_error
+         );
+         */
+         fclose(fpcf);
+         fpcf = fopen(filenamePCF, "rb");
+         PrecompSetInputFile(precomp, fpcf, filenamePCF);
+
+         OutStreamWrapper outStreamWrapper{ outStream, _outSize };
+         PrecompSetGenericOutputStream(
+             precomp, "whocares", &outStreamWrapper,
+             &write_to_seqoutstream, &putc_to_seqoutstream,
+             &seek_seqstream, &tell_seqstream,
+             &eof_seqstream, &error_seqstream, &clear_seqstream_error
+         );
+
+         int result = PrecompRecompress(precomp);
+         //fclose(ftmp);
+         PrecompDestroy(precomp);
+
+         /*
          for (;;)
          {
             bool eofFlag = false;
@@ -289,8 +418,9 @@ namespace NCompress
                RINOK(progress->SetRatioInfo(&inSize, &_outSizeProcessed));
             }
          }
+         */
 
-         return S_OK;
+         return result == 0 ? S_OK : S_FALSE;
       }
 
       STDMETHODIMP CDecoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStream,
@@ -299,6 +429,7 @@ namespace NCompress
          if (_inBuf == 0)
             return E_INVALIDARG;
          SetOutStreamSize(outSize);
+         inStreamSize = *inSize;
          return CodeSpec(inStream, outStream, progress);
       }
       
@@ -378,19 +509,19 @@ namespace NCompress
       }
 #endif
 
-   } // namespace NLzham
+   } // namespace NPrecomp
 } // namespace NCompress
 
 static void *CreateCodec() 
 { 
-   return (void *)(ICompressCoder *)(new NCompress::NLzham::CDecoder); 
+   return (void *)(ICompressCoder *)(new NCompress::NPrecomp::CDecoder); 
 }
 
 #ifndef EXTRACT_ONLY
 
 namespace NCompress
 {
-   namespace NLzham
+   namespace NPrecomp
    {
       class CEncoder:
          public ICompressCoder,
@@ -398,6 +529,7 @@ namespace NCompress
          public ICompressWriteCoderProperties,
          public CMyUnknownImp
       {
+         Precomp* _precomp;
          lzham_compress_state_ptr _state;
          CProps _props;
          bool _dictSizeSet;
@@ -452,6 +584,7 @@ namespace NCompress
 
       CEncoder::~CEncoder()
       {
+         //if (_precomp) PrecompDestroy(_precomp);
          lzham_compress_deinit(_state);
          MyFree(_inBuf);
          MyFree(_outBuf);
@@ -611,6 +744,9 @@ namespace NCompress
 
       HRESULT CEncoder::CreateCompressor()
       {
+          //if (_precomp) PrecompDestroy(_precomp);
+          //_precomp = PrecompCreate();
+
          if (_state)
             lzham_compress_deinit(_state);
 
@@ -672,7 +808,7 @@ namespace NCompress
       }
 
       STDMETHODIMP CEncoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStream,
-         const UInt64 * /* inSize */, const UInt64 * /* outSize */, ICompressProgressInfo *progress)
+         const UInt64* inStreamSize, const UInt64* outStreamSize, ICompressProgressInfo *progress)
       {
          RINOK(CreateCompressor());
          
@@ -681,17 +817,14 @@ namespace NCompress
          UInt64 startInProgress = _inSizeProcessed;
          UInt64 startOutProgress = _outSizeProcessed;
 
+         auto filename = "C:\\" + temp_files_tag() + "_7zPrecomp";
+         FILE* ftmp = fopen(filename.c_str(), "a+b");
+
+         // Copy Input to temp file
+         UInt64 totalInSize = dumpInStreamToFile(inStream, ftmp);
+         /*
          for (;;)
          {
-            bool eofFlag = false;
-            if (_inPos == _inSize)
-            {
-               _inPos = _inSize = 0;
-               RINOK(inStream->Read(_inBuf, _inBufSizeAllocated, &_inSize));
-               if (!_inSize)
-                  eofFlag = true;
-            }
-
             lzham_uint8 *pIn_bytes = _inBuf + _inPos;
             size_t num_in_bytes = _inSize - _inPos;
             lzham_uint8* pOut_bytes = _outBuf;
@@ -725,15 +858,42 @@ namespace NCompress
                RINOK(progress->SetRatioInfo(&inSize, &outSize));
             }
          }
+         */
 
-         return S_OK;
+         // Reopen file as read only and set it as input for precomp
+         fclose(ftmp);
+         int filesize_err = 0;
+         Precomp* precomp = PrecompCreate();
+         CRecursionContext* context = PrecompGetRecursionContext(precomp);
+         context->fin_length = fileSize64(filename.c_str(), &filesize_err);
+         ftmp = fopen(filename.c_str(), "rb");
+         std::string stream_name { "7zPlugin_input" };
+         PrecompSetInputFile(precomp, ftmp, stream_name.c_str());
+
+         // Set output for precomp using the outStream
+         OutStreamWrapper outStreamWrapper{ outStream, totalInSize };
+         PrecompSetGenericOutputStream(
+             precomp, "whocares", &outStreamWrapper,
+             &write_to_seqoutstream, &putc_to_seqoutstream,
+             &seek_seqstream, &tell_seqstream,
+             &eof_seqstream, &error_seqstream, &clear_seqstream_error
+         );
+
+         // Finally execute Precomp
+         int result = PrecompPrecompress(precomp);
+
+         PrecompDestroy(precomp);
+         fclose(ftmp);
+         remove(filename.c_str());
+
+         return result == 0 || result == 2 ? S_OK : S_FALSE;
       }
    }
 }
 
 static void *CreateCodecOut() 
 { 
-   return (void *)(ICompressCoder *)(new NCompress::NLzham::CEncoder);  
+   return (void *)(ICompressCoder *)(new NCompress::NPrecomp::CEncoder);  
 }
 #else
 #define CreateCodecOut 0
