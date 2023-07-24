@@ -24,6 +24,20 @@ if (UNIX)
   find_package(Threads REQUIRED)
 endif()
 
+if (MSVC)
+    # Disabling Incremental Linking might be useful for example to use SizeBench to analyze compiled binary size contributions from different parts of the code
+    add_link_options($<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>)
+    #add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
+
+    if (WIN32 AND NOT MSVC_VERSION VERSION_LESS 142)
+        # This should enable hot reload for VS2022
+        add_link_options($<$<CONFIG:Debug>:/INCREMENTAL>)
+        add_compile_options($<$<CONFIG:Debug>:/ZI>)
+    endif()
+endif()
+
+add_compile_options("$<$<CONFIG:DEBUG>:-DDEBUG>")
+
 include_directories(AFTER ${SRCDIR})
 
 function(add_stem2file VAR pattern stem)
@@ -129,18 +143,6 @@ set(FORMAT_HANDLERS_SRC "")
 add_stem2file(FORMAT_HANDLERS_SRC "${SRCDIR}/formats/%STEM%.cpp" 
               "base64;bzip2;deflate;gif;gzip;jpeg;mp3;pdf;png;swf;zip;zlib;")
 include_directories(AFTER "${SRCDIR}/formats")
-
-if (MSVC)
-    # Disabling Incremental Linking might be useful for example to use SizeBench to analyze compiled binary size contributions from different parts of the code
-    add_link_options($<$<CONFIG:RelWithDebInfo>:/INCREMENTAL:NO>)
-    #add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
-
-    if (WIN32 AND NOT MSVC_VERSION VERSION_LESS 142)
-        # This should enable hot reload for VS2022
-        add_link_options($<$<CONFIG:Debug>:/INCREMENTAL>)
-        add_compile_options($<$<CONFIG:Debug>:/ZI>)
-    endif()
-endif()
 
 add_library(precomp_dll_shared SHARED ${GIF_SRC} ${BZIP_SRC} ${ZLIB_SRC} ${PACKARI_SRC}
                                ${PACKJPG_SRC} ${PACKMP3_SRC} ${PREFLATE_SRC}

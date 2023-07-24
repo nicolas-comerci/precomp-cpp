@@ -53,8 +53,9 @@ namespace NCompress
       public:
           UInt64 streamSize;
           UInt64 pos;
+          bool eof;
       protected:
-          StreamWrapper(UInt64 _StreamSize) : streamSize(_StreamSize), pos(0) {};
+          StreamWrapper(UInt64 _StreamSize) : streamSize(_StreamSize), pos(0), eof(false) {}
       };
 
       // Precomp Generic OStream ISequentialInStream implementation stuff
@@ -69,17 +70,26 @@ namespace NCompress
 
       size_t read_from_seqinstream(void* backing_structure, char* buff, long long count) {
           auto inStreamWrapper = static_cast<InStreamWrapper*>(backing_structure);
-          UInt32 readSize = 0;
-          inStreamWrapper->inStream->Read(buff, count, &readSize);
-          inStreamWrapper->pos += readSize;
-          return readSize;
+          size_t readSizeAcum = 0;
+          while (readSizeAcum < count) {
+            UInt32 readSize = 0;
+            inStreamWrapper->inStream->Read(buff, count - readSizeAcum, &readSize);
+            if (readSize == 0) break;
+            inStreamWrapper->pos += readSize;
+            buff += readSize;
+            readSizeAcum += readSize;
+          }
+          return readSizeAcum;
       }
       int getc_from_seqinstream(void* backing_structure) {
           auto inStreamWrapper = static_cast<InStreamWrapper*>(backing_structure);
           UInt32 readSize = 0;
-          char buf[1];
+          unsigned char buf[1];
           inStreamWrapper->inStream->Read(buf, 1, &readSize);
           inStreamWrapper->pos += readSize;
+          if (readSize == 0 || buf[0] == EOF) {
+            inStreamWrapper->eof = true;
+          }
           return readSize == 1 ? buf[0] : EOF;
       }
 
@@ -113,7 +123,7 @@ namespace NCompress
       long long tell_seqstream(void* backing_structure) { return static_cast<StreamWrapper*>(backing_structure)->pos; }
       bool eof_seqstream(void* backing_structure) {
           auto streamWrapper = static_cast<StreamWrapper*>(backing_structure);
-          return streamWrapper->pos < streamWrapper->streamSize ? false : true;
+          return streamWrapper->eof;
       }
       bool error_seqstream(void* backing_structure) { return false; }
       void clear_seqstream_error(void* backing_structure) {}
@@ -340,21 +350,13 @@ namespace NCompress
 
          Precomp* precomp = PrecompCreate();
 
-         auto filenamePCF = "C:\\whocares.pcf";
-         FILE* fpcf = fopen(filenamePCF, "a+b");
-         UInt64 totalInSize = dumpInStreamToFile(inStream, fpcf);
-         /*
          InStreamWrapper inStreamWrapper{ inStream, inStreamSize, 0 };
          PrecompSetGenericInputStream(
-             precomp, "whocares", &inStreamWrapper,
-             &read_from_seqinstream, &getc_from_seqinstream,
-             &seek_seqstream, &tell_seqstream,
-             &eof_seqstream, &error_seqstream, &clear_seqstream_error
+           precomp, "whocares", &inStreamWrapper,
+           &read_from_seqinstream, &getc_from_seqinstream,
+           &seek_seqstream, &tell_seqstream,
+           &eof_seqstream, &error_seqstream, &clear_seqstream_error
          );
-         */
-         fclose(fpcf);
-         fpcf = fopen(filenamePCF, "rb");
-         PrecompSetInputFile(precomp, fpcf, filenamePCF);
 
          OutStreamWrapper outStreamWrapper{ outStream, _outSize };
          PrecompSetGenericOutputStream(
@@ -365,7 +367,6 @@ namespace NCompress
          );
 
          int result = PrecompRecompress(precomp);
-         //fclose(ftmp);
          PrecompDestroy(precomp);
 
          /*

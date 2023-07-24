@@ -201,6 +201,14 @@ void PrecompSetGenericInputStream(
     backing_structure, read_func, get_func, seekg_func, tellg_func, eof_func, bad_func, clear_func);
 }
 
+#ifdef DEBUG
+void PrecompSetDebugCompareInputFile(Precomp* precomp_mgr, FILE* fhandle) {
+  auto known_good = std::make_unique<FILEIStream>(fhandle, true);
+  const auto& orig_context = precomp_mgr->get_original_context();
+  orig_context->fin = std::make_unique<DebugComparatorIStreamLike>(std::move(known_good), std::move(orig_context->fin));
+}
+#endif
+
 void PrecompSetGenericOutputStream(
   Precomp* precomp_mgr, const char* output_file_name, void* backing_structure,
   size_t(*write_func)(void*, char const*, long long),

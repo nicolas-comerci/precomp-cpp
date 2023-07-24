@@ -168,10 +168,13 @@ FILEIStream& FILEIStream::read(char* buff, std::streamsize count) {
   return *this;
 }
 std::istream::int_type FILEIStream::get() {
-  _gcount = 1;
   auto chr = std::fgetc(file_ptr);
   if (chr == EOF) {
+    _gcount = 0;
     chr = std::istream::traits_type::eof();
+  }
+  else {
+    _gcount = 1;
   }
   return chr;
 }
@@ -444,3 +447,94 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
   }
   return temp_png;
 }
+
+#ifdef DEBUG
+void DebugComparatorIStreamLike::compare_status() {
+  long long known_good_pos = known_good->tellg();
+  long long known_good_gcount = known_good->gcount();
+  long long known_good_good = known_good->good();
+  long long known_good_bad = known_good->bad();
+  long long known_good_eof = known_good->eof();
+  long long test_stream_pos = test_stream->tellg();
+  long long test_stream_gcount = test_stream->gcount();
+  long long test_stream_good = test_stream->good();
+  long long test_stream_bad = test_stream->bad();
+  long long test_stream_eof = test_stream->eof();
+
+  if (
+    known_good_pos != test_stream_pos ||
+    known_good_gcount != test_stream_gcount ||
+    known_good_good != test_stream_good ||
+    known_good_bad != test_stream_bad ||
+    known_good_eof != test_stream_eof
+    ) {
+    throw std::runtime_error("De-sync in flag/pos/gcount status between known_good and test_stream!");
+  }
+}
+
+IStreamLike& DebugComparatorIStreamLike::read(char* buff, std::streamsize count) {
+  compare_status();  // Ensure identical status before starting read
+  known_good->read(buff, count);
+  std::vector<char> test_buff;
+  test_buff.resize(count);
+  test_stream->read(test_buff.data(), count);
+  compare_status();  // Ensure status still synced after read
+
+  // Compare buffers and ensure the exact same data was read
+  for (std::streamsize i = 0; i < known_good->gcount(); i++) {
+    auto buff_chr = buff[i];
+    auto test_chr = test_buff[i];
+    if (buff_chr != test_chr) {
+      throw std::runtime_error("Different data read between known_good and test_stream!");
+    }
+  }
+  return *this;
+}
+
+std::istream::int_type DebugComparatorIStreamLike::get() {
+  compare_status();  // Ensure identical status before starting get
+  auto buff_chr = test_stream->get();
+  auto test_chr = known_good->get();
+  compare_status();  // Ensure status still synced after get
+  if (buff_chr != test_chr) {
+    throw std::runtime_error("Different data read between known_good and test_stream!");
+  }
+}
+
+std::streamsize DebugComparatorIStreamLike::gcount() {
+  compare_status();
+  return known_good->gcount();
+}
+
+IStreamLike& DebugComparatorIStreamLike::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  compare_status();
+  test_stream->seekg(offset, dir);
+  known_good->seekg(offset, dir);
+  compare_status();
+  return *this;
+}
+
+std::istream::pos_type DebugComparatorIStreamLike::tellg() {
+  compare_status();
+  return known_good->tellg();
+}
+
+bool DebugComparatorIStreamLike::eof() {
+  compare_status();
+  return known_good->eof();
+}
+bool DebugComparatorIStreamLike::good() {
+  compare_status();
+  return known_good->good();
+}
+bool DebugComparatorIStreamLike::bad() {
+  compare_status();
+  return known_good->bad();
+}
+void DebugComparatorIStreamLike::clear() {
+  compare_status();
+  known_good->clear();
+  test_stream->clear();
+  compare_status();
+}
+#endif

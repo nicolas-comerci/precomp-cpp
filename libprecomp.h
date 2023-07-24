@@ -198,6 +198,13 @@ ExternC LIBPRECOMP void PrecompSetGenericInputStream(
   // You might as well feed it an empty function if you don't want to bother.
   void (*clear_func)(void*)
 );
+#ifdef DEBUG
+// Uses the given FILE and runs all read/get/seek/tell/etc operations in parallel between that and the already set Input stream so you can detect if your
+// GenericInputStream behaves incorrectly at any point.
+// Of course the FILE should have identical data and length as what you will stream through the GenericInputStream (so just dump that test data),
+// and you need to call PrecompSetGenericInputStream before this.
+ExternC LIBPRECOMP void PrecompSetDebugCompareInputFile(Precomp* precomp_mgr, FILE* fhandle);
+#endif
 
 ExternC LIBPRECOMP typedef void* PrecompOStream;
 ExternC LIBPRECOMP void PrecompSetOutStream(Precomp* precomp_mgr, PrecompOStream ostream, const char* output_file_name);

@@ -435,4 +435,38 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
 
 constexpr auto CHUNK = 262144; // 256 KB buffersize
 
+#ifdef DEBUG
+/*
+ * The purpose of this class is to allow debugging when developing a new type of ISteamLike (most likely by a consumer with a GenericIStreamLike) by comparing
+ * it's behavior against a known good IStreamLike.
+ * The easiest way would be dumping the data to be read into a file and using an FILEIStream as the known good, and whatever IStreamLike you want as the tested one.
+ * If your tested IStreamLike at any point reads different data than the known good, reaches or fails to flag EOF before the known good, or otherwise deviates in
+ * behavior, this class will throw an exception making it clear when things start to go wrong.
+ */
+class DebugComparatorIStreamLike : public IStreamLike {
+public:
+  std::unique_ptr<IStreamLike> known_good;
+  std::unique_ptr<IStreamLike> test_stream;
+
+  explicit DebugComparatorIStreamLike(std::unique_ptr<IStreamLike>&& known_good_, std::unique_ptr<IStreamLike>&& test_stream_):
+    known_good(std::move(known_good_)), test_stream(std::move(test_stream_)) {}
+
+  void compare_status();
+
+  IStreamLike& read(char* buff, std::streamsize count) override;
+
+  std::istream::int_type get() override;
+
+  std::streamsize gcount() override;
+
+  IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+
+  std::istream::pos_type tellg() override;
+  bool eof() override;
+  bool good() override;
+  bool bad() override;
+  void clear() override;
+};
+#endif
+
 #endif // PRECOMP_IO_H
