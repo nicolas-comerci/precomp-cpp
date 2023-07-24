@@ -2,26 +2,19 @@
 // Portions of this module are from 7-zip, by Igor Pavlov, which you can download here:
 // http://www.7-zip.org/
 
-//#include "StdAfx.h"
-#include "../../C/Alloc.h"
+#include "../C/Alloc.h"
 
 //#include "../Common/RegisterCodec.h"
-#include "../../CPP/Common/Common.h"
-#include "../../CPP/Common/MyCom.h"
-#include "../../CPP/7zip/ICoder.h"
-#include "../../CPP/7zip/Common/StreamUtils.h"
-#include "../../CPP/7zip/Common/RegisterCodec.h"
+#include "../CPP/Common/Common.h"
+#include "../CPP/Common/MyCom.h"
+#include "../CPP/7zip/ICoder.h"
+#include "../CPP/7zip/Common/StreamUtils.h"
+#include "../CPP/7zip/Common/RegisterCodec.h"
 
-#include "lzham_static_lib.h"
 #include "libprecomp.h"
 #include <precomp_utils.h>
 
-#if 0
-#include <stdio.h>
-#define LZHAMCODEC_DEBUG_OUTPUT 1
-#endif
-
-#define PRECOMP_PROPS_VER (Byte)(LZHAM_DLL_VERSION)
+#define PRECOMP_PROPS_VER (Byte)(0x1)
 
 UInt64 dumpInStreamToFile(ISequentialInStream* inStream, FILE* outfile) {
     UInt32 inPos = 0;
@@ -137,7 +130,7 @@ namespace NCompress
 			 memset(this, 0, sizeof(*this)); 
 			 _ver = PRECOMP_PROPS_VER; 
 			 _dict_size = 0; 
-			 _level = LZHAM_COMP_LEVEL_UBER; 
+			 _level = 0; 
 			 _flags = 0; 
 		 }
 
@@ -165,9 +158,6 @@ namespace NCompress
          UInt32 _inPos;
          UInt32 _inSize;
          UInt64 inStreamSize;
-         
-         lzham_decompress_state_ptr _state;
-         Precomp* _precomp;
 
          CProps _props;
          bool _propsWereSet;
@@ -225,7 +215,6 @@ namespace NCompress
       CDecoder::CDecoder(): _inBuf(0), _outBuf(0), _propsWereSet(false), _outSizeDefined(false),
          _inBufSize(1 << 22),
          _outBufSize(1 << 22),
-         _state(NULL),
          _inBufSizeAllocated(0),
          _outBufSizeAllocated(0),
          _inSizeProcessed(0),
@@ -238,7 +227,6 @@ namespace NCompress
       CDecoder::~CDecoder()
       {
          //if (_precomp) PrecompDestroy(_precomp);
-         lzham_decompress_deinit(_state);
          MyFree(_inBuf);
          MyFree(_outBuf);
       }
@@ -299,18 +287,6 @@ namespace NCompress
       {
          if (!_propsWereSet)
             return E_FAIL;
-         
-         _precomp = PrecompCreate();
-
-         lzham_decompress_params params;
-         memset(&params, 0, sizeof(params));
-         params.m_struct_size = sizeof(lzham_decompress_params);
-         params.m_decompress_flags = 0;
-         params.m_dict_size_log2 = _props._dict_size ? _props._dict_size : 26;
-                  
-         _state = lzham_decompress_reinit(_state, &params);
-         if (!_state)
-            return E_FAIL;
 
          return S_OK;
       }
@@ -322,7 +298,7 @@ namespace NCompress
             _outSize = *outSize;
          _outSizeProcessed = 0;
 
-         RINOK(CreateDecompressor());
+         RINOK(CreateDecompressor())
 
          return S_OK;
       }
@@ -339,12 +315,6 @@ namespace NCompress
       {
          if (_inBuf == 0 || !_propsWereSet)
             return S_FALSE;
-
-         if (!_state)
-         {
-            if (CreateDecompressor() != S_OK)
-               return E_FAIL;
-         }
 
          UInt64 startInProgress = _inSizeProcessed;
 
@@ -452,15 +422,10 @@ namespace NCompress
          if (_inBuf == 0 || !_propsWereSet)
             return S_FALSE;
 
-         if (!_state)
-         {
-            if (CreateDecompressor() != S_OK)
-               return E_FAIL;
-         }
-
          if (processedSize)
             *processedSize = 0;
 
+         /*
          while (size != 0)
          {
             bool eofFlag = false;
@@ -499,6 +464,7 @@ namespace NCompress
             if (status == LZHAM_DECOMP_STATUS_SUCCESS)
                break;
          }
+         */
 
          return S_OK;
       }
@@ -530,8 +496,6 @@ namespace NCompress
          public ICompressWriteCoderProperties,
          public CMyUnknownImp
       {
-         Precomp* _precomp;
-         lzham_compress_state_ptr _state;
          CProps _props;
          bool _dictSizeSet;
          int _num_threads;
@@ -567,7 +531,6 @@ namespace NCompress
       };
 
       CEncoder::CEncoder() :
-         _state(NULL),
          _dictSizeSet(false),
          _num_threads(-1),
          _inBuf(NULL),
@@ -585,8 +548,6 @@ namespace NCompress
 
       CEncoder::~CEncoder()
       {
-         //if (_precomp) PrecompDestroy(_precomp);
-         lzham_compress_deinit(_state);
          MyFree(_inBuf);
          MyFree(_outBuf);
       }
@@ -611,11 +572,6 @@ namespace NCompress
 
                   bool val = (UInt32)prop.ulVal != 0;
 
-                  if (prop.boolVal)
-                     _props._flags |= LZHAM_COMP_FLAG_DETERMINISTIC_PARSING;
-                  else
-                     _props._flags &= ~LZHAM_COMP_FLAG_DETERMINISTIC_PARSING;
-
 #if LZHAMCODEC_DEBUG_OUTPUT                  
                   printf("Algorithm: %u\n", prop.ulVal);
 #endif
@@ -637,6 +593,7 @@ namespace NCompress
                {
                   if (prop.vt != VT_UI4)
                      return E_INVALIDARG;
+                  /*
                   lzham_uint32 bits = 15;
                   while ((1U << bits) < prop.ulVal)
                      bits++;
@@ -654,6 +611,7 @@ namespace NCompress
 #if LZHAMCODEC_DEBUG_OUTPUT                  
                   printf("Dict size: %u\n", bits);
 #endif
+                  */
 
                   break;
                }
@@ -693,7 +651,7 @@ namespace NCompress
                         break;
                      case 9:
                         _props._level = 4; if (!_props._dict_size) _props._dict_size = 26;
-                        _props._flags |= LZHAM_COMP_FLAG_EXTREME_PARSING;
+                        //_props._flags |= LZHAM_COMP_FLAG_EXTREME_PARSING;
                         break;
                      default: 
                         return E_INVALIDARG;
@@ -745,16 +703,7 @@ namespace NCompress
 
       HRESULT CEncoder::CreateCompressor()
       {
-          //if (_precomp) PrecompDestroy(_precomp);
-          //_precomp = PrecompCreate();
-
-         if (_state)
-            lzham_compress_deinit(_state);
-
-         lzham_compress_params params;
-         memset(&params, 0, sizeof(params));
-         params.m_struct_size = sizeof(lzham_compress_params);
-
+         /*
          SYSTEM_INFO system_info;
          GetSystemInfo(&system_info);
 
@@ -804,6 +753,7 @@ namespace NCompress
          _state = lzham_compress_init(&params);
          if (!_state)
             return S_FALSE;
+         */
 
          return S_OK;
       }
@@ -811,9 +761,9 @@ namespace NCompress
       STDMETHODIMP CEncoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStream,
          const UInt64* inStreamSize, const UInt64* outStreamSize, ICompressProgressInfo *progress)
       {
-         RINOK(CreateCompressor());
+         RINOK(CreateCompressor())
          
-         RINOK(CreateBuffers());
+         RINOK(CreateBuffers())
 
          UInt64 startInProgress = _inSizeProcessed;
          UInt64 startOutProgress = _outSizeProcessed;
@@ -894,7 +844,7 @@ namespace NCompress
 
 static void *CreateCodecOut() 
 { 
-   return (void *)(ICompressCoder *)(new NCompress::NPrecomp::CEncoder);  
+   return static_cast<ICompressCoder*>(new NCompress::NPrecomp::CEncoder);  
 }
 #else
 #define CreateCodecOut 0
@@ -904,10 +854,10 @@ static CCodecInfo g_CodecsInfo[1] =
 { 
    CreateCodec, 
    CreateCodecOut, 
-   0x4F71001, 
-   "LZHAM", 
+   0x4F99001, 
+   "PRECOMP", 
    1, 
-   false 
+   true 
 };
 
-REGISTER_CODECS(LZHAM)
+REGISTER_CODECS(PRECOMP)
