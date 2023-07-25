@@ -113,7 +113,7 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
   pdf_precompression_result result = pdf_precompression_result(img_width, img_height);
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_decomp_pdf", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_pdf"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   auto deflate_stream_pos = original_input_pos + pdf_header_length;
 

@@ -243,6 +243,8 @@ Switches::Switches(): CSwitches() {
   use_packjpg_fallback = true;
   min_ident_size = 4;
 
+  working_dir = nullptr;
+
   use_pdf = true;
   use_zip = true;
   use_gzip = true;
@@ -260,6 +262,13 @@ Switches::Switches(): CSwitches() {
   preflate_verify = false;
 
   max_recursion_depth = 10;
+}
+
+Switches::~Switches() {
+  if (working_dir != nullptr) {
+    free(working_dir);
+    working_dir = nullptr;
+  }
 }
 
 RecursionContext::RecursionContext(float min_percent, float max_percent, Precomp& precomp_):
@@ -355,6 +364,12 @@ void Precomp::call_progress_callback() {
   auto context_progress_range = this->ctx->global_max_percent - this->ctx->global_min_percent;
   auto inner_context_progress_percent = static_cast<float>(this->ctx->input_file_pos) / this->ctx->fin_length;
   this->progress_callback(this->ctx->global_min_percent + (context_progress_range * inner_context_progress_percent));
+}
+
+std::string Precomp::get_tempfile_name(const std::string& name, bool prepend_random_tag) const {
+  std::filesystem::path dir = switches.working_dir != nullptr ? switches.working_dir : std::filesystem::path();
+  std::filesystem::path filename = prepend_random_tag ? temp_files_tag() + "_" + name : name;
+  return (dir / filename).string();
 }
 
 // get copyright message

@@ -69,7 +69,7 @@ deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const
 
   result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
-    "in GZIP", temp_files_tag() + "_precomp_gzip");
+    "in GZIP", precomp_mgr.get_tempfile_name("precomp_gzip"));
 
   result.input_pos_extra_add += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
   return result;
@@ -78,5 +78,5 @@ deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const
 void recompress_gzip(RecursionContext& context, std::byte precomp_hdr_flags) {
   context.fout->put(31);
   context.fout->put(139);
-  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_gzip", "GZIP");
+  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_gzip"), "GZIP");
 }

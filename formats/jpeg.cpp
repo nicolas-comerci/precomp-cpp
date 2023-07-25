@@ -29,8 +29,8 @@ bool jpeg_header_check(const std::span<unsigned char> checkbuf_span) {
 precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
   precompression_result result = precompression_result(D_JPG);
   auto random_tag = temp_files_tag();
-  std::string original_jpg_filename = random_tag + "_original_" + "jpg";
-  std::string decompressed_jpg_filename = random_tag + "_precompressed_" + "jpg";
+  std::string original_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_original_jpg", false);
+  std::string decompressed_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_precompressed_jpg", false);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(original_jpg_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
@@ -397,8 +397,9 @@ int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
 void recompress_jpg(RecursionContext& context, std::byte flags) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
 
-  std::string precompressed_filename = temp_files_tag() + "_precompressed_jpg";
-  std::string recompressed_filename = temp_files_tag() + "_original_jpg";
+  auto random_tag = temp_files_tag();
+  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_jpg", false);
+  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_jpg", false);
 
   bool mjpg_dht_used = (flags & std::byte{ 0b100 }) == std::byte{ 0b100 };
   bool brunsli_used = (flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };

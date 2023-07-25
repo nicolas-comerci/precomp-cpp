@@ -440,7 +440,7 @@ deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr
   return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
     D_BRUTE, checkbuf_span.data(), 0, original_input_pos, false,
-    "(brute mode)", temp_files_tag() + "_decomp_brute");
+    "(brute mode)", precomp_mgr.get_tempfile_name("decomp_brute"));
 }
 
 bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres) {
@@ -576,5 +576,5 @@ void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, 
 }
 
 void recompress_raw_deflate(RecursionContext& context, std::byte precomp_hdr_flags) {
-  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_deflate", "brute mode");
+  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_deflate"), "brute mode");
 }

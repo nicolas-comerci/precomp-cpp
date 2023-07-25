@@ -296,7 +296,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
   if ((compression_level < 1) || (compression_level > 9)) return result;
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_original_bzip2", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
   long long compressed_stream_size = -1;
@@ -502,7 +502,7 @@ void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags) {
 
   int retval;
   if (recursion_used) {
-    auto r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_bzip2");
+    auto r = recursion_decompress(context, recursion_data_length, context.precomp.get_tempfile_name("recomp_bzip2"));
     retval = def_part_bzip2(context, *r, *context.fout, penalty_bytes, level, decompressed_data_length, recompressed_data_length);
     r->get_recursion_return_code();
   }

@@ -2,6 +2,8 @@
 // Portions of this module are from 7-zip, by Igor Pavlov, which you can download here:
 // http://www.7-zip.org/
 
+#include <filesystem>
+
 #include "../C/Alloc.h"
 
 //#include "../Common/RegisterCodec.h"
@@ -319,6 +321,13 @@ namespace NCompress
          UInt64 startInProgress = _inSizeProcessed;
 
          Precomp* precomp = PrecompCreate();
+
+         // Set working_dir to the temporary path so precomp can create files while working even when 7zip is not running with elevated privileges
+          // (otherwise files would be attempted to be created on System32 or 7zip's folder, depending on how 7zip was launched)
+         std::filesystem::path tmppath = std::filesystem::temp_directory_path();
+         CSwitches* switches = PrecompGetSwitches(precomp);
+         switches->working_dir = static_cast<char*>(malloc(tmppath.string().length() + 1));
+         strcpy_s(switches->working_dir, tmppath.string().length() + 1, tmppath.string().c_str());
 
          InStreamWrapper inStreamWrapper{ inStream, inStreamSize, 0 };
          PrecompSetGenericInputStream(
@@ -768,11 +777,14 @@ namespace NCompress
          UInt64 startInProgress = _inSizeProcessed;
          UInt64 startOutProgress = _outSizeProcessed;
 
-         auto filename = "C:\\" + temp_files_tag() + "_7zPrecomp";
+         std::filesystem::path tmppath = std::filesystem::temp_directory_path();
+         auto filepath = tmppath / std::filesystem::path(temp_files_tag() + "_7zPrecomp");
+         auto filename = filepath.string();
          FILE* ftmp = fopen(filename.c_str(), "a+b");
 
          // Copy Input to temp file
          UInt64 totalInSize = dumpInStreamToFile(inStream, ftmp);
+         fclose(ftmp);
          /*
          for (;;)
          {
@@ -811,12 +823,17 @@ namespace NCompress
          }
          */
 
-         // Reopen file as read only and set it as input for precomp
-         fclose(ftmp);
          int filesize_err = 0;
          Precomp* precomp = PrecompCreate();
          CRecursionContext* context = PrecompGetRecursionContext(precomp);
          context->fin_length = fileSize64(filename.c_str(), &filesize_err);
+         // Set working_dir to the temporary path so precomp can create files while working even when 7zip is not running with elevated privileges
+         // (otherwise files would be attempted to be created on System32 or 7zip's folder, depending on how 7zip was launched)
+         CSwitches* switches = PrecompGetSwitches(precomp);
+         switches->working_dir = static_cast<char*>(malloc(tmppath.string().length() + 1));
+         strcpy_s(switches->working_dir, tmppath.string().length() + 1, tmppath.string().c_str());
+
+         // Reopen file as read only and set it as input for precomp
          ftmp = fopen(filename.c_str(), "rb");
          std::string stream_name { "7zPlugin_input" };
          PrecompSetInputFile(precomp, ftmp, stream_name.c_str());

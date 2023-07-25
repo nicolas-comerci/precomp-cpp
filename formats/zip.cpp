@@ -33,7 +33,7 @@ deflate_precompression_result try_decompression_zip(Precomp& precomp_mgr, const 
   auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
 
   auto result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
-    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", temp_files_tag() + "_decomp_zip");
+    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_mgr.get_tempfile_name("decomp_zip"));
 
   result.input_pos_extra_add += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
   return result;
@@ -44,5 +44,5 @@ void recompress_zip(RecursionContext& context, std::byte precomp_hdr_flags) {
   context.fout->put('K');
   context.fout->put(3);
   context.fout->put(4);
-  recompress_deflate(context, precomp_hdr_flags, false, temp_files_tag() + "_recomp_zip", "ZIP");
+  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_zip"), "ZIP");
 }

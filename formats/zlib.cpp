@@ -17,7 +17,7 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const
   if (check_inflate_result(precomp_mgr, std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), -windowbits, deflate_stream_pos)) {
 
     result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
-      D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", temp_files_tag() + "_original_zlib");
+      D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", precomp_mgr.get_tempfile_name("original_zlib"));
 
     result.input_pos_extra_add += 2;
   }
@@ -25,5 +25,5 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const
 }
 
 void recompress_zlib(RecursionContext& context, std::byte precomp_hdr_flags) {
-  recompress_deflate(context, precomp_hdr_flags, true, temp_files_tag() + "_recomp_zlib", "raw zLib");
+  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_zlib"), "raw zLib");
 }

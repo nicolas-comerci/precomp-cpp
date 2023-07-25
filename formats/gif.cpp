@@ -413,8 +413,8 @@ void try_recompression_gif(RecursionContext& context, std::byte header1) {
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
 
   std::string tmp_tag = temp_files_tag();
-  std::string tempfile = tmp_tag + "_precompressed_gif";
-  std::string tempfile2 = tmp_tag + "_recompressed_gif";
+  std::string tempfile = context.precomp.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
+  std::string tempfile2 = context.precomp.get_tempfile_name(tmp_tag + "_recompressed_gif", false);
 
   dump_to_file(*context.fin, tempfile, decompressed_data_length);
   bool recompress_success = false;
@@ -475,7 +475,7 @@ void try_recompression_gif(RecursionContext& context, std::byte header1) {
 gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   gif_precompression_result result = gif_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_decomp_gif", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_gif"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
   unsigned char version[5];
 

@@ -132,7 +132,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
   auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_decomp_base64", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_base64"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
   remove(tmpfile->file_path.c_str());
 
@@ -407,7 +407,7 @@ void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
   // re-encode Base64
 
   if (recursion_used) {
-    auto r = recursion_decompress(context, recursion_data_length, temp_files_tag() + "_recomp_base64");
+    auto r = recursion_decompress(context, recursion_data_length, context.precomp.get_tempfile_name("recomp_base64"));
     base64_reencode(*r, *context.fout, base64_line_len, 0x7FFFFFFFFFFFFFFF, decompressed_data_length);
     r->get_recursion_return_code();
   }

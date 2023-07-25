@@ -73,7 +73,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
   png_precompression_result result;
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(temp_files_tag() + "_precompressed_png", std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_mgr.get_tempfile_name("precompressed_png"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, fpng_deflate_stream_pos, *tmpfile);
@@ -222,7 +222,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
   }
 
   // copy to tempfile before trying to recompress
-  std::string png_tmp_filename = temp_files_tag() + "_original_png";
+  std::string png_tmp_filename = precomp_mgr.get_tempfile_name("original_png");
   remove(png_tmp_filename.c_str());
 
   precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
@@ -256,7 +256,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
 void recompress_png(RecursionContext& context, std::byte precomp_hdr_flags) {
   // restore IDAT
   ostream_printf(*context.fout, "IDAT");
-  recompress_deflate(context, precomp_hdr_flags, true, temp_files_tag() + "_recomp_png", "PNG");
+  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_png"), "PNG");
 }
 
 class OwnOStreamMultiPNG : public OutputStream {

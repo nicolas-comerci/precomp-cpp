@@ -17,7 +17,7 @@ deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const 
 
   result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_swf_count, precomp_mgr.statistics.recompressed_swf_count,
     D_SWF, checkbuf_span.data() + 3, 7, deflate_stream_pos, true,
-    "in SWF", temp_files_tag() + "_original_swf");
+    "in SWF", precomp_mgr.get_tempfile_name("original_swf"));
 
   result.input_pos_extra_add += 10;
   return result;
@@ -28,5 +28,5 @@ void recompress_swf(RecursionContext& context, std::byte precomp_hdr_flags) {
   context.fout->put('W');
   context.fout->put('S');
 
-  recompress_deflate(context, precomp_hdr_flags, true, temp_files_tag() + "_recomp_swf", "SWF");
+  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_swf"), "SWF");
 }

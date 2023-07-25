@@ -83,6 +83,9 @@ typedef struct {
   bool use_packjpg_fallback;     //use packJPG for JPG compression (fallback when brunsli fails) (default: on)
   unsigned int min_ident_size;   //minimal identical bytes (default: 4)
 
+  // This string will be freed when Precomp is destroyed so don't double free it afterwards
+  char* working_dir;
+
   //(p)recompression types to use (default: all)
   bool use_pdf;
   bool use_zip;

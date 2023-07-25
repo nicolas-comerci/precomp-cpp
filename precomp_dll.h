@@ -49,9 +49,10 @@ void print_to_log(PrecompLoggingLevels log_level, const char* format, Args... ar
 
 class EXPORT Switches: public CSwitches {
   public:
-    Switches();
-    
     std::set<long long> ignore_set;
+
+    Switches();
+    ~Switches();
 };
 
 class ResultStatistics: public CResultStatistics {
@@ -124,6 +125,8 @@ public:
 
   void set_progress_callback(std::function<void(float)> callback);
   void call_progress_callback();
+
+  std::string get_tempfile_name(const std::string& name, bool prepend_random_tag = true) const;
 
   int conversion_from_method;
 

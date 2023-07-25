@@ -365,7 +365,7 @@ precompression_result precompress_mp3(Precomp& precomp_mgr, long long original_i
         && (suppression.suppress_mp3_non_zero_padbits_sum != position_length_sum)
         && (suppression.suppress_mp3_inconsistent_emphasis_sum != position_length_sum)
         && (suppression.suppress_mp3_inconsistent_emphasis_sum != position_length_sum)) {
-        return try_precompression_mp3(precomp_mgr, original_input_pos, mp3_length, temp_files_tag() + "_decomp_mp3", suppression);
+        return try_precompression_mp3(precomp_mgr, original_input_pos, mp3_length, precomp_mgr.get_tempfile_name("decomp_mp3"), suppression);
       }
     }
     else if (type > 0) {
@@ -391,8 +391,9 @@ void recompress_mp3(RecursionContext& context) {
 
   bool recompress_success = false;
 
-  std::string precompressed_filename = temp_files_tag() + "_precompressed_mp3";
-  std::string recompressed_filename = temp_files_tag() + "_original_mp3";
+  auto random_tag = temp_files_tag();
+  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_mp3", false);
+  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_mp3", false);
 
   std::unique_ptr<IStreamLike> recompressed_stream;
 
