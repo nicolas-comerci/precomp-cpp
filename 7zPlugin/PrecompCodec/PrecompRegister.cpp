@@ -128,13 +128,13 @@ namespace NCompress
          CProps() { clear(); }
 
          void clear() 
-		 { 
-			 memset(this, 0, sizeof(*this)); 
-			 _ver = PRECOMP_PROPS_VER; 
-			 _dict_size = 0; 
-			 _level = 0; 
-			 _flags = 0; 
-		 }
+		     { 
+			     memset(this, 0, sizeof(*this)); 
+			     _ver = PRECOMP_PROPS_VER; 
+			     _dict_size = 0; 
+			     _level = 0; 
+			     _flags = 0; 
+		     }
 
          Byte _ver;
          Byte _dict_size;
@@ -490,7 +490,7 @@ namespace NCompress
 
 static void *CreateCodec() 
 { 
-   return (void *)(ICompressCoder *)(new NCompress::NPrecomp::CDecoder); 
+   return static_cast<ICompressCoder*>(new NCompress::NPrecomp::CDecoder); 
 }
 
 #ifndef EXTRACT_ONLY
@@ -631,36 +631,15 @@ namespace NCompress
                                                          
                   switch (prop.ulVal)
                   {
+                     case 9:  // if level argument is not present it defaults to 9, but we want 0 by default and don't have 9 so we just process it the same
                      case 0:
-                        _props._level = 0; if (!_props._dict_size) _props._dict_size = 18;
+                        _props._level = 0;
                         break;
                      case 1:
-                        _props._level = 0; if (!_props._dict_size) _props._dict_size = 20;
+                        _props._level = 1;
                         break;
                      case 2:
-                        _props._level = 1; if (!_props._dict_size) _props._dict_size = 21;
-                        break;
-                     case 3:
-                        _props._level = 2; if (!_props._dict_size) _props._dict_size = 21;
-                        break;
-                     case 4:
-                        _props._level = 2; if (!_props._dict_size) _props._dict_size = 22;
-                        break;
-                     case 5:
-                        _props._level = 3; if (!_props._dict_size) _props._dict_size = 22;
-                        break;
-                     case 6:
-                        _props._level = 3; if (!_props._dict_size) _props._dict_size = 23;
-                        break;
-                     case 7:
-                        _props._level = 4; if (!_props._dict_size) _props._dict_size = 25;
-                        break;
-                     case 8:
-                        _props._level = 4; if (!_props._dict_size) _props._dict_size = 26;
-                        break;
-                     case 9:
-                        _props._level = 4; if (!_props._dict_size) _props._dict_size = 26;
-                        //_props._flags |= LZHAM_COMP_FLAG_EXTREME_PARSING;
+                        _props._level = 2;
                         break;
                      default: 
                         return E_INVALIDARG;
@@ -832,6 +811,9 @@ namespace NCompress
          CSwitches* switches = PrecompGetSwitches(precomp);
          switches->working_dir = static_cast<char*>(malloc(tmppath.string().length() + 1));
          strcpy_s(switches->working_dir, tmppath.string().length() + 1, tmppath.string().c_str());
+
+         if (_props._level > 0) switches->intense_mode = true;  //f=precomp:x1 => intense mode
+         if (_props._level > 1) switches->brute_mode = true;  //f=precomp:x2 => brute mode (+ intense mode)
 
          // Reopen file as read only and set it as input for precomp
          ftmp = fopen(filename.c_str(), "rb");
