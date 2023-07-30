@@ -58,3 +58,5 @@ cmake-build-minsizerel/
 cmake-build-relwithdebinfo/
 7zPlugin/bin/
 7zPlugin/PrecompCodec/x64/
+7zPlugin/PrecompCodec/Debug/
+7zPlugin/PrecompCodec/Release/
