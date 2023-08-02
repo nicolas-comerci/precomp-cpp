@@ -60,3 +60,4 @@ cmake-build-relwithdebinfo/
 7zPlugin/PrecompCodec/x64/
 7zPlugin/PrecompCodec/Debug/
 7zPlugin/PrecompCodec/Release/
+cmake-build-default/

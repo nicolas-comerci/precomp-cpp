@@ -21,6 +21,7 @@
 #include <optional>
 #include <mutex>
 #include <condition_variable>
+#include <span>
 
 static constexpr int MAX_PENALTY_BYTES = 16384;
 
@@ -100,6 +101,58 @@ public:
   long long uncompressed_bytes_total = 0;
 };
 
+class precompression_result
+{
+protected:
+    virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
+    void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
+    void dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const;
+    virtual void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
+public:
+    explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
+
+    bool success;
+    char format;
+    std::byte flags{ 0 };
+    std::vector<char> penalty_bytes;
+    long long original_size = -1;
+    long long input_pos_extra_add = 0;  // this is so we can skip headers and stuff like that as well as the precompressed stream, after the module is done
+    long long precompressed_size = -1;
+    std::unique_ptr<IStreamLike> precompressed_stream;
+
+    virtual void dump_to_outfile(Precomp& precomp_mgr);
+    virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
+};
+
+class PrecompFormatHandler;
+extern std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHandlerFactoryFunctions;
+
+class PrecompFormatHandler {
+public:
+    // The quick check should attempt to detect applicable format data by inspecting File Signatures/Magic Bytes or via any other easy/quick check that could
+    // be done by using the small buffered chunk provided.
+    // If quick detection is impossible, like with headerless deflate stream detection, just return true so Precomp will move on and attempt precompression.
+    virtual bool quick_check(std::span<unsigned char> buffer) = 0;
+
+    // The main precompression entrypoint, you are given full access to Precomp instance which in turn gives you access to the current context and input/output streams.
+    // You should however if possible not output anything to the output stream directly or otherwise mess with the Precomp instance or current context unless strictly necessary,
+    // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
+    virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
+
+    virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags) = 0;
+
+    // Subclasses should register themselves here, as the available PrecompFormatHandlers will be queried and the instances created when we create Precomp instances.
+    // If you fail to register the PrecompFormatHandler here then it won't be available and any attempt to set it up for precompression, or of recompressing any file that uses your
+    // format handler, will fail.
+    static bool registerFormatHandler(SupportedFormats format_tag, std::function<PrecompFormatHandler*()> factory_func) {
+        registeredHandlerFactoryFunctions[format_tag] = factory_func;
+        return true;
+    }
+};
+
+#define REGISTER_PRECOMP_FORMAT_HANDLER(format_tag, factory_func) \
+    bool format_tag ## _entry = PrecompFormatHandler::registerFormatHandler(format_tag, (factory_func))
+
 class Precomp {
   std::function<void(float)> progress_callback;
   void set_input_stdin();
@@ -134,35 +187,10 @@ public:
   
 };
 
-class precompression_result
-{
-protected:
-  virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
-  void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
-  void dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const;
-  virtual void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
-public:
-  explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
-
-  bool success;
-  char format;
-  std::byte flags{ 0 };
-  std::vector<char> penalty_bytes;
-  long long original_size = -1;
-  long long input_pos_extra_add = 0;  // this is so we can skip headers and stuff like that as well as the precompressed stream, after the module is done
-  long long precompressed_size = -1;
-  std::unique_ptr<IStreamLike> precompressed_stream;
-
-  virtual void dump_to_outfile(Precomp& precomp_mgr);
-  virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
-};
-
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
 
 bool intense_mode_is_active(Precomp& precomp_mgr);
 bool brute_mode_is_active(Precomp& precomp_mgr);
-unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2);
-std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2);
 
 // helpers for try_decompression functions
 int32_t fin_fget32(IStreamLike& input);
@@ -234,4 +262,5 @@ public:
   OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length, std::string tmpfile);
+
 #endif // PRECOMP_DLL_H

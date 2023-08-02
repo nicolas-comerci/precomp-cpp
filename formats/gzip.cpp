@@ -11,9 +11,9 @@ bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> chec
   return false;
 }
 
-deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
+std::unique_ptr<deflate_precompression_result> try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
   auto checkbuf = checkbuf_span.data();
-  deflate_precompression_result result = deflate_precompression_result(D_GZIP);
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_GZIP);
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
           //
@@ -71,7 +71,7 @@ deflate_precompression_result try_decompression_gzip(Precomp& precomp_mgr, const
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
     "in GZIP", precomp_mgr.get_tempfile_name("precomp_gzip"));
 
-  result.input_pos_extra_add += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
+  result->input_pos_extra_add += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
   return result;
 }
 

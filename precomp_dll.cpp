@@ -41,7 +41,6 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <set>
-#include <span>
 
 #ifndef __unix
 #include <windows.h>
@@ -92,6 +91,9 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
   if (PRECOMP_VERBOSITY_LEVEL < log_level || !logging_callback) return;
   logging_callback(log_level, format.data());
 }
+
+std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHandlerFactoryFunctions = std::map<SupportedFormats, std::function<PrecompFormatHandler*()>>{};
+REGISTER_PRECOMP_FORMAT_HANDLER(D_ZIP, ZipFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -400,38 +402,6 @@ bool brute_mode_is_active(Precomp& precomp_mgr) {
   return false;
 }
 
-unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
-  unsigned char input_bytes1[COMP_CHUNK];
-  unsigned char input_bytes2[COMP_CHUNK];
-  long long same_byte_count = 0;
-  long long size1, size2, minsize;
-  int i;
-  bool endNow = false;
-
-  file1.seekg(pos1, std::ios_base::beg);
-  file2.seekg(pos2, std::ios_base::beg);
-
-  do {
-    precomp_mgr.call_progress_callback();
-
-    file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
-    size1 = file1.gcount();
-    file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
-    size1 = file2.gcount();
-
-    minsize = std::min(size1, size2);
-    for (i = 0; i < minsize; i++) {
-      if (input_bytes1[i] != input_bytes2[i]) {
-        endNow = true;
-        break;
-      }
-      same_byte_count++;
-    }
-  } while ((minsize == COMP_CHUNK) && (!endNow));
-
-  return same_byte_count;
-}
-
 void end_uncompressed_data(Precomp& precomp_mgr) {
   if (!precomp_mgr.ctx->uncompressed_length.has_value()) return;
 
@@ -507,36 +477,41 @@ int compress_file_impl(Precomp& precomp_mgr) {
   if (!ignore_this_pos) {
 
     // ZIP header?
-    if (precomp_mgr.switches.use_zip && zip_header_check(precomp_mgr, checkbuf, input_file_pos)) {
-      auto result = try_decompression_zip(precomp_mgr, checkbuf, input_file_pos);
-      compressed_data_found = result.success;
+    if (precomp_mgr.switches.use_zip) {
+        auto handler = registeredHandlerFactoryFunctions[D_ZIP]();
 
-      if (result.success) {
-        end_uncompressed_data(precomp_mgr);
+        bool quick_check_result = handler->quick_check(checkbuf);
+        if (quick_check_result) {
+            auto result = handler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+            compressed_data_found = result->success;
 
-        result.dump_to_outfile(precomp_mgr);
+            if (result->success) {
+                end_uncompressed_data(precomp_mgr);
 
-        // start new uncompressed data
+                result->dump_to_outfile(precomp_mgr);
 
-        // set input file pointer after recompressed data
-        input_file_pos += result.input_pos_add_offset();
-      }
+                // start new uncompressed data
+
+                // set input file pointer after recompressed data
+                input_file_pos += result->input_pos_add_offset();
+            }
+        }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
       if (gzip_header_check(precomp_mgr, checkbuf)) {
         auto result = try_decompression_gzip(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result.success;
+        compressed_data_found = result->success;
 
-        if (result.success) {
+        if (result->success) {
           end_uncompressed_data(precomp_mgr);
 
-          result.dump_to_outfile(precomp_mgr);
+          result->dump_to_outfile(precomp_mgr);
 
           // start new uncompressed data
 
           // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
+          input_file_pos += result->input_pos_add_offset();
         }
       }
     }
@@ -634,14 +609,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
       // CWS = Compressed SWF file
       if (swf_header_check(checkbuf)) {
         auto result = try_decompression_swf(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result.success;
-        if (result.success) {
+        compressed_data_found = result->success;
+        if (result->success) {
           end_uncompressed_data(precomp_mgr);
 
-          result.dump_to_outfile(precomp_mgr);
+          result->dump_to_outfile(precomp_mgr);
 
           // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
+          input_file_pos += result->input_pos_add_offset();
         }
       }
     }
@@ -700,16 +675,16 @@ int compress_file_impl(Precomp& precomp_mgr) {
       if (!ignore_this_position) {
         if (zlib_header_check(checkbuf)) {
           auto result = try_decompression_zlib(precomp_mgr, checkbuf, input_file_pos);
-          compressed_data_found = result.success;
-          if (result.success) {
+          compressed_data_found = result->success;
+          if (result->success) {
             compressed_data_found = true;
 
             end_uncompressed_data(precomp_mgr);
 
-            result.dump_to_outfile(precomp_mgr);
+            result->dump_to_outfile(precomp_mgr);
 
             // set input file pointer after recompressed data
-            input_file_pos += result.input_pos_add_offset();
+            input_file_pos += result->input_pos_add_offset();
           }
         }
       }
@@ -739,16 +714,16 @@ int compress_file_impl(Precomp& precomp_mgr) {
       if (!ignore_this_position) {
         if (check_raw_deflate_stream_start(precomp_mgr, checkbuf, input_file_pos)) {
           auto result = try_decompression_raw_deflate(precomp_mgr, checkbuf, input_file_pos);
-          compressed_data_found = result.success;
-          if (result.success) {
+          compressed_data_found = result->success;
+          if (result->success) {
             compressed_data_found = true;
 
             end_uncompressed_data(precomp_mgr);
 
-            result.dump_to_outfile(precomp_mgr);
+            result->dump_to_outfile(precomp_mgr);
 
             // set input file pointer after recompressed data
-            input_file_pos += result.input_pos_add_offset();
+            input_file_pos += result->input_pos_add_offset();
           }
         }
       }
@@ -828,7 +803,8 @@ while (precomp_ctx.fin->good()) {
       break;
     }     
     case D_ZIP: { // ZIP recompression
-      recompress_zip(precomp_ctx, header1);
+      auto handler = registeredHandlerFactoryFunctions[D_ZIP]();
+      handler->recompress(precomp_ctx, header1);
       break;
     }
     case D_GZIP: { // GZip recompression
@@ -928,78 +904,6 @@ void read_header(Precomp& precomp_mgr) {
     precomp_mgr.output_file_name = header_filename;
   }
   precomp_mgr.statistics.header_already_read = true;
-}
-
-std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
-  unsigned char input_bytes1[COMP_CHUNK];
-  unsigned char input_bytes2[COMP_CHUNK];
-  long long same_byte_count = 0;
-  long long same_byte_count_penalty = 0;
-  long long rek_same_byte_count = 0;
-  long long rek_same_byte_count_penalty = -1;
-  long long size1, size2, minsize;
-  long long i;
-  bool endNow = false;
-
-  bool use_penalty_bytes = false;
-
-  std::vector<char> penalty_bytes;
-
-  file1.seekg(0, std::ios_base::end);
-  file2.seekg(0, std::ios_base::end);
-  long long compare_end = std::min(file1.tellg() - pos1, file2.tellg() - pos2);
-
-  file1.seekg(pos1, std::ios_base::beg);
-  file2.seekg(pos2, std::ios_base::beg);
-
-  do {
-    precomp_mgr.call_progress_callback();
-
-    file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
-    size1 = file1.gcount();
-    file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
-    size2 = file2.gcount();
-
-    minsize = std::min(size1, size2);
-    for (i = 0; i < minsize; i++) {
-      if (input_bytes1[i] != input_bytes2[i]) {
-
-        same_byte_count_penalty -= 5; // 4 bytes = position, 1 byte = new byte
-
-        // if same_byte_count_penalty is too low, stop
-        if ((long long)(same_byte_count_penalty + (compare_end - same_byte_count)) < 0) {
-          endNow = true;
-          break;
-        }
-        // stop, if penalty_bytes len gets too big
-        if ((penalty_bytes.size() + 5) >= MAX_PENALTY_BYTES) {
-          endNow = true;
-          break;
-        }
-
-        // position
-        penalty_bytes.push_back((same_byte_count >> 24) % 256);
-        penalty_bytes.push_back((same_byte_count >> 16) % 256);
-        penalty_bytes.push_back((same_byte_count >> 8) % 256);
-        penalty_bytes.push_back(same_byte_count % 256);
-        // new byte
-        penalty_bytes.push_back(input_bytes1[i]);
-      } else {
-        same_byte_count_penalty++;
-      }
-
-      same_byte_count++;
-
-      if (same_byte_count_penalty > rek_same_byte_count_penalty) {
-        use_penalty_bytes = true;
-        rek_same_byte_count = same_byte_count;
-        rek_same_byte_count_penalty = same_byte_count_penalty;
-      }
-
-    }
-  } while ((minsize == COMP_CHUNK) && (!endNow));
-
-  return { rek_same_byte_count, use_penalty_bytes ? penalty_bytes: std::vector<char>()};
 }
 
 // JPG routines

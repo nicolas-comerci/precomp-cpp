@@ -221,11 +221,11 @@ void debug_pos(RecursionContext& context) {
   print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
 }
 
-deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
+std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
   const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-  deflate_precompression_result result = deflate_precompression_result(type);
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(type);
 
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
@@ -237,9 +237,9 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
     debug_deflate_detected(*precomp_mgr.ctx, rdres, debugname, deflate_stream_pos);
 
     if (rdres.accepted) {
-      result.success = rdres.accepted;
-      result.original_size = rdres.compressed_stream_size;
-      result.precompressed_size = rdres.uncompressed_stream_size;
+      result->success = rdres.accepted;
+      result->original_size = rdres.compressed_stream_size;
+      result->precompressed_size = rdres.uncompressed_stream_size;
       precomp_mgr.statistics.recompressed_streams_count++;
       rcounter++;
 
@@ -279,28 +279,28 @@ deflate_precompression_result try_decompression_deflate_type(Precomp& precomp_mg
 
       debug_pos(*precomp_mgr.ctx);
 
-      result.flags = r.success ? std::byte{ 0b10000000 } : std::byte{ 0 };
-      result.inc_last_hdr_byte = inc_last;
-      result.zlib_header = std::vector(hdr, hdr + hdr_length);
+      result->flags = r.success ? std::byte{ 0b10000000 } : std::byte{ 0 };
+      result->inc_last_hdr_byte = inc_last;
+      result->zlib_header = std::vector(hdr, hdr + hdr_length);
       if (r.success) {
         auto rec_tmpfile = new PrecompTmpFile();
         rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-        result.precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-        result.recursion_filesize = r.file_length;
-        result.recursion_used = true;
+        result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
+        result->recursion_filesize = r.file_length;
+        result->recursion_used = true;
       }
       else {
         if (!rdres.uncompressed_stream_mem.empty()) {
           auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
-          result.precompressed_stream = std::move(memstream);
+          result->precompressed_stream = std::move(memstream);
         }
         else {
           tmpfile->reopen();
-          result.precompressed_stream = std::move(tmpfile);
+          result->precompressed_stream = std::move(tmpfile);
         }
       }
 
-      result.rdres = std::move(rdres);
+      result->rdres = std::move(rdres);
 
       debug_pos(*precomp_mgr.ctx);
     }
@@ -436,7 +436,7 @@ bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsign
   return check_inflate_result(precomp_mgr, checkbuf_span, -15, original_input_pos, true);
 }
 
-deflate_precompression_result try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<deflate_precompression_result> try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
     D_BRUTE, checkbuf_span.data(), 0, original_input_pos, false,

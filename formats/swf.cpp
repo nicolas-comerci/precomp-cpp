@@ -9,8 +9,8 @@ bool swf_header_check(const std::span<unsigned char> checkbuf_span) {
   return cws_hdr && zlib_header_check(std::span(checkbuf + 8, checkbuf_span.size() - 8));
 }
 
-deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
-  deflate_precompression_result result = deflate_precompression_result(D_SWF);
+std::unique_ptr<deflate_precompression_result> try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+ std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_SWF);
   //int windowbits = (*(checkbuf_span.data() + 8) >> 4) + 8;
 
   long long deflate_stream_pos = original_input_pos + 10; // skip CWS and zLib header
@@ -19,7 +19,7 @@ deflate_precompression_result try_decompression_swf(Precomp& precomp_mgr, const 
     D_SWF, checkbuf_span.data() + 3, 7, deflate_stream_pos, true,
     "in SWF", precomp_mgr.get_tempfile_name("original_swf"));
 
-  result.input_pos_extra_add += 10;
+  result->input_pos_extra_add += 10;
   return result;
 }
 

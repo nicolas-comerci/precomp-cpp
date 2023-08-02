@@ -472,6 +472,78 @@ void try_recompression_gif(RecursionContext& context, std::byte header1) {
   GifDiffFree(&gDiff);
 }
 
+std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {
+    unsigned char input_bytes1[COMP_CHUNK];
+    unsigned char input_bytes2[COMP_CHUNK];
+    long long same_byte_count = 0;
+    long long same_byte_count_penalty = 0;
+    long long rek_same_byte_count = 0;
+    long long rek_same_byte_count_penalty = -1;
+    long long size1, size2, minsize;
+    long long i;
+    bool endNow = false;
+
+    bool use_penalty_bytes = false;
+
+    std::vector<char> penalty_bytes;
+
+    file1.seekg(0, std::ios_base::end);
+    file2.seekg(0, std::ios_base::end);
+    long long compare_end = std::min(file1.tellg() - pos1, file2.tellg() - pos2);
+
+    file1.seekg(pos1, std::ios_base::beg);
+    file2.seekg(pos2, std::ios_base::beg);
+
+    do {
+        precomp_mgr.call_progress_callback();
+
+        file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
+        size1 = file1.gcount();
+        file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
+        size2 = file2.gcount();
+
+        minsize = std::min(size1, size2);
+        for (i = 0; i < minsize; i++) {
+            if (input_bytes1[i] != input_bytes2[i]) {
+
+                same_byte_count_penalty -= 5; // 4 bytes = position, 1 byte = new byte
+
+                // if same_byte_count_penalty is too low, stop
+                if ((long long)(same_byte_count_penalty + (compare_end - same_byte_count)) < 0) {
+                    endNow = true;
+                    break;
+                }
+                // stop, if penalty_bytes len gets too big
+                if ((penalty_bytes.size() + 5) >= MAX_PENALTY_BYTES) {
+                    endNow = true;
+                    break;
+                }
+
+                // position
+                penalty_bytes.push_back((same_byte_count >> 24) % 256);
+                penalty_bytes.push_back((same_byte_count >> 16) % 256);
+                penalty_bytes.push_back((same_byte_count >> 8) % 256);
+                penalty_bytes.push_back(same_byte_count % 256);
+                // new byte
+                penalty_bytes.push_back(input_bytes1[i]);
+            } else {
+                same_byte_count_penalty++;
+            }
+
+            same_byte_count++;
+
+            if (same_byte_count_penalty > rek_same_byte_count_penalty) {
+                use_penalty_bytes = true;
+                rek_same_byte_count = same_byte_count;
+                rek_same_byte_count_penalty = same_byte_count_penalty;
+            }
+
+        }
+    } while ((minsize == COMP_CHUNK) && (!endNow));
+
+    return { rek_same_byte_count, use_penalty_bytes ? penalty_bytes: std::vector<char>()};
+}
+
 gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   gif_precompression_result result = gif_precompression_result();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();

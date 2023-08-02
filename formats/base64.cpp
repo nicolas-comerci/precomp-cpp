@@ -128,6 +128,38 @@ void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, const std::vec
   } while ((remaining_bytes > 0) && (avail_in > 0));
 }
 
+unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
+    unsigned char input_bytes1[COMP_CHUNK];
+    unsigned char input_bytes2[COMP_CHUNK];
+    long long same_byte_count = 0;
+    long long size1, size2, minsize;
+    int i;
+    bool endNow = false;
+
+    file1.seekg(pos1, std::ios_base::beg);
+    file2.seekg(pos2, std::ios_base::beg);
+
+    do {
+        precomp_mgr.call_progress_callback();
+
+        file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
+        size1 = file1.gcount();
+        file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
+        size1 = file2.gcount();
+
+        minsize = std::min(size1, size2);
+        for (i = 0; i < minsize; i++) {
+            if (input_bytes1[i] != input_bytes2[i]) {
+                endNow = true;
+                break;
+            }
+            same_byte_count++;
+        }
+    } while ((minsize == COMP_CHUNK) && (!endNow));
+
+    return same_byte_count;
+}
+
 base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   base64_precompression_result result = base64_precompression_result();

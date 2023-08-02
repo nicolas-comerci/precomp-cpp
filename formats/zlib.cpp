@@ -8,9 +8,9 @@ bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   return compression_method == 8;
 }
 
-deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<deflate_precompression_result> try_decompression_zlib(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
-  deflate_precompression_result result = deflate_precompression_result(D_RAW);
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_RAW);
   int windowbits = (*checkbuf >> 4) + 8;
 
   const auto deflate_stream_pos = original_input_pos + 2; // skip zLib header
@@ -19,7 +19,7 @@ deflate_precompression_result try_decompression_zlib(Precomp& precomp_mgr, const
     result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
       D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", precomp_mgr.get_tempfile_name("original_zlib"));
 
-    result.input_pos_extra_add += 2;
+    result->input_pos_extra_add += 2;
   }
   return result;
 }
