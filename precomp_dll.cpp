@@ -374,6 +374,16 @@ std::string Precomp::get_tempfile_name(const std::string& name, bool prepend_ran
   return (dir / filename).string();
 }
 
+void Precomp::init_format_handlers(bool is_recompressing) {
+    if (is_recompressing || switches.use_zip) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_ZIP]()));
+    }
+}
+
+const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
+    return format_handlers;
+}
+
 // get copyright message
 // msg = Buffer for error messages (256 bytes buffer size are enough)
 LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
@@ -446,8 +456,12 @@ void write_header(Precomp& precomp_mgr) {
 int compress_file_impl(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
-  if (precomp_mgr.recursion_depth == 0) write_header(precomp_mgr);
+  if (precomp_mgr.recursion_depth == 0) {
+      write_header(precomp_mgr);
+      precomp_mgr.init_format_handlers();
+  }
 
+  const auto& format_handlers = precomp_mgr.get_format_handlers();
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
 
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
@@ -475,27 +489,22 @@ int compress_file_impl(Precomp& precomp_mgr) {
   ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
   if (!ignore_this_pos) {
+    for (const auto& formatHandler : format_handlers) {
+        bool quick_check_result = formatHandler->quick_check(checkbuf);
+        if (!quick_check_result) continue;
 
-    // ZIP header?
-    if (precomp_mgr.switches.use_zip) {
-        auto handler = registeredHandlerFactoryFunctions[D_ZIP]();
+        auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+        if (!result->success) continue;
 
-        bool quick_check_result = handler->quick_check(checkbuf);
-        if (quick_check_result) {
-            auto result = handler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
-            compressed_data_found = result->success;
+        end_uncompressed_data(precomp_mgr);
+        result->dump_to_outfile(precomp_mgr);
 
-            if (result->success) {
-                end_uncompressed_data(precomp_mgr);
+        // start new uncompressed data
 
-                result->dump_to_outfile(precomp_mgr);
-
-                // start new uncompressed data
-
-                // set input file pointer after recompressed data
-                input_file_pos += result->input_pos_add_offset();
-            }
-        }
+        // set input file pointer after recompressed data
+        input_file_pos += result->input_pos_add_offset();
+        compressed_data_found = result->success;
+        break;
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
@@ -777,6 +786,7 @@ int compress_file(Precomp& precomp_mgr)
 
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
+  const auto& format_handlers = precomp_ctx.precomp.get_format_handlers();
 
   long long fin_pos = precomp_ctx.fin->tellg();
 
@@ -797,14 +807,19 @@ while (precomp_ctx.fin->good()) {
 
     unsigned char headertype = precomp_ctx.fin->get();
 
+    for (const auto& formatHandler : format_handlers) {
+        if (headertype == formatHandler->get_header_byte()) {
+            formatHandler->recompress(precomp_ctx, header1);
+            break;
+        }
+    }
+
     switch (headertype) {
     case D_PDF: { // PDF recompression
       recompress_pdf(precomp_ctx, header1);
       break;
     }     
-    case D_ZIP: { // ZIP recompression
-      auto handler = registeredHandlerFactoryFunctions[D_ZIP]();
-      handler->recompress(precomp_ctx, header1);
+    case D_ZIP: { // ZIP recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_GZIP: { // GZip recompression
@@ -1253,6 +1268,7 @@ int PrecompPrecompress(Precomp* precomp_mgr) {
 
 int PrecompRecompress(Precomp* precomp_mgr) {
   if (!precomp_mgr->statistics.header_already_read) read_header(*precomp_mgr);
+  precomp_mgr->init_format_handlers(true);
   return decompress_file(*precomp_mgr->ctx);
 }
 

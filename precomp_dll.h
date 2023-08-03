@@ -141,6 +141,9 @@ public:
 
     virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags) = 0;
 
+    // Each format handler is associated with a header byte which is outputted to the PCF file when writting the precompressed data
+    virtual SupportedFormats get_header_byte() = 0;
+
     // Subclasses should register themselves here, as the available PrecompFormatHandlers will be queried and the instances created when we create Precomp instances.
     // If you fail to register the PrecompFormatHandler here then it won't be available and any attempt to set it up for precompression, or of recompressing any file that uses your
     // format handler, will fail.
@@ -158,6 +161,7 @@ class Precomp {
   void set_input_stdin();
   void set_output_stdout();
   void register_output_observer_callbacks();
+  std::vector<std::unique_ptr<PrecompFormatHandler>> format_handlers {};
 
 public:
   explicit Precomp();
@@ -181,7 +185,10 @@ public:
 
   std::string get_tempfile_name(const std::string& name, bool prepend_random_tag = true) const;
 
-  int conversion_from_method;
+  // When precompressing only the requested (or default if nothing was specified) format handlers will be initialized, but on recompression we always enable them all
+  // as they might be needed to handle the already precompressed PCF file
+  void init_format_handlers(bool is_recompressing = false);
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& get_format_handlers() const;
 
   int recursion_depth = 0;
   

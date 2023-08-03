@@ -53,7 +53,6 @@
 
 std::string input_file_name;
 std::string output_file_name;
-int otf_xz_filter_used_count = 0;
 
 void(*log_output_func)(const std::string&) = &print_to_console;
 

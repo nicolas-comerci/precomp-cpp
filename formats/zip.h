@@ -12,6 +12,8 @@ public:
 
 	void recompress(RecursionContext& context, std::byte precomp_hdr_flags) override;
 
+	SupportedFormats get_header_byte() override { return D_ZIP; }
+
 	static ZipFormatHandler* create() {
 		return new ZipFormatHandler();
 	}
