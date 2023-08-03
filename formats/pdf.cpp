@@ -1,116 +1,130 @@
 #include "pdf.h"
+#include "deflate.h"
 
 #include <cstddef>
 #include <cstring>
 #include <memory>
 
-bool pdf_header_check(std::span<unsigned char> checkbuf_span) {
+enum BMP_HEADER_TYPE {
+    BMP_HEADER_NONE = 0,
+    BMP_HEADER_8BPP = 1,
+    BMP_HEADER_24BPP = 2
+};
+
+class pdf_precompression_result : public deflate_precompression_result {
+private:
+    unsigned int img_width;
+    unsigned int img_height;
+
+    void dump_bmp_hdr_to_outfile(Precomp& precomp_mgr) {
+        if (bmp_header_type == BMP_HEADER_NONE) return;
+        int i;
+
+        precomp_mgr.ctx->fout->put('B');
+        precomp_mgr.ctx->fout->put('M');
+        // BMP size in bytes
+        unsigned int bmp_size = ((img_width + 3) & -4) * img_height;
+        if (bmp_header_type == BMP_HEADER_24BPP) bmp_size *= 3;
+        if (bmp_header_type == BMP_HEADER_8BPP) {
+            bmp_size += 54 + 1024;
+        }
+        else {
+            bmp_size += 54;
+        }
+        fout_fput32_little_endian(*precomp_mgr.ctx->fout, bmp_size);
+
+        for (i = 0; i < 4; i++) {
+            precomp_mgr.ctx->fout->put(0);
+        }
+        precomp_mgr.ctx->fout->put(54);
+        if (bmp_header_type == BMP_HEADER_8BPP) {
+            precomp_mgr.ctx->fout->put(4);
+        }
+        else {
+            precomp_mgr.ctx->fout->put(0);
+        }
+        precomp_mgr.ctx->fout->put(0);
+        precomp_mgr.ctx->fout->put(0);
+        precomp_mgr.ctx->fout->put(40);
+        precomp_mgr.ctx->fout->put(0);
+        precomp_mgr.ctx->fout->put(0);
+        precomp_mgr.ctx->fout->put(0);
+
+        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_width);
+        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_height);
+
+        precomp_mgr.ctx->fout->put(1);
+        precomp_mgr.ctx->fout->put(0);
+
+        if (bmp_header_type == BMP_HEADER_8BPP) {
+            precomp_mgr.ctx->fout->put(8);
+        }
+        else {
+            precomp_mgr.ctx->fout->put(24);
+        }
+        precomp_mgr.ctx->fout->put(0);
+
+        for (i = 0; i < 4; i++) {
+            precomp_mgr.ctx->fout->put(0);
+        }
+
+        if (bmp_header_type == BMP_HEADER_24BPP)  img_width *= 3;
+
+        auto datasize = ((img_width + 3) & -4) * img_height;
+        if (bmp_header_type == BMP_HEADER_24BPP) datasize *= 3;
+        fout_fput32_little_endian(*precomp_mgr.ctx->fout, datasize);
+
+        for (i = 0; i < 16; i++) {
+            precomp_mgr.ctx->fout->put(0);
+        }
+
+        if (bmp_header_type == BMP_HEADER_8BPP) {
+            // write BMP palette
+            for (i = 0; i < 1024; i++) {
+                precomp_mgr.ctx->fout->put(0);
+            }
+        }
+    }
+public:
+    BMP_HEADER_TYPE bmp_header_type = BMP_HEADER_NONE;
+
+    explicit pdf_precompression_result(unsigned int img_width, unsigned int img_height)
+        : deflate_precompression_result(D_PDF), img_width(img_width), img_height(img_height) {}
+
+    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override {
+        bool must_pad_bmp = false;
+        if ((bmp_header_type != BMP_HEADER_NONE) && ((img_width % 4) != 0)) {
+            must_pad_bmp = true;
+        }
+        if (!must_pad_bmp) {
+            deflate_precompression_result::dump_precompressed_data_to_outfile(precomp_mgr);
+        }
+        else {
+            for (int y = 0; y < img_height; y++) {
+                fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, img_width);
+
+                for (int i = 0; i < (4 - (img_width % 4)); i++) {
+                    precomp_mgr.ctx->fout->put(0);
+                }
+            }
+        }
+    }
+    void dump_to_outfile(Precomp& precomp_mgr) override {
+        dump_header_to_outfile(precomp_mgr);
+        dump_penaltybytes_to_outfile(precomp_mgr);
+        dump_recon_data_to_outfile(precomp_mgr);
+        dump_stream_sizes_to_outfile(precomp_mgr);
+        dump_bmp_hdr_to_outfile(precomp_mgr);
+        dump_precompressed_data_to_outfile(precomp_mgr);
+    }
+};
+
+bool PdfFormatHandler::quick_check(std::span<unsigned char> checkbuf_span) {
   return memcmp(checkbuf_span.data(), "/FlateDecode", 12) == 0;
 }
 
-pdf_precompression_result::pdf_precompression_result(unsigned int img_width, unsigned int img_height)
-  : deflate_precompression_result(D_PDF), img_width(img_width), img_height(img_height) {}
-
-void pdf_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  bool must_pad_bmp = false;
-  if ((bmp_header_type != BMP_HEADER_NONE) && ((img_width % 4) != 0)) {
-    must_pad_bmp = true;
-  }
-  if (!must_pad_bmp) {
-    deflate_precompression_result::dump_precompressed_data_to_outfile(precomp_mgr);
-  }
-  else {
-    for (int y = 0; y < img_height; y++) {
-      fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, img_width);
-
-      for (int i = 0; i < (4 - (img_width % 4)); i++) {
-        precomp_mgr.ctx->fout->put(0);
-      }
-    }
-  }
-}
-
-void pdf_precompression_result::dump_bmp_hdr_to_outfile(Precomp& precomp_mgr) {
-  if (bmp_header_type == BMP_HEADER_NONE) return;
-  int i;
-
-  precomp_mgr.ctx->fout->put('B');
-  precomp_mgr.ctx->fout->put('M');
-  // BMP size in bytes
-  unsigned int bmp_size = ((img_width + 3) & -4) * img_height;
-  if (bmp_header_type == BMP_HEADER_24BPP) bmp_size *= 3;
-  if (bmp_header_type == BMP_HEADER_8BPP) {
-    bmp_size += 54 + 1024;
-  }
-  else {
-    bmp_size += 54;
-  }
-  fout_fput32_little_endian(*precomp_mgr.ctx->fout, bmp_size);
-
-  for (i = 0; i < 4; i++) {
-    precomp_mgr.ctx->fout->put(0);
-  }
-  precomp_mgr.ctx->fout->put(54);
-  if (bmp_header_type == BMP_HEADER_8BPP) {
-    precomp_mgr.ctx->fout->put(4);
-  }
-  else {
-    precomp_mgr.ctx->fout->put(0);
-  }
-  precomp_mgr.ctx->fout->put(0);
-  precomp_mgr.ctx->fout->put(0);
-  precomp_mgr.ctx->fout->put(40);
-  precomp_mgr.ctx->fout->put(0);
-  precomp_mgr.ctx->fout->put(0);
-  precomp_mgr.ctx->fout->put(0);
-
-  fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_width);
-  fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_height);
-
-  precomp_mgr.ctx->fout->put(1);
-  precomp_mgr.ctx->fout->put(0);
-
-  if (bmp_header_type == BMP_HEADER_8BPP) {
-    precomp_mgr.ctx->fout->put(8);
-  }
-  else {
-    precomp_mgr.ctx->fout->put(24);
-  }
-  precomp_mgr.ctx->fout->put(0);
-
-  for (i = 0; i < 4; i++) {
-    precomp_mgr.ctx->fout->put(0);
-  }
-
-  if (bmp_header_type == BMP_HEADER_24BPP)  img_width *= 3;
-
-  auto datasize = ((img_width + 3) & -4) * img_height;
-  if (bmp_header_type == BMP_HEADER_24BPP) datasize *= 3;
-  fout_fput32_little_endian(*precomp_mgr.ctx->fout, datasize);
-
-  for (i = 0; i < 16; i++) {
-    precomp_mgr.ctx->fout->put(0);
-  }
-
-  if (bmp_header_type == BMP_HEADER_8BPP) {
-    // write BMP palette
-    for (i = 0; i < 1024; i++) {
-      precomp_mgr.ctx->fout->put(0);
-    }
-  }
-}
-
-void pdf_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_recon_data_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_bmp_hdr_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
-}
-
-pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
-  pdf_precompression_result result = pdf_precompression_result(img_width, img_height);
+std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(img_width, img_height);
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("decomp_pdf"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -133,10 +147,10 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
     debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF", deflate_stream_pos);
 
     if (rdres.accepted) {
-      result.success = true;
+      result->success = true;
 
-      result.original_size = rdres.compressed_stream_size;
-      result.precompressed_size = rdres.uncompressed_stream_size;
+      result->original_size = rdres.compressed_stream_size;
+      result->precompressed_size = rdres.uncompressed_stream_size;
 
       precomp_mgr.statistics.recompressed_streams_count++;
       precomp_mgr.statistics.recompressed_pdf_count++;
@@ -146,13 +160,13 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
 
       if (img_bpc == 8) {
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
-          result.bmp_header_type = BMP_HEADER_8BPP;
+          result->bmp_header_type = BMP_HEADER_8BPP;
           print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (8 bit)\n");
           precomp_mgr.statistics.recompressed_pdf_count_8_bit++;
           precomp_mgr.statistics.recompressed_pdf_count--;
         }
         else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
-          result.bmp_header_type = BMP_HEADER_24BPP;
+          result->bmp_header_type = BMP_HEADER_24BPP;
           print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (24 bit)\n");
           precomp_mgr.statistics.decompressed_pdf_count_8_bit--;
           precomp_mgr.statistics.decompressed_pdf_count_24_bit++;
@@ -172,29 +186,29 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
       //   (/FlateDecode)
 
       std::byte bmp_c{ 0 };
-      if (result.bmp_header_type == BMP_HEADER_8BPP) {
+      if (result->bmp_header_type == BMP_HEADER_8BPP) {
         // 8 Bit, Bit 7,6 = 01
         bmp_c = std::byte{ 0b01000000 };
       }
-      else if (result.bmp_header_type == BMP_HEADER_24BPP) {
+      else if (result->bmp_header_type == BMP_HEADER_24BPP) {
         // 24 Bit, Bit 7,6 = 10
         bmp_c = std::byte{ 0b10000000 };
       }
 
-      result.flags = bmp_c;
-      result.inc_last_hdr_byte = false;
-      result.zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
+      result->flags = bmp_c;
+      result->inc_last_hdr_byte = false;
+      result->zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
 
       // write decompressed data
       if (!rdres.uncompressed_stream_mem.empty()) {
         unsigned char* buf_ptr = rdres.uncompressed_stream_mem.data();
-        result.precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result.precompressed_size);
+        result->precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result->precompressed_size);
       }
       else {
         tmpfile->reopen();
-        result.precompressed_stream = std::move(tmpfile);
+        result->precompressed_stream = std::move(tmpfile);
       }
-        result.rdres = std::move(rdres);
+        result->rdres = std::move(rdres);
 
       debug_pos(*precomp_mgr.ctx);
     }
@@ -205,13 +219,13 @@ pdf_precompression_result try_decompression_pdf(Precomp& precomp_mgr, unsigned c
     }
   }
 
-  result.input_pos_extra_add += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
+  result->input_pos_extra_add += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
   return result;
 }
 
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
-  pdf_precompression_result result = pdf_precompression_result(0, 0);
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(0, 0);
   long long act_search_pos = 12;
   bool found_stream = false;
   do {
@@ -337,7 +351,7 @@ pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsign
   return result;
 }
 
-void recompress_pdf(RecursionContext& context, std::byte precomp_hdr_flags) {
+void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   // restore PDF header

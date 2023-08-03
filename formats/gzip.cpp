@@ -1,4 +1,5 @@
 #include "gzip.h"
+#include "formats/deflate.h"
 
 bool GZipFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();

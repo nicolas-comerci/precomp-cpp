@@ -1,33 +1,22 @@
 #ifndef PRECOMP_PDF_HANDLER_H
 #define PRECOMP_PDF_HANDLER_H
 #include "precomp_dll.h"
-#include "deflate.h"
 
 #include <span>
 
-enum BMP_HEADER_TYPE {
-  BMP_HEADER_NONE = 0,
-  BMP_HEADER_8BPP = 1,
-  BMP_HEADER_24BPP = 2
-};
-
-bool pdf_header_check(std::span<unsigned char> checkbuf_span);
-
-class pdf_precompression_result: public deflate_precompression_result {
+class PdfFormatHandler : public PrecompFormatHandler {
 public:
-  unsigned int img_width;
-  unsigned int img_height;
-  BMP_HEADER_TYPE bmp_header_type = BMP_HEADER_NONE;
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-  pdf_precompression_result(unsigned int img_width, unsigned int img_height);
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
-  void dump_bmp_hdr_to_outfile(Precomp& precomp_mgr);
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags) override;
+
+	SupportedFormats get_header_byte() override { return D_PDF; }
+
+	static PdfFormatHandler* create() {
+		return new PdfFormatHandler();
+	}
 };
-
-pdf_precompression_result precompress_pdf(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos);
-
-void recompress_pdf(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_PDF_HANDLER_H

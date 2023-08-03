@@ -1,7 +1,6 @@
 #ifndef PRECOMP_GZIP_HANDLER_H
 #define PRECOMP_GZIP_HANDLER_H
 #include "precomp_dll.h"
-#include "formats/deflate.h"
 
 #include <span>
 
