@@ -1,6 +1,6 @@
 #include "gzip.h"
 
-bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span) {
+bool GZipFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   if ((*checkbuf == 31) && (*(checkbuf + 1) == 139)) {
     // check zLib header in GZip header
@@ -11,7 +11,7 @@ bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> chec
   return false;
 }
 
-std::unique_ptr<deflate_precompression_result> try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
+std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
   auto checkbuf = checkbuf_span.data();
   std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_GZIP);
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
@@ -75,7 +75,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_gzip(Precomp& p
   return result;
 }
 
-void recompress_gzip(RecursionContext& context, std::byte precomp_hdr_flags) {
+void GZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags) {
   context.fout->put(31);
   context.fout->put(139);
   recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_gzip"), "GZIP");

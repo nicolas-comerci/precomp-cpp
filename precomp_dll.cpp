@@ -94,6 +94,7 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
 
 std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHandlerFactoryFunctions = std::map<SupportedFormats, std::function<PrecompFormatHandler*()>>{};
 REGISTER_PRECOMP_FORMAT_HANDLER(D_ZIP, ZipFormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_GZIP, GZipFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -378,6 +379,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_zip) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_ZIP]()));
     }
+    if (is_recompressing || switches.use_gzip) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GZIP]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -505,24 +509,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
-    }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_gzip)) { // no ZIP header -> GZip header?
-      if (gzip_header_check(precomp_mgr, checkbuf)) {
-        auto result = try_decompression_gzip(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result->success;
-
-        if (result->success) {
-          end_uncompressed_data(precomp_mgr);
-
-          result->dump_to_outfile(precomp_mgr);
-
-          // start new uncompressed data
-
-          // set input file pointer after recompressed data
-          input_file_pos += result->input_pos_add_offset();
-        }
-      }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_pdf)) { // no Gzip header -> PDF FlateDecode?
@@ -822,8 +808,7 @@ while (precomp_ctx.fin->good()) {
     case D_ZIP: { // ZIP recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_GZIP: { // GZip recompression
-      recompress_gzip(precomp_ctx, header1);
+    case D_GZIP: { // GZip recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_PNG: { // PNG recompression

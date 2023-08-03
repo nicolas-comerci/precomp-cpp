@@ -5,10 +5,19 @@
 
 #include <span>
 
-bool gzip_header_check(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span);
+class GZipFormatHandler : public PrecompFormatHandler {
+public:
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-std::unique_ptr<deflate_precompression_result> try_decompression_gzip(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos);
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-void recompress_gzip(RecursionContext& context, std::byte precomp_hdr_flags);
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags) override;
+
+	SupportedFormats get_header_byte() override { return D_GZIP; }
+
+	static GZipFormatHandler* create() {
+		return new GZipFormatHandler();
+	}
+};
 
 #endif //PRECOMP_GZIP_HANDLER_H
