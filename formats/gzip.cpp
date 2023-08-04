@@ -76,7 +76,7 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
   return result;
 }
 
-void GZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags) {
+void GZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   context.fout->put(31);
   context.fout->put(139);
   recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_gzip"), "GZIP");

@@ -1,32 +1,22 @@
 #ifndef PRECOMP_PNG_HANDLER_H
 #define PRECOMP_PNG_HANDLER_H
 #include "precomp_dll.h"
-#include "formats/deflate.h"
 
 #include <span>
 
-bool png_header_check(std::span<unsigned char> checkbuf);
-
-class png_precompression_result: public deflate_precompression_result {
-protected:
-  void dump_idat_to_outfile(Precomp& precomp_mgr);
+class PngFormatHandler : public PrecompFormatHandler {
 public:
-  std::vector<unsigned int> idat_crcs;
-  std::vector<unsigned int> idat_lengths;
-  int idat_count;
-  unsigned int idat_pairs_written_count = 0;
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-  png_precompression_result();
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  long long input_pos_add_offset() override;
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+    constexpr std::vector<SupportedFormats> get_header_bytes() override { return {D_PNG, D_MULTIPNG}; }
+
+	static PngFormatHandler* create() {
+		return new PngFormatHandler();
+	}
 };
-
-png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos);
-
-void recompress_png(RecursionContext& context, std::byte precomp_hdr_flags);
-
-void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif  // PRECOMP_PNG_HANDLER_H

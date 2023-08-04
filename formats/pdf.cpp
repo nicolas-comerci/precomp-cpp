@@ -351,7 +351,7 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
   return result;
 }
 
-void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags) {
+void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   recompress_deflate_result rdres;
   unsigned hdr_length;
   // restore PDF header

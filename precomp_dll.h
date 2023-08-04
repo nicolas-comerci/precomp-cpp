@@ -139,10 +139,10 @@ public:
     // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
     virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
 
-    virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags) = 0;
+    virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
 
-    // Each format handler is associated with a header byte which is outputted to the PCF file when writting the precompressed data
-    virtual SupportedFormats get_header_byte() = 0;
+    // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
+    virtual constexpr std::vector<SupportedFormats> get_header_bytes() = 0;
 
     // Subclasses should register themselves here, as the available PrecompFormatHandlers will be queried and the instances created when we create Precomp instances.
     // If you fail to register the PrecompFormatHandler here then it won't be available and any attempt to set it up for precompression, or of recompressing any file that uses your

@@ -1,10 +1,27 @@
 #include "png.h"
+#include "formats/deflate.h"
 
 #include <memory>
 
 #include "contrib/preflate/preflate.h"
 
-bool png_header_check(std::span<unsigned char> checkbuf) {
+class png_precompression_result : public deflate_precompression_result {
+protected:
+    void dump_idat_to_outfile(Precomp& precomp_mgr);
+public:
+    std::vector<unsigned int> idat_crcs;
+    std::vector<unsigned int> idat_lengths;
+    int idat_count;
+    unsigned int idat_pairs_written_count = 0;
+
+    png_precompression_result();
+
+    long long input_pos_add_offset() override;
+
+    void dump_to_outfile(Precomp& precomp_mgr) override;
+};
+
+bool PngFormatHandler::quick_check(std::span<unsigned char> checkbuf) {
   return memcmp(checkbuf.data(), "IDAT", 4) == 0;
 }
 
@@ -68,9 +85,9 @@ void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
+std::unique_ptr<precompression_result> try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
-  png_precompression_result result;
+  std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>();
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("precompressed_png"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -78,9 +95,9 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, fpng_deflate_stream_pos, *tmpfile);
 
-  result.original_size = rdres.compressed_stream_size;
-  result.precompressed_size = rdres.uncompressed_stream_size;
-  if (result.precompressed_size > 0) { // seems to be a zLib-Stream
+  result->original_size = rdres.compressed_stream_size;
+  result->precompressed_size = rdres.uncompressed_stream_size;
+  if (result->precompressed_size > 0) { // seems to be a zLib-Stream
 
     precomp_mgr.statistics.decompressed_streams_count++;
     if (idat_count > 1)
@@ -109,27 +126,27 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
 
       debug_sums(*precomp_mgr.ctx, rdres);
 
-      result.success = true;
-      result.format = idat_count > 1 ? D_MULTIPNG : D_PNG;
+      result->success = true;
+      result->format = idat_count > 1 ? D_MULTIPNG : D_PNG;
 
       debug_pos(*precomp_mgr.ctx);
 
-      result.idat_count = idat_count;
-      result.idat_lengths = std::move(idat_lengths);
-      result.idat_crcs = std::move(idat_crcs);
+      result->idat_count = idat_count;
+      result->idat_lengths = std::move(idat_lengths);
+      result->idat_crcs = std::move(idat_crcs);
 
       if (!rdres.uncompressed_stream_mem.empty()) {
         auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
-        result.precompressed_stream = std::move(memstream);
+        result->precompressed_stream = std::move(memstream);
       }
       else {
         tmpfile->reopen();
-        result.precompressed_stream = std::move(tmpfile);
+        result->precompressed_stream = std::move(tmpfile);
       }
 
-      result.rdres = std::move(rdres);
-      std::copy(zlib_header.begin(), zlib_header.end(), std::back_inserter(result.zlib_header));
-      result.inc_last_hdr_byte = true;
+      result->rdres = std::move(rdres);
+      std::copy(zlib_header.begin(), zlib_header.end(), std::back_inserter(result->zlib_header));
+      result->inc_last_hdr_byte = true;
 
       debug_pos(*precomp_mgr.ctx);
     }
@@ -142,7 +159,7 @@ png_precompression_result try_decompression_png_multi(Precomp& precomp_mgr, IStr
   return result;
 }
 
-png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos) {
+std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos) {
   // space for length and crc parts of IDAT chunks
   std::vector<unsigned int> idat_lengths {};
   idat_lengths.reserve(100 * sizeof(unsigned int));
@@ -249,7 +266,7 @@ png_precompression_result precompress_png(Precomp& precomp_mgr, std::span<unsign
 
   auto result = try_decompression_png_multi(precomp_mgr, *temp_png, 0, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
-  result.input_pos_extra_add = 6;  // add header length to the deflate stream size for full input size
+  result->input_pos_extra_add = 6;  // add header length to the deflate stream size for full input size
   return result;
 }
 
@@ -348,4 +365,19 @@ void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags)
   if (!try_reconstructing_deflate_multipng(context.precomp, *context.fin, *context.fout, rdres, idat_count, idat_crcs.data(), idat_lengths.data())) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
+}
+
+void PngFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+    switch (precomp_hdr_format) {
+    case D_PNG: {
+        recompress_png(context, precomp_hdr_flags);
+        break;
+    }
+    case D_MULTIPNG: {
+        recompress_multipng(context, precomp_hdr_flags);
+        break;
+    }
+    default:
+        throw PrecompError(ERR_DURING_RECOMPRESSION);
+    }
 }

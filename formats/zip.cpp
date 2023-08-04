@@ -40,7 +40,7 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
   return result;
 }
 
-void ZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags) {
+void ZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   context.fout->put('P');
   context.fout->put('K');
   context.fout->put(3);

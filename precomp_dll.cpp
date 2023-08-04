@@ -96,6 +96,8 @@ std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHan
 REGISTER_PRECOMP_FORMAT_HANDLER(D_ZIP, ZipFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GZIP, GZipFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PDF, PdfFormatHandler::create);
+// This also adds support for D_MULTIPNG, handlers that define more than one SupportedFormats are somewhat wonky for now
+REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -386,6 +388,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_pdf) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PDF]()));
     }
+    if (is_recompressing || switches.use_png) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PNG]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -513,25 +518,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
-    }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_png)) { // no PDF header -> PNG IDAT?
-      if (png_header_check(checkbuf)) {
-        auto result = precompress_png(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result.success;
-
-        if (result.success) {
-          end_uncompressed_data(precomp_mgr);
-
-          result.dump_to_outfile(precomp_mgr);
-
-          // start new uncompressed data
-
-          // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
-        }
-      }
-
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_gif)) { // no PNG header -> GIF header?
@@ -779,11 +765,16 @@ while (precomp_ctx.fin->good()) {
 
     unsigned char headertype = precomp_ctx.fin->get();
 
+    bool handlerFound = false;
     for (const auto& formatHandler : format_handlers) {
-        if (headertype == formatHandler->get_header_byte()) {
-            formatHandler->recompress(precomp_ctx, header1);
-            break;
+        for (auto formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
+            if (headertype == formatHandlerHeaderByte) {
+                formatHandler->recompress(precomp_ctx, header1, formatHandlerHeaderByte);
+                handlerFound = true;
+                break;
+            }
         }
+        if (handlerFound) break;
     }
 
     switch (headertype) {
@@ -796,12 +787,10 @@ while (precomp_ctx.fin->good()) {
     case D_GZIP: { // GZip recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_PNG: { // PNG recompression
-      recompress_png(precomp_ctx, header1);
+    case D_PNG: { // PNG recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_MULTIPNG: { // PNG multi recompression
-      recompress_multipng(precomp_ctx, header1);
+    case D_MULTIPNG: { // PNG multi recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_GIF: { // GIF recompression

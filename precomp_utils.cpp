@@ -98,10 +98,6 @@ std::string precomp_error_msg(int error_nr, const char* extra_info) {
     return "Intense mode level limit too big";
   case ERR_BRUTE_MODE_LIMIT_TOO_BIG:
     return "Brute mode level limit too big";
-  case ERR_ONLY_SET_LZMA_MEMORY_ONCE:
-    return "LZMA maximal memory can only be set once";
-  case ERR_ONLY_SET_LZMA_THREAD_ONCE:
-    return "LZMA thread count can only be set once";
   case ERR_DURING_RECOMPRESSION:
     return "Error recompressing data!";
   case ERR_NO_PCF_HEADER:
