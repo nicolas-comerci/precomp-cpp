@@ -16,7 +16,7 @@ const char* packjpg_version_info() {
   return pjglib_version_info();
 }
 
-bool jpeg_header_check(const std::span<unsigned char> checkbuf_span) {
+bool JpegFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
   return
@@ -26,8 +26,8 @@ bool jpeg_header_check(const std::span<unsigned char> checkbuf_span) {
       );
 }
 
-precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
-  precompression_result result = precompression_result(D_JPG);
+std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
+  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_JPG);
   auto random_tag = temp_files_tag();
   std::string original_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_original_jpg", false);
   std::string decompressed_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_precompressed_jpg", false);
@@ -279,29 +279,29 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
       }
       precomp_mgr.ctx->non_zlib_was_used = true;
 
-      result.original_size = jpg_length;
-      result.precompressed_size = jpg_new_length.value();
+      result->original_size = jpg_length;
+      result->precompressed_size = jpg_new_length.value();
       jpg_success = true;
     }
   }
 
   if (jpg_success) {
-    print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli bytes\n", result.original_size, result.precompressed_size);
+    print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, recompressed to %lli bytes\n", result->original_size, result->precompressed_size);
 
-    result.success = true;
+    result->success = true;
     std::byte jpg_flags{ 0b1 }; // no penalty bytes
     if (mjpg_dht_used) jpg_flags |= std::byte{ 0b100 }; // motion JPG DHT used
     if (brunsli_used) jpg_flags |= std::byte{ 0b1000 };
-    result.flags = jpg_flags;
+    result->flags = jpg_flags;
 
     if (in_memory) {
       auto mem = jpg_mem_out.release();
-      auto memstream = memiostream::make(mem, mem + result.precompressed_size, true);
-      result.precompressed_stream = std::move(memstream);
+      auto memstream = memiostream::make(mem, mem + result->precompressed_size, true);
+      result->precompressed_stream = std::move(memstream);
     }
     else {
       tmpfile->reopen();
-      result.precompressed_stream = std::move(tmpfile);
+      result->precompressed_stream = std::move(tmpfile);
     }
   }
   else {
@@ -311,8 +311,8 @@ precompression_result try_decompression_jpg(Precomp& precomp_mgr, long long jpg_
   return result;
 }
 
-precompression_result precompress_jpeg(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos) {
-  precompression_result result = precompression_result(D_JPG);
+std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos) {
+  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_JPG);
   bool done = false, found = false;
   bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
   bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);
@@ -394,7 +394,7 @@ int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
   return count;
 }
 
-void recompress_jpg(RecursionContext& context, std::byte flags) {
+void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, SupportedFormats precomp_hdr_format) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
 
   auto random_tag = temp_files_tag();

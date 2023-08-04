@@ -99,6 +99,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_PDF, PdfFormatHandler::create);
 // This also adds support for D_MULTIPNG, handlers that define more than one SupportedFormats are somewhat wonky for now
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GIF, GifFormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -395,6 +396,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_gif) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GIF]()));
     }
+    if (is_recompressing || switches.use_jpg) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_JPG]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -522,23 +526,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
-    }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_jpg)) { // no GIF header -> JPG header?
-      if (jpeg_header_check(checkbuf)) {
-        auto result = precompress_jpeg(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result.success;
-        if (result.success) {
-          end_uncompressed_data(precomp_mgr);
-
-          result.dump_to_outfile(precomp_mgr);
-
-          // start new uncompressed data
-
-          // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
-        }
-      }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
@@ -783,8 +770,7 @@ while (precomp_ctx.fin->good()) {
     case D_GIF: { // GIF recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_JPG: { // JPG recompression
-      recompress_jpg(precomp_ctx, header1);
+    case D_JPG: { // JPG recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_SWF: { // SWF recompression
