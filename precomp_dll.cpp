@@ -100,6 +100,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_PDF, PdfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GIF, GifFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -399,6 +400,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_jpg) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_JPG]()));
     }
+    if (is_recompressing || switches.use_mp3) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_MP3]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -526,24 +530,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
-    }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_mp3)) { // no JPG header -> MP3 header?
-      if (mp3_header_check(checkbuf)) { // frame start
-        auto result = precompress_mp3(precomp_mgr, input_file_pos, checkbuf);
-        compressed_data_found = result.success;
-        if (result.success) {
-          // end uncompressed data
-          end_uncompressed_data(precomp_mgr);
-
-          result.dump_to_outfile(precomp_mgr);
-
-          // start new uncompressed data
-
-          // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
-        }
-      }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
@@ -785,8 +771,7 @@ while (precomp_ctx.fin->good()) {
       recompress_bzip2(precomp_ctx, header1);
       break;
     }
-    case D_MP3: { // MP3 recompression
-      recompress_mp3(precomp_ctx);
+    case D_MP3: { // MP3 recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_BRUTE: { // brute mode recompression
