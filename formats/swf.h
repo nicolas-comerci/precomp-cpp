@@ -1,14 +1,22 @@
 #ifndef PRECOMP_SWF_HANDLER_H
 #define PRECOMP_SWF_HANDLER_H
 #include "precomp_dll.h"
-#include "formats/deflate.h"
 
 #include <span>
 
-bool swf_header_check(const std::span<unsigned char> checkbuf_span);
+class SwfFormatHandler : public PrecompFormatHandler {
+public:
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-std::unique_ptr<deflate_precompression_result> try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-void recompress_swf(RecursionContext& context, std::byte precomp_hdr_flags);
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
+
+	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_SWF }; }
+
+	static SwfFormatHandler* create() {
+		return new SwfFormatHandler();
+	}
+};
 
 #endif //PRECOMP_SWF_HANDLER_H

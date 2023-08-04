@@ -101,6 +101,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GIF, GifFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -403,6 +404,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_mp3) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_MP3]()));
     }
+    if (is_recompressing || switches.use_swf) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_SWF]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -530,22 +534,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
-    }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_swf)) { // no MP3 header -> SWF header?
-      // CWS = Compressed SWF file
-      if (swf_header_check(checkbuf)) {
-        auto result = try_decompression_swf(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result->success;
-        if (result->success) {
-          end_uncompressed_data(precomp_mgr);
-
-          result->dump_to_outfile(precomp_mgr);
-
-          // set input file pointer after recompressed data
-          input_file_pos += result->input_pos_add_offset();
-        }
-      }
     }
 
     if ((!compressed_data_found) && (precomp_mgr.switches.use_base64)) { // no SWF header -> Base64?
@@ -759,8 +747,7 @@ while (precomp_ctx.fin->good()) {
     case D_JPG: { // JPG recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_SWF: { // SWF recompression
-      recompress_swf(precomp_ctx, header1);
+    case D_SWF: { // SWF recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_BASE64: { // Base64 recompression

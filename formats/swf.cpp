@@ -1,15 +1,15 @@
 #include "swf.h"
 
-#include "zlib.h"
+#include "formats/zlib.h"
 
-bool swf_header_check(const std::span<unsigned char> checkbuf_span) {
+bool SwfFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   // CWS = Compressed SWF file
   auto cws_hdr = (*checkbuf == 'C') && (*(checkbuf + 1) == 'W') && (*(checkbuf + 2) == 'S');
   return cws_hdr && zlib_header_check(std::span(checkbuf + 8, checkbuf_span.size() - 8));
 }
 
-std::unique_ptr<deflate_precompression_result> try_decompression_swf(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+std::unique_ptr<precompression_result> SwfFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_SWF);
   //int windowbits = (*(checkbuf_span.data() + 8) >> 4) + 8;
 
@@ -23,7 +23,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_swf(Precomp& pr
   return result;
 }
 
-void recompress_swf(RecursionContext& context, std::byte precomp_hdr_flags) {
+void SwfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   context.fout->put('C');
   context.fout->put('W');
   context.fout->put('S');
