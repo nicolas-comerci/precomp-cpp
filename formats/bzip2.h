@@ -4,21 +4,19 @@
 
 #include <span>
 
-class bzip2_precompression_result : public precompression_result {
+class BZip2FormatHandler : public PrecompFormatHandler {
 public:
-  std::optional<long long> recursion_filesize;
-  int compression_level;
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-  explicit bzip2_precompression_result(int compression_level);
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
+
+	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_BZIP2 }; }
+
+	static BZip2FormatHandler* create() {
+		return new BZip2FormatHandler();
+	}
 };
-
-bool bzip2_header_check(const std::span<unsigned char> checkbuf_span);
-
-bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos);
-
-void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_BZip2_HANDLER_H

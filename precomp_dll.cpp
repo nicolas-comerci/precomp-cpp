@@ -103,6 +103,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_BZIP2, BZip2FormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -411,6 +412,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_base64) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BASE64]()));
     }
+    if (is_recompressing || switches.use_bzip2) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BZIP2]()));
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
@@ -539,22 +543,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         compressed_data_found = result->success;
         break;
     }
-
-    if ((!compressed_data_found) && (precomp_mgr.switches.use_bzip2)) { // no Base64 header -> bZip2?
-      if (bzip2_header_check(checkbuf)) {
-        auto result = try_decompression_bzip2(precomp_mgr, checkbuf, input_file_pos);
-        compressed_data_found = result.success;
-        if (result.success) {
-          end_uncompressed_data(precomp_mgr);
-
-          result.dump_to_outfile(precomp_mgr);
-
-          // set input file pointer after recompressed data
-          input_file_pos += result.input_pos_add_offset();
-        }
-      }
-    }
-
 
    // nothing so far -> if intense mode is active, look for raw zLib header
    if (intense_mode_is_active(precomp_mgr)) {
@@ -742,8 +730,7 @@ while (precomp_ctx.fin->good()) {
     case D_BASE64: { // Base64 recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_BZIP2: { // bZip2 recompression
-      recompress_bzip2(precomp_ctx, header1);
+    case D_BZIP2: { // bZip2 recompression, should have already been handled on the formatHandler section above
       break;
     }
     case D_MP3: { // MP3 recompression, should have already been handled on the formatHandler section above

@@ -6,6 +6,17 @@
 #include <memory>
 #include <cstring>
 
+class bzip2_precompression_result : public precompression_result {
+public:
+    std::optional<long long> recursion_filesize;
+    int compression_level;
+
+    explicit bzip2_precompression_result(int compression_level);
+
+    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
+    void dump_to_outfile(Precomp& precomp_mgr) override;
+};
+
 bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 void bzip2_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
   if (recursion_filesize.has_value()) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize.value());
@@ -20,7 +31,7 @@ void bzip2_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-bool bzip2_header_check(const std::span<unsigned char> checkbuf_span) {
+bool BZip2FormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   // BZhx = header, x = compression level/blocksize (1-9)
   return (*checkbuf == 'B') && (*(checkbuf + 1) == 'Z') && (*(checkbuf + 2) == 'h');
@@ -290,9 +301,9 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_strea
   return r;
 }
 
-bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   const int compression_level = *(checkbuf_span.data() + 3) - '0';
-  bzip2_precompression_result result = bzip2_precompression_result(compression_level);
+  std::unique_ptr<bzip2_precompression_result> result = std::make_unique<bzip2_precompression_result>(compression_level);
   if ((compression_level < 1) || (compression_level > 9)) return result;
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
@@ -330,7 +341,7 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
     print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, decompressed to %lli bytes\n", best_identical_bytes, best_identical_bytes_decomp);
 
     precomp_mgr.ctx->non_zlib_was_used = true;
-    result.success = true;
+    result->success = true;
 
     // check recursion
     tmpfile->close();
@@ -347,24 +358,24 @@ bzip2_precompression_result try_decompression_bzip2(Precomp& precomp_mgr, const 
     if (r.success) {
       header_byte |= std::byte{ 0b10000000 };
     }
-    result.flags = header_byte;
+    result->flags = header_byte;
 
     // store penalty bytes, if any
-    result.penalty_bytes = std::move(best_penalty_bytes);
+    result->penalty_bytes = std::move(best_penalty_bytes);
 
-    result.original_size = best_identical_bytes;
-    result.precompressed_size = best_identical_bytes_decomp;
+    result->original_size = best_identical_bytes;
+    result->precompressed_size = best_identical_bytes_decomp;
 
     // write decompressed data
     if (r.success) {
       const auto rec_tmpfile = new PrecompTmpFile();
       rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-      result.precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-      result.recursion_filesize = r.file_length;
+      result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
+      result->recursion_filesize = r.file_length;
     }
     else {
       tmpfile->reopen();
-      result.precompressed_stream = std::move(tmpfile);
+      result->precompressed_stream = std::move(tmpfile);
     }
   }
   else {
@@ -466,7 +477,7 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
   return BZ_OK;
 }
 
-void recompress_bzip2(RecursionContext& context, std::byte precomp_hdr_flags) {
+void BZip2FormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
 
   unsigned char header2 = context.fin->get();
