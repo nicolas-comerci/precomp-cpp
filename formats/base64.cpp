@@ -4,47 +4,58 @@
 #include <cstring>
 #include <memory>
 
-bool base64_header_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
-  if ((*(checkbuf + 1) == 'o') && (*(checkbuf + 2) == 'n') && (*(checkbuf + 3) == 't') && (*(checkbuf + 4) == 'e')) {
-    unsigned char cte_detect[33];
-    for (int i = 0; i < 33; i++) {
-      cte_detect[i] = tolower(*(checkbuf + i));
-    }
-    return memcmp(cte_detect, "content-transfer-encoding: base64", 33) == 0;
-  }
-  return false;
-}
+class base64_precompression_result : public precompression_result {
+    void dump_base64_header(Precomp& precomp_mgr) const {
+        // write "header", but change first char to prevent re-detection
+        fout_fput_vlint(*precomp_mgr.ctx->fout, base64_header.size());
+        precomp_mgr.ctx->fout->put(base64_header[0] - 1);
+        precomp_mgr.ctx->fout->write(reinterpret_cast<const char*>(base64_header.data() + 1), base64_header.size() - 1);
 
-base64_precompression_result::base64_precompression_result() : precompression_result(D_BASE64) {}
-void base64_precompression_result::dump_base64_header(Precomp& precomp_mgr) {
-  // write "header", but change first char to prevent re-detection
-  fout_fput_vlint(*precomp_mgr.ctx->fout, base64_header.size());
-  precomp_mgr.ctx->fout->put(base64_header[0] - 1);
-  precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(base64_header.data() + 1), base64_header.size() - 1);
-
-  fout_fput_vlint(*precomp_mgr.ctx->fout, base64_line_len.size());
-  if (line_case == 2) {
-    for (auto chr : base64_line_len) {
-      precomp_mgr.ctx->fout->put(chr);
+        fout_fput_vlint(*precomp_mgr.ctx->fout, base64_line_len.size());
+        if (line_case == 2) {
+            for (auto chr : base64_line_len) {
+                precomp_mgr.ctx->fout->put(chr);
+            }
+        }
+        else {
+            precomp_mgr.ctx->fout->put(base64_line_len[0]);
+            if (line_case == 1) precomp_mgr.ctx->fout->put(base64_line_len[base64_line_len.size() - 1]);
+        }
     }
-  }
-  else {
-    precomp_mgr.ctx->fout->put(base64_line_len[0]);
-    if (line_case == 1) precomp_mgr.ctx->fout->put(base64_line_len[base64_line_len.size() - 1]);
-  }
-}
-void base64_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
-  auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
-}
-void base64_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_base64_header(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
+public:
+    std::vector<unsigned char> base64_header;
+    int line_case = 0;
+    std::vector<unsigned int> base64_line_len;
+    bool recursion_used = false;
+    long long recursion_filesize = 0;
+
+    explicit base64_precompression_result() : precompression_result(D_BASE64) {}
+
+    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override {
+        if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
+        auto out_size = recursion_used ? recursion_filesize : precompressed_size;
+        fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+    }
+
+    void dump_to_outfile(Precomp& precomp_mgr) override {
+        dump_header_to_outfile(precomp_mgr);
+        dump_base64_header(precomp_mgr);
+        dump_penaltybytes_to_outfile(precomp_mgr);
+        dump_stream_sizes_to_outfile(precomp_mgr);
+        dump_precompressed_data_to_outfile(precomp_mgr);
+    }
+};
+
+bool Base64FormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
+    auto checkbuf = checkbuf_span.data();
+    if ((*(checkbuf + 1) == 'o') && (*(checkbuf + 2) == 'n') && (*(checkbuf + 3) == 't') && (*(checkbuf + 4) == 'e')) {
+        unsigned char cte_detect[33];
+        for (int i = 0; i < 33; i++) {
+            cte_detect[i] = tolower(*(checkbuf + i));
+        }
+        return memcmp(cte_detect, "content-transfer-encoding: base64", 33) == 0;
+    }
+    return false;
 }
 
 // Base64 alphabet
@@ -160,9 +171,9 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
     return same_byte_count;
 }
 
-base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
+std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp_mgr, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
-  base64_precompression_result result = base64_precompression_result();
+  std::unique_ptr<base64_precompression_result> result = std::make_unique<base64_precompression_result>();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("decomp_base64"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
@@ -209,8 +220,8 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
                 stream_finished = true;
                 break;
               }
-              result.base64_line_len.push_back(act_line_len);
-              if (result.base64_line_len.size() == 65534) stream_finished = true;
+              result->base64_line_len.push_back(act_line_len);
+              if (result->base64_line_len.size() == 65534) stream_finished = true;
               act_line_len = 0;
             }
             continue;
@@ -219,7 +230,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
             cr_count = 0;
           }
           stream_finished = true;
-          result.base64_line_len.push_back(act_line_len);
+          result->base64_line_len.push_back(act_line_len);
           act_line_len = 0;
           // "=" -> Padding
           if (in_buf[j] == '=') {
@@ -255,8 +266,8 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     } while ((avail_in == CHUNK) && (!decoding_failed) && (!stream_finished));
 
     // if one of the lines is longer than 255 characters -> decoding failed
-    for (size_t i = 0; i < result.base64_line_len.size(); i++) {
-      if (result.base64_line_len[i] > 255) {
+    for (size_t i = 0; i < result->base64_line_len.size(); i++) {
+      if (result->base64_line_len[i] > 255) {
         decoding_failed = true;
         break;
       }
@@ -267,16 +278,16 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
   if (!decoding_failed) {
     std::byte line_case{ 0 }; // one length for all lines
     // check line case
-    if (result.base64_line_len.size() != 1) {
-      for (size_t i = 1; i < (result.base64_line_len.size() - 1); i++) {
-        if (result.base64_line_len[i] != result.base64_line_len[0]) {
+    if (result->base64_line_len.size() != 1) {
+      for (size_t i = 1; i < (result->base64_line_len.size() - 1); i++) {
+        if (result->base64_line_len[i] != result->base64_line_len[0]) {
           line_case = std::byte{ 0b10 }; // save complete line length list
           break;
         }
       }
       if (line_case == std::byte{ 0 }) {
         // check last line
-        if (result.base64_line_len[result.base64_line_len.size() - 1] != result.base64_line_len[0]) {
+        if (result->base64_line_len[result->base64_line_len.size() - 1] != result->base64_line_len[0]) {
           line_case = std::byte{ 0b1 }; // first length for all lines, second length for last line
         }
       }
@@ -290,7 +301,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
     tmpfile->seekg(0, std::ios_base::end);
     decoded_size = tmpfile->tellg();
 
-    print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result.base64_line_len.size(), original_input_pos);
+    print_to_log(PRECOMP_DEBUG_LOG, "Possible Base64-Stream (line_case %i, line_count %i) found at position %lli\n", line_case, result->base64_line_len.size(), original_input_pos);
     print_to_log(PRECOMP_DEBUG_LOG, "Can be decoded to %lli bytes\n", decoded_size);
 
     long long compressed_size;
@@ -305,7 +316,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       remove(frecomp_filename.c_str());
       PrecompTmpFile frecomp;
       frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-      base64_reencode(*tmpfile, frecomp, result.base64_line_len);
+      base64_reencode(*tmpfile, frecomp, result->base64_line_len);
 
       tmpfile->close();
       compressed_size = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
@@ -316,7 +327,7 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
       precomp_mgr.statistics.recompressed_base64_count++;
       print_to_log(PRECOMP_DEBUG_LOG, "Match: encoded to %lli bytes\n");
 
-      result.success = true;
+      result->success = true;
 
       // check recursion
       tmpfile->close();
@@ -330,24 +341,24 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
         header_byte |= std::byte{ 0b10000000 };
       }
 
-      result.flags = header_byte;
-      result.base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
+      result->flags = header_byte;
+      result->base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
 
       // TODO: check, aren't these two switched?
-      result.original_size = decoded_size;
-      result.precompressed_size = compressed_size;
+      result->original_size = decoded_size;
+      result->precompressed_size = compressed_size;
 
       // write decompressed data
       if (r.success) {
         auto rec_tmpfile = new PrecompTmpFile();
         rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-        result.precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-        result.recursion_filesize = r.file_length;
-        result.recursion_used = true;
+        result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
+        result->recursion_filesize = r.file_length;
+        result->recursion_used = true;
       }
       else {
         tmpfile->reopen();
-        result.precompressed_stream = std::move(tmpfile);
+        result->precompressed_stream = std::move(tmpfile);
       }
     }
     else {
@@ -357,9 +368,9 @@ base64_precompression_result try_decompression_base64(Precomp& precomp_mgr, long
   return result;
 }
 
-base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+std::unique_ptr<precompression_result> Base64FormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
-  base64_precompression_result result = base64_precompression_result();
+  std::unique_ptr<precompression_result> result = std::make_unique<base64_precompression_result>();
   // search for double CRLF, all between is "header"
   int base64_header_length = 33;
   bool found_double_crlf = false;
@@ -381,12 +392,12 @@ base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std:
   if (found_double_crlf) {
     result = try_decompression_base64(precomp_mgr, original_input_pos, base64_header_length, checkbuf_span);
 
-    result.input_pos_extra_add += base64_header_length;
+    result->input_pos_extra_add += base64_header_length;
   }
   return result;
 }
 
-void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags) {
+void Base64FormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - Base64\n");
 
   int line_case = static_cast<int>(precomp_hdr_flags & std::byte{ 0b1100 });

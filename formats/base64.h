@@ -4,27 +4,19 @@
 
 #include <span>
 
-class base64_precompression_result : public precompression_result {
+class Base64FormatHandler : public PrecompFormatHandler {
 public:
-  std::vector<unsigned char> base64_header;
-  int line_case;
-  std::vector<unsigned int> base64_line_len;
-  bool recursion_used = false;
-  long long recursion_filesize;
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-  base64_precompression_result();
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  void dump_base64_header(Precomp& precomp_mgr);
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
-  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
+	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_BASE64 }; }
 
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+	static Base64FormatHandler* create() {
+		return new Base64FormatHandler();
+	}
 };
-
-bool base64_header_check(const std::span<unsigned char> checkbuf_span);
-
-base64_precompression_result precompress_base64(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
-
-void recompress_base64(RecursionContext& context, std::byte precomp_hdr_flags);
 
 #endif //PRECOMP_B64_HANDLER_H
