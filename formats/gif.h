@@ -4,21 +4,19 @@
 
 #include <span>
 
-class gif_precompression_result : public precompression_result {
-  void dump_gif_diff_to_outfile(Precomp& precomp_mgr);
+class GifFormatHandler : public PrecompFormatHandler {
 public:
+	bool quick_check(std::span<unsigned char> buffer) override;
 
-  std::vector<unsigned char> gif_diff;
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  gif_precompression_result();
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_GIF }; }
+
+	static GifFormatHandler* create() {
+		return new GifFormatHandler();
+	}
 };
-
-bool gif_header_check(const std::span<unsigned char> checkbuf_span);
-
-gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos);
-
-void try_recompression_gif(RecursionContext& context, std::byte header1);
 
 #endif // PRECOMP_GIF_HANDLER_H

@@ -5,8 +5,18 @@
 #include <cstddef>
 #include <cstring>
 
+class gif_precompression_result : public precompression_result {
+    void dump_gif_diff_to_outfile(Precomp& precomp_mgr) const;
+public:
+    std::vector<unsigned char> gif_diff;
+
+    explicit gif_precompression_result();
+
+    void dump_to_outfile(Precomp& precomp_mgr) override;
+};
+
 gif_precompression_result::gif_precompression_result() : precompression_result(D_GIF) {}
-void gif_precompression_result::dump_gif_diff_to_outfile(Precomp& precomp_mgr) {
+void gif_precompression_result::dump_gif_diff_to_outfile(Precomp& precomp_mgr) const {
   // store diff bytes
   fout_fput_vlint(*precomp_mgr.ctx->fout, gif_diff.size());
   if (!gif_diff.empty())
@@ -106,7 +116,7 @@ bool recompress_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFi
   return recompress_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool gif_header_check(const std::span<unsigned char> checkbuf_span) {
+bool GifFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   return
     *checkbuf == 'G' && *(checkbuf + 1) == 'I' && *(checkbuf + 2) == 'F' &&
@@ -381,7 +391,7 @@ bool recompress_gif(IStreamLike& srcfile, OStreamLike& dstfile, unsigned char bl
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
 
-void try_recompression_gif(RecursionContext& context, std::byte header1) {
+void GifFormatHandler::recompress(RecursionContext& context, std::byte header1, SupportedFormats precomp_hdr_format) {
   unsigned char block_size = 255;
 
   const bool penalty_bytes_stored = ((header1 & std::byte{ 0b10 }) == std::byte{ 0b10 });
@@ -544,8 +554,8 @@ std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_
     return { rek_same_byte_count, use_penalty_bytes ? penalty_bytes: std::vector<char>()};
 }
 
-gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
-  gif_precompression_result result = gif_precompression_result();
+std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+  std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>();
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("decomp_gif"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
@@ -599,36 +609,36 @@ gif_precompression_result precompress_gif(Precomp& precomp_mgr, const std::span<
     frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
     auto [best_identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx, *precomp_mgr.ctx->fin, frecomp2, original_input_pos, 0);
     frecomp2.close();
-    result.original_size = best_identical_bytes;
-    result.precompressed_size = decomp_length;
+    result->original_size = best_identical_bytes;
+    result->precompressed_size = decomp_length;
 
-    if (result.original_size < gif_length) {
+    if (result->original_size < gif_length) {
       print_to_log(PRECOMP_DEBUG_LOG, "Recompression failed\n");
     }
     else {
       print_to_log(PRECOMP_DEBUG_LOG, "Recompression successful\n");
       recompress_success_needed = true;
 
-      if (result.original_size > precomp_mgr.switches.min_ident_size) {
+      if (result->original_size > precomp_mgr.switches.min_ident_size) {
         precomp_mgr.statistics.recompressed_streams_count++;
         precomp_mgr.statistics.recompressed_gif_count++;
         precomp_mgr.ctx->non_zlib_was_used = true;
 
-        result.success = true;
+        result->success = true;
 
         // write compressed data header (GIF)
         std::byte add_bits {0};
         if (!penalty_bytes.empty()) add_bits |= std::byte{0b10};
         if (block_size == 254) add_bits |= std::byte{0b100};
         add_bits |= std::byte{0b10000000};
-        result.flags = std::byte{0b1} | add_bits;
+        result->flags = std::byte{0b1} | add_bits;
 
-        result.gif_diff = std::vector(gDiff.GIFDiff, gDiff.GIFDiff + gDiff.GIFDiffIndex);
+        result->gif_diff = std::vector(gDiff.GIFDiff, gDiff.GIFDiff + gDiff.GIFDiffIndex);
 
-        result.penalty_bytes = std::move(penalty_bytes);
+        result->penalty_bytes = std::move(penalty_bytes);
 
         tmpfile->reopen();
-        result.precompressed_stream = std::move(tmpfile);
+        result->precompressed_stream = std::move(tmpfile);
       }
     }
   }
