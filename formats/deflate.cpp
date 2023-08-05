@@ -11,10 +11,10 @@ std::byte make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
   return std::byte{ 0b1 } | (rdres.zlib_perfect ? static_cast<std::byte>(rdres.zlib_comp_level) << 2 : std::byte{ 0b10 });
 }
 
-void deflate_precompression_result::dump_recon_data_to_outfile(Precomp& precomp_mgr) {
+void deflate_precompression_result::dump_recon_data_to_outfile(Precomp& precomp_mgr) const {
   if (!rdres.zlib_perfect) {
     fout_fput_vlint(*precomp_mgr.ctx->fout, rdres.recon_data.size());
-    precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
+    precomp_mgr.ctx->fout->write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
   }
 }
 deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
@@ -305,8 +305,8 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       debug_pos(*precomp_mgr.ctx);
     }
     else {
-      if (type == D_SWF && intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_pos - 2);
-      if (type != D_BRUTE && brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_pos);
+      if (type == D_SWF && precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_pos - 2);
+      if (type != D_BRUTE && precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].insert(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
@@ -436,7 +436,8 @@ bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsign
   return check_inflate_result(precomp_mgr, checkbuf_span, -15, original_input_pos, true);
 }
 
-std::unique_ptr<deflate_precompression_result> try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<precompression_result> DeflateFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+  if (!check_raw_deflate_stream_start(precomp_mgr, checkbuf_span, original_input_pos)) return std::make_unique<deflate_precompression_result>(D_BRUTE);
   return try_decompression_deflate_type(precomp_mgr,
     precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
     D_BRUTE, checkbuf_span.data(), 0, original_input_pos, false,
@@ -575,6 +576,6 @@ void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, 
   }
 }
 
-void recompress_raw_deflate(RecursionContext& context, std::byte precomp_hdr_flags) {
+void DeflateFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_deflate"), "brute mode");
 }

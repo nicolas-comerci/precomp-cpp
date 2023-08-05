@@ -104,6 +104,8 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BZIP2, BZip2FormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_RAW, ZlibFormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER(D_BRUTE, DeflateFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
   // write compressed data header
@@ -415,10 +417,34 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_bzip2) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BZIP2]()));
     }
+    if (is_recompressing || switches.intense_mode) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_RAW]()));
+        if (switches.intense_mode_depth_limit >= 0) {
+            format_handlers.back()->depth_limit = switches.intense_mode_depth_limit;
+        }
+    }
+    // Brute mode detects a bit less than intense mode to avoid false positives and slowdowns, so both can be active.
+    if (is_recompressing || switches.brute_mode) {
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BRUTE]()));
+        if (switches.brute_mode_depth_limit >= 0) {
+            format_handlers.back()->depth_limit = switches.brute_mode_depth_limit;
+        }
+    }
 }
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
     return format_handlers;
+}
+
+bool Precomp::is_format_handler_active(SupportedFormats format_id) const {
+    const auto itemIt = std::find_if(
+        format_handlers.cbegin(), format_handlers.cend(),
+        [&format_id](const std::unique_ptr<PrecompFormatHandler>& handler) { return handler->get_header_bytes()[0] == format_id; }
+    );
+    if (itemIt == format_handlers.cend()) return false;
+    const auto& formatHandler = *itemIt;
+
+    return (formatHandler->depth_limit && recursion_depth > formatHandler->depth_limit) ? false : true;
 }
 
 // get copyright message
@@ -429,24 +455,6 @@ LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   } else {
     sprintf(msg, "Precomp Neo Library v%i.%i.%i (c) 2006-2021 by Christian Schneider/2022-2023 by Nicolas Comerci",V_MAJOR,V_MINOR,V_MINOR2);
   }
-}
-
-// Brute mode detects a bit less than intense mode to avoid false positives
-// and slowdowns, so both can be active. Also, both of them can have a level
-// limit, so two helper functions make things easier to handle.
-
-bool intense_mode_is_active(Precomp& precomp_mgr) {
-  if (!precomp_mgr.switches.intense_mode) return false;
-  if ((precomp_mgr.switches.intense_mode_depth_limit == -1) || (precomp_mgr.recursion_depth <= precomp_mgr.switches.intense_mode_depth_limit)) return true;
-
-  return false;
-}
-
-bool brute_mode_is_active(Precomp& precomp_mgr) {
-  if (!precomp_mgr.switches.brute_mode) return false;
-  if ((precomp_mgr.switches.brute_mode_depth_limit == -1) || (precomp_mgr.recursion_depth <= precomp_mgr.switches.brute_mode_depth_limit)) return true;
-
-  return false;
 }
 
 void end_uncompressed_data(Precomp& precomp_mgr) {
@@ -527,6 +535,29 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
   if (!ignore_this_pos) {
     for (const auto& formatHandler : format_handlers) {
+        // Recursion depth check
+        if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
+
+        // Position blacklist check
+        bool ignore_this_position = false;
+        auto& ignore_offsets_set = precomp_mgr.ctx->ignore_offsets[formatHandler->get_header_bytes()[0]];
+        if (!ignore_offsets_set.empty()) {
+            auto first = ignore_offsets_set.begin();
+            while (*first < input_file_pos) {
+                ignore_offsets_set.erase(first);
+                if (ignore_offsets_set.empty()) break;
+                first = ignore_offsets_set.begin();
+            }
+
+            if (!ignore_offsets_set.empty()) {
+                if (*first == input_file_pos) {
+                    ignore_this_position = true;
+                    ignore_offsets_set.erase(first);
+                }
+            }
+        }
+        if (ignore_this_position) continue;
+
         bool quick_check_result = formatHandler->quick_check(checkbuf);
         if (!quick_check_result) continue;
 
@@ -543,85 +574,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
         compressed_data_found = result->success;
         break;
     }
-
-   // nothing so far -> if intense mode is active, look for raw zLib header
-   if (intense_mode_is_active(precomp_mgr)) {
-    if (!compressed_data_found) {
-      bool ignore_this_position = false;
-      if (!precomp_mgr.ctx->intense_ignore_offsets.empty()) {
-        auto first = precomp_mgr.ctx->intense_ignore_offsets.begin();
-        while (*first < input_file_pos) {
-          precomp_mgr.ctx->intense_ignore_offsets.erase(first);
-          if (precomp_mgr.ctx->intense_ignore_offsets.empty()) break;
-          first = precomp_mgr.ctx->intense_ignore_offsets.begin();
-        }
-
-        if (!precomp_mgr.ctx->intense_ignore_offsets.empty()) {
-          if (*first == input_file_pos) {
-            ignore_this_position = true;
-            precomp_mgr.ctx->intense_ignore_offsets.erase(first);
-          }
-        }
-      }
-
-      if (!ignore_this_position) {
-        if (zlib_header_check(checkbuf)) {
-          auto result = try_decompression_zlib(precomp_mgr, checkbuf, input_file_pos);
-          compressed_data_found = result->success;
-          if (result->success) {
-            compressed_data_found = true;
-
-            end_uncompressed_data(precomp_mgr);
-
-            result->dump_to_outfile(precomp_mgr);
-
-            // set input file pointer after recompressed data
-            input_file_pos += result->input_pos_add_offset();
-          }
-        }
-      }
-    }
-   }
-
-   // nothing so far -> if brute mode is active, brute force for zLib streams
-    if (brute_mode_is_active(precomp_mgr)) {
-    if (!compressed_data_found) {
-      bool ignore_this_position = false;
-      if (!precomp_mgr.ctx->brute_ignore_offsets.empty()) {
-        auto first = precomp_mgr.ctx->brute_ignore_offsets.begin();
-        while (*first < input_file_pos) {
-          precomp_mgr.ctx->brute_ignore_offsets.erase(first);
-          if (precomp_mgr.ctx->brute_ignore_offsets.empty()) break;
-          first = precomp_mgr.ctx->brute_ignore_offsets.begin();
-        }
-
-        if (!precomp_mgr.ctx->brute_ignore_offsets.empty()) {
-          if (*first == input_file_pos) {
-            ignore_this_position = true;
-            precomp_mgr.ctx->brute_ignore_offsets.erase(first);
-          }
-        }
-      }
-
-      if (!ignore_this_position) {
-        if (check_raw_deflate_stream_start(precomp_mgr, checkbuf, input_file_pos)) {
-          auto result = try_decompression_raw_deflate(precomp_mgr, checkbuf, input_file_pos);
-          compressed_data_found = result->success;
-          if (result->success) {
-            compressed_data_found = true;
-
-            end_uncompressed_data(precomp_mgr);
-
-            result->dump_to_outfile(precomp_mgr);
-
-            // set input file pointer after recompressed data
-            input_file_pos += result->input_pos_add_offset();
-          }
-        }
-      }
-    }
-   }
-
   }
 
     if (!compressed_data_found) {
@@ -736,12 +688,10 @@ while (precomp_ctx.fin->good()) {
     case D_MP3: { // MP3 recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_BRUTE: { // brute mode recompression
-      recompress_raw_deflate(precomp_ctx, header1);
+    case D_BRUTE: { // brute mode recompression, should have already been handled on the formatHandler section above
       break;
     }
-    case D_RAW: { // raw zLib recompression
-      recompress_zlib(precomp_ctx, header1);
+    case D_RAW: { // raw zLib recompression, should have already been handled on the formatHandler section above
       break;
     }
     default:

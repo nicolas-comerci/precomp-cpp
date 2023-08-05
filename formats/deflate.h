@@ -18,7 +18,7 @@ struct recompress_deflate_result {
 
 class deflate_precompression_result : public precompression_result {
 protected:
-  void dump_recon_data_to_outfile(Precomp& precomp_mgr);
+  void dump_recon_data_to_outfile(Precomp& precomp_mgr) const;
 public:
   recompress_deflate_result rdres;
   std::vector<unsigned char> zlib_header;
@@ -48,10 +48,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
 
 bool check_inflate_result(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters = false);
 
-bool check_raw_deflate_stream_start(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos);
-
-std::unique_ptr<deflate_precompression_result> try_decompression_raw_deflate(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos);
-
 bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part);
 
 void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
@@ -64,6 +60,19 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
 
 void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type);
 
-void recompress_raw_deflate(RecursionContext& context, std::byte precomp_hdr_flags);
+class DeflateFormatHandler : public PrecompFormatHandler {
+public:
+	bool quick_check(std::span<unsigned char> buffer) override { return true; }
+
+	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
+
+	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
+
+	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_BRUTE }; }
+
+	static DeflateFormatHandler* create() {
+		return new DeflateFormatHandler();
+	}
+};
 
 #endif //PRECOMP_DEFLATE_HANDLER_H

@@ -151,8 +151,8 @@ std::unique_ptr<precompression_result> try_decompression_png_multi(Precomp& prec
       debug_pos(*precomp_mgr.ctx);
     }
     else {
-      if (intense_mode_is_active(precomp_mgr)) precomp_mgr.ctx->intense_ignore_offsets.insert(deflate_stream_original_pos - 2);
-      if (brute_mode_is_active(precomp_mgr)) precomp_mgr.ctx->brute_ignore_offsets.insert(deflate_stream_original_pos);
+      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_original_pos - 2);
+      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].insert(deflate_stream_original_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }

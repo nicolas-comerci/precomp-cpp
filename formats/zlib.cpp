@@ -1,4 +1,5 @@
 #include "zlib.h"
+#include "deflate.h"
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
@@ -8,7 +9,7 @@ bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   return compression_method == 8;
 }
 
-std::unique_ptr<deflate_precompression_result> try_decompression_zlib(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
   std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_RAW);
   int windowbits = (*checkbuf >> 4) + 8;
@@ -24,6 +25,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_zlib(Precomp& p
   return result;
 }
 
-void recompress_zlib(RecursionContext& context, std::byte precomp_hdr_flags) {
+void ZlibFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_zlib"), "raw zLib");
 }

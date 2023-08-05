@@ -1,6 +1,7 @@
 #include "swf.h"
 
 #include "formats/zlib.h"
+#include "formats/deflate.h"
 
 bool SwfFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();

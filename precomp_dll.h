@@ -22,6 +22,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <span>
+#include <unordered_map>
 
 static constexpr int MAX_PENALTY_BYTES = 16384;
 
@@ -77,8 +78,9 @@ public:
 
   explicit RecursionContext(float min_percent, float max_percent, Precomp& precomp_);
 
-  std::set<long long> intense_ignore_offsets;
-  std::set<long long> brute_ignore_offsets;
+  // Ignore offsets can be set for any Format handler, so that if for example, we failed to precompress a deflate stream inside a ZIP file, we don't attempt to precompress
+  // it again, which is destined to fail, by using the intense mode (ZLIB) format handler.
+  std::unordered_map<SupportedFormats, std::set<long long>> ignore_offsets;
 
   std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   void set_input_stream(std::istream* istream, bool take_ownership = true);
@@ -129,6 +131,10 @@ extern std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> regist
 
 class PrecompFormatHandler {
 public:
+    std::optional<unsigned int> depth_limit;
+
+    PrecompFormatHandler(std::optional<unsigned int> _depth_limit = std::nullopt): depth_limit(_depth_limit) {}
+
     // The quick check should attempt to detect applicable format data by inspecting File Signatures/Magic Bytes or via any other easy/quick check that could
     // be done by using the small buffered chunk provided.
     // If quick detection is impossible, like with headerless deflate stream detection, just return true so Precomp will move on and attempt precompression.
@@ -142,6 +148,7 @@ public:
     virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
 
     // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
+    // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector
     virtual constexpr std::vector<SupportedFormats> get_header_bytes() = 0;
 
     // Subclasses should register themselves here, as the available PrecompFormatHandlers will be queried and the instances created when we create Precomp instances.
@@ -189,15 +196,13 @@ public:
   // as they might be needed to handle the already precompressed PCF file
   void init_format_handlers(bool is_recompressing = false);
   const std::vector<std::unique_ptr<PrecompFormatHandler>>& get_format_handlers() const;
+  bool is_format_handler_active(SupportedFormats format_id) const;
 
   int recursion_depth = 0;
   
 };
 
 // All this stuff was moved from precomp.h, most likely doesn't make sense as part of the API, TODO: delete/modularize/whatever stuff that shouldn't be here
-
-bool intense_mode_is_active(Precomp& precomp_mgr);
-bool brute_mode_is_active(Precomp& precomp_mgr);
 
 // helpers for try_decompression functions
 int32_t fin_fget32(IStreamLike& input);
