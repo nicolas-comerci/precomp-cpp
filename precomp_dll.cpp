@@ -499,7 +499,6 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 int compress_file_impl(Precomp& precomp_mgr) {
-
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
   if (precomp_mgr.recursion_depth == 0) {
       write_header(precomp_mgr);
@@ -519,23 +518,23 @@ int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->non_zlib_was_used = false;
 
   for (long long input_file_pos = 0; input_file_pos < precomp_mgr.ctx->fin_length; input_file_pos++) {
-  precomp_mgr.ctx->input_file_pos = input_file_pos;
-  bool compressed_data_found = false;
+    precomp_mgr.ctx->input_file_pos = input_file_pos;
+    bool compressed_data_found = false;
 
-  bool ignore_this_pos = false;
+    bool ignore_this_pos = false;
 
-  if ((in_buf_pos + IN_BUF_SIZE) <= (input_file_pos + CHECKBUF_SIZE)) {
-    precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
-    in_buf_pos = input_file_pos;
-  }
-  auto cb_pos = input_file_pos - in_buf_pos;
-  checkbuf = std::span(&precomp_mgr.ctx->in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
+    if ((in_buf_pos + IN_BUF_SIZE) <= (input_file_pos + CHECKBUF_SIZE)) {
+      precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
+      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
+      in_buf_pos = input_file_pos;
+    }
+    auto cb_pos = input_file_pos - in_buf_pos;
+    checkbuf = std::span(&precomp_mgr.ctx->in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
 
-  ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
+    ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
-  if (!ignore_this_pos) {
-    for (const auto& formatHandler : format_handlers) {
+    if (!ignore_this_pos) {
+      for (const auto& formatHandler : format_handlers) {
         // Recursion depth check
         if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
 
@@ -544,23 +543,23 @@ int compress_file_impl(Precomp& precomp_mgr) {
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
         auto ignoreListIt = precomp_mgr.ctx->ignore_offsets.find(formatTag);
         if (ignoreListIt != precomp_mgr.ctx->ignore_offsets.cend()) {
-            auto& ignore_offsets_set = (*ignoreListIt).second;
-            if (!ignore_offsets_set.empty()) {
-                auto first = ignore_offsets_set.begin();
-                while (*first < input_file_pos) {
-                    ignore_offsets_set.erase(first);
-                    if (ignore_offsets_set.empty()) break;
-                    first = ignore_offsets_set.begin();
-                }
-
-                if (!ignore_offsets_set.empty()) {
-                    if (*first == input_file_pos) {
-                        ignore_this_position = true;
-                        ignore_offsets_set.erase(first);
-                    }
-                }
+          auto& ignore_offsets_set = (*ignoreListIt).second;
+          if (!ignore_offsets_set.empty()) {
+            auto first = ignore_offsets_set.begin();
+            while (*first < input_file_pos) {
+              ignore_offsets_set.erase(first);
+              if (ignore_offsets_set.empty()) break;
+              first = ignore_offsets_set.begin();
             }
-            if (ignore_this_position) continue;
+
+            if (!ignore_offsets_set.empty()) {
+              if (*first == input_file_pos) {
+                ignore_this_position = true;
+                ignore_offsets_set.erase(first);
+              }
+            }
+          }
+          if (ignore_this_position) continue;
         }
 
         bool quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
@@ -578,21 +577,20 @@ int compress_file_impl(Precomp& precomp_mgr) {
         input_file_pos += result->input_pos_add_offset();
         compressed_data_found = result->success;
         break;
+      }
     }
-  }
 
     if (!compressed_data_found) {
       if (!precomp_mgr.ctx->uncompressed_length.has_value()) {
-          precomp_mgr.ctx->uncompressed_length = 0;
-          precomp_mgr.ctx->uncompressed_pos = input_file_pos;
+        precomp_mgr.ctx->uncompressed_length = 0;
+        precomp_mgr.ctx->uncompressed_pos = input_file_pos;
 
-          // uncompressed data
-          precomp_mgr.ctx->fout->put(0);
+        // uncompressed data
+        precomp_mgr.ctx->fout->put(0);
       }
       (*precomp_mgr.ctx->uncompressed_length)++;
       precomp_mgr.ctx->uncompressed_bytes_total++;
     }
-
   }
 
   end_uncompressed_data(precomp_mgr);
@@ -630,83 +628,38 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
 
   long long fin_pos = precomp_ctx.fin->tellg();
 
-while (precomp_ctx.fin->good()) {
+  while (precomp_ctx.fin->good()) {
+    std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
+    if (!precomp_ctx.fin->good()) break;
 
-  std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
-  if (!precomp_ctx.fin->good()) break;
-  if (header1 == std::byte{ 0 }) { // uncompressed data
-    long long uncompressed_data_length;
-    uncompressed_data_length = fin_fget_vlint(*precomp_ctx.fin);
-
-    if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
-
-    print_to_log(PRECOMP_DEBUG_LOG, "Uncompressed data, length=%lli\n");
-    fast_copy(*precomp_ctx.fin, *precomp_ctx.fout, uncompressed_data_length);
-
-  } else { // decompressed data, recompress
-
-    unsigned char headertype = precomp_ctx.fin->get();
-
-    bool handlerFound = false;
-    for (const auto& formatHandler : format_handlers) {
+    if (header1 == std::byte{ 0 }) { // uncompressed data
+      long long uncompressed_data_length;
+      uncompressed_data_length = fin_fget_vlint(*precomp_ctx.fin);
+  
+      if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
+  
+      print_to_log(PRECOMP_DEBUG_LOG, "Uncompressed data, length=%lli\n");
+      fast_copy(*precomp_ctx.fin, *precomp_ctx.fout, uncompressed_data_length);
+  
+    }
+    else { // decompressed data, recompress
+      unsigned char headertype = precomp_ctx.fin->get();
+  
+      bool handlerFound = false;
+      for (const auto& formatHandler : format_handlers) {
         for (auto formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
-            if (headertype == formatHandlerHeaderByte) {
-                formatHandler->recompress(precomp_ctx, header1, formatHandlerHeaderByte);
-                handlerFound = true;
-                break;
-            }
+          if (headertype == formatHandlerHeaderByte) {
+            formatHandler->recompress(precomp_ctx, header1, formatHandlerHeaderByte);
+            handlerFound = true;
+            break;
+          }
         }
         if (handlerFound) break;
+      }
     }
-
-    switch (headertype) {
-    case D_PDF: { // PDF recompression, should have already been handled on the formatHandler section above
-      break;
-    }     
-    case D_ZIP: { // ZIP recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_GZIP: { // GZip recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_PNG: { // PNG recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_MULTIPNG: { // PNG multi recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_GIF: { // GIF recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_JPG: { // JPG recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_SWF: { // SWF recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_BASE64: { // Base64 recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_BZIP2: { // bZip2 recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_MP3: { // MP3 recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_BRUTE: { // brute mode recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    case D_RAW: { // raw zLib recompression, should have already been handled on the formatHandler section above
-      break;
-    }
-    default:
-      throw std::runtime_error(make_cstyle_format_string("ERROR: Unsupported stream type %i\n", headertype));
-    }
-
+  
+    fin_pos = precomp_ctx.fin->tellg();
   }
-
-  fin_pos = precomp_ctx.fin->tellg();
-}
 
   return RETURN_SUCCESS;
 }
