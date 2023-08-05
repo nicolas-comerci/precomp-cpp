@@ -116,8 +116,8 @@ bool recompress_gif_ok(unsigned char** ScreenBuff, GifFileType* myGifFile, GifFi
   return recompress_gif_result(ScreenBuff, myGifFile, newGifFile, true);
 }
 
-bool GifFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool GifFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   return
     *checkbuf == 'G' && *(checkbuf + 1) == 'I' && *(checkbuf + 2) == 'F' &&
     *(checkbuf + 3) == '8' && (*(checkbuf + 4) == '7' || *(checkbuf + 4) == '9') && *(checkbuf + 5) == 'a';

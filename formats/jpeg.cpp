@@ -16,8 +16,8 @@ const char* packjpg_version_info() {
   return pjglib_version_info();
 }
 
-bool JpegFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool JpegFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   // SOI (FF D8) followed by a valid marker for Baseline/Progressive JPEGs
   return
     *checkbuf == 0xFF && *(checkbuf + 1) == 0xD8 &&

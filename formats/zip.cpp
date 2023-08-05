@@ -1,8 +1,8 @@
 #include "zip.h"
 #include "formats/deflate.h"
 
-bool ZipFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool ZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   if (
     (*checkbuf == 'P') && (*(checkbuf + 1) == 'K') &&
     (*(checkbuf + 2) == 3) && (*(checkbuf + 3) == 4)

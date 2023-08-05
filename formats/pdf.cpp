@@ -119,8 +119,8 @@ public:
     }
 };
 
-bool PdfFormatHandler::quick_check(std::span<unsigned char> checkbuf_span) {
-  return memcmp(checkbuf_span.data(), "/FlateDecode", 12) == 0;
+bool PdfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  return memcmp(buffer.data(), "/FlateDecode", 12) == 0;
 }
 
 std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {

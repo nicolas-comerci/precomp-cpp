@@ -46,8 +46,8 @@ public:
     }
 };
 
-bool Base64FormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-    auto checkbuf = checkbuf_span.data();
+bool Base64FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+    auto checkbuf = buffer.data();
     if ((*(checkbuf + 1) == 'o') && (*(checkbuf + 2) == 'n') && (*(checkbuf + 3) == 't') && (*(checkbuf + 4) == 'e')) {
         unsigned char cte_detect[33];
         for (int i = 0; i < 33; i++) {

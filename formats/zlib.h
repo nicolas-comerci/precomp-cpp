@@ -1,14 +1,19 @@
 #ifndef PRECOMP_ZLIB_HANDLER_H
 #define PRECOMP_ZLIB_HANDLER_H
 #include "precomp_dll.h"
+#include "deflate.h"
 
 #include <span>
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span);
 
 class ZlibFormatHandler : public PrecompFormatHandler {
+	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
 public:
-	bool quick_check(std::span<unsigned char> buffer) override {
+	explicit ZlibFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
+		: PrecompFormatHandler(_header_bytes, _depth_limit) {}
+
+	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override {
 		return zlib_header_check(buffer);
 	}
 
@@ -16,10 +21,8 @@ public:
 
 	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
-	constexpr std::vector<SupportedFormats> get_header_bytes() override { return { D_RAW }; }
-
 	static ZlibFormatHandler* create() {
-		return new ZlibFormatHandler();
+		return new ZlibFormatHandler({ D_RAW });
 	}
 };
 

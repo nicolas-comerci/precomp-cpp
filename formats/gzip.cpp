@@ -1,8 +1,8 @@
 #include "gzip.h"
 #include "formats/deflate.h"
 
-bool GZipFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool GZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   if ((*checkbuf == 31) && (*(checkbuf + 1) == 139)) {
     // check zLib header in GZip header
     int compression_method = (*(checkbuf + 2) & 15);

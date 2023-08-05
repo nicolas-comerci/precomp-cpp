@@ -512,6 +512,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
+  // This buffer will be fed to the format handlers so they can confirm if the current position is the beggining of a stream they support
   std::span<unsigned char> checkbuf;
 
   precomp_mgr.ctx->anything_was_used = false;
@@ -540,29 +541,33 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         // Position blacklist check
         bool ignore_this_position = false;
-        auto& ignore_offsets_set = precomp_mgr.ctx->ignore_offsets[formatHandler->get_header_bytes()[0]];
-        if (!ignore_offsets_set.empty()) {
-            auto first = ignore_offsets_set.begin();
-            while (*first < input_file_pos) {
-                ignore_offsets_set.erase(first);
-                if (ignore_offsets_set.empty()) break;
-                first = ignore_offsets_set.begin();
-            }
-
+        const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
+        auto ignoreListIt = precomp_mgr.ctx->ignore_offsets.find(formatTag);
+        if (ignoreListIt != precomp_mgr.ctx->ignore_offsets.cend()) {
+            auto& ignore_offsets_set = (*ignoreListIt).second;
             if (!ignore_offsets_set.empty()) {
-                if (*first == input_file_pos) {
-                    ignore_this_position = true;
+                auto first = ignore_offsets_set.begin();
+                while (*first < input_file_pos) {
                     ignore_offsets_set.erase(first);
+                    if (ignore_offsets_set.empty()) break;
+                    first = ignore_offsets_set.begin();
+                }
+
+                if (!ignore_offsets_set.empty()) {
+                    if (*first == input_file_pos) {
+                        ignore_this_position = true;
+                        ignore_offsets_set.erase(first);
+                    }
                 }
             }
+            if (ignore_this_position) continue;
         }
-        if (ignore_this_position) continue;
 
-        bool quick_check_result = formatHandler->quick_check(checkbuf);
+        bool quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
         if (!quick_check_result) continue;
 
         auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
-        if (!result->success) continue;
+        if (!result || !result->success) continue;
 
         end_uncompressed_data(precomp_mgr);
         result->dump_to_outfile(precomp_mgr);

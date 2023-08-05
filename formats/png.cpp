@@ -21,8 +21,8 @@ public:
     void dump_to_outfile(Precomp& precomp_mgr) override;
 };
 
-bool PngFormatHandler::quick_check(std::span<unsigned char> checkbuf) {
-  return memcmp(checkbuf.data(), "IDAT", 4) == 0;
+bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  return memcmp(buffer.data(), "IDAT", 4) == 0;
 }
 
 png_precompression_result::png_precompression_result() : deflate_precompression_result(D_PNG) {}

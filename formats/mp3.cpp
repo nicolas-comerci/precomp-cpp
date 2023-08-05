@@ -10,8 +10,8 @@ const char* packmp3_version_info() {
   return pmplib_version_info();
 }
 
-bool Mp3FormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  return *checkbuf_span.data() == 0xFF && (*(checkbuf_span.data() + 1) & 0xE0) == 0xE0;
+bool Mp3FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  return *buffer.data() == 0xFF && (*(buffer.data() + 1) & 0xE0) == 0xE0;
 }
 
 class mp3_suppression_vars {

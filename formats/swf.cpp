@@ -3,11 +3,11 @@
 #include "formats/zlib.h"
 #include "formats/deflate.h"
 
-bool SwfFormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool SwfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   // CWS = Compressed SWF file
   auto cws_hdr = (*checkbuf == 'C') && (*(checkbuf + 1) == 'W') && (*(checkbuf + 2) == 'S');
-  return cws_hdr && zlib_header_check(std::span(checkbuf + 8, checkbuf_span.size() - 8));
+  return cws_hdr && zlib_header_check(std::span(checkbuf + 8, buffer.size() - 8));
 }
 
 std::unique_ptr<precompression_result> SwfFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {

@@ -1,5 +1,4 @@
 #include "zlib.h"
-#include "deflate.h"
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
@@ -15,7 +14,7 @@ std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression
   int windowbits = (*checkbuf >> 4) + 8;
 
   const auto deflate_stream_pos = original_input_pos + 2; // skip zLib header
-  if (check_inflate_result(precomp_mgr, std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), -windowbits, deflate_stream_pos)) {
+  if (check_inflate_result(this->falsePositiveDetector, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), -windowbits, deflate_stream_pos)) {
 
     result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
       D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", precomp_mgr.get_tempfile_name("original_zlib"));

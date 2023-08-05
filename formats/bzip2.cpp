@@ -31,8 +31,8 @@ void bzip2_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
   dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
-bool BZip2FormatHandler::quick_check(const std::span<unsigned char> checkbuf_span) {
-  auto checkbuf = checkbuf_span.data();
+bool BZip2FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
   // BZhx = header, x = compression level/blocksize (1-9)
   return (*checkbuf == 'B') && (*(checkbuf + 1) == 'Z') && (*(checkbuf + 2) == 'h');
 }
