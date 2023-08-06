@@ -8,28 +8,18 @@
 
 class bzip2_precompression_result : public precompression_result {
 public:
-    std::optional<long long> recursion_filesize;
     int compression_level;
 
-    explicit bzip2_precompression_result(int compression_level);
+    explicit bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 
-    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override;
-    void dump_to_outfile(OStreamLike& outfile) override;
+    void dump_to_outfile(OStreamLike& outfile) override {
+        dump_header_to_outfile(outfile);
+        outfile.put(compression_level);
+        dump_penaltybytes_to_outfile(outfile);
+        dump_stream_sizes_to_outfile(outfile);
+        dump_precompressed_data_to_outfile(outfile);
+    }
 };
-
-bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
-void bzip2_precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
-  if (recursion_filesize.has_value()) fout_fput_vlint(outfile, recursion_filesize.value());
-  auto out_size = recursion_filesize.has_value() ? recursion_filesize.value() : precompressed_size;
-  fast_copy(*precompressed_stream, outfile, out_size);
-}
-void bzip2_precompression_result::dump_to_outfile(OStreamLike& outfile) {
-  dump_header_to_outfile(outfile);
-  outfile.put(compression_level);
-  dump_penaltybytes_to_outfile(outfile);
-  dump_stream_sizes_to_outfile(outfile);
-  dump_precompressed_data_to_outfile(outfile);
-}
 
 bool BZip2FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   auto checkbuf = buffer.data();
@@ -346,7 +336,6 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
     // check recursion
     tmpfile->close();
     tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-    const recursion_result r = recursion_compress(precomp_mgr, best_identical_bytes, best_identical_bytes_decomp, *tmpfile, tmpfile->file_path + "_");
     tmpfile->close();
 
     // write compressed data header (bZip2)
@@ -354,9 +343,6 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
     std::byte header_byte{ 0b1 };
     if (best_penalty_bytes.size() != 0) {
       header_byte |= std::byte{ 0b10 };
-    }
-    if (r.success) {
-      header_byte |= std::byte{ 0b10000000 };
     }
     result->flags = header_byte;
 
@@ -367,16 +353,8 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
     result->precompressed_size = best_identical_bytes_decomp;
 
     // write decompressed data
-    if (r.success) {
-      const auto rec_tmpfile = new PrecompTmpFile();
-      rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-      result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-      result->recursion_filesize = r.file_length;
-    }
-    else {
-      tmpfile->reopen();
-      result->precompressed_stream = std::move(tmpfile);
-    }
+    tmpfile->reopen();
+    result->precompressed_stream = std::move(tmpfile);
   }
   else {
     print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");

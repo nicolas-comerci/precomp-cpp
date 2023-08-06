@@ -121,6 +121,8 @@ public:
     long long input_pos_extra_add = 0;  // this is so we can skip headers and stuff like that as well as the precompressed stream, after the module is done
     long long precompressed_size = -1;
     std::unique_ptr<IStreamLike> precompressed_stream;
+    bool recursion_used = false;
+    long long recursion_filesize = 0;
 
     virtual void dump_to_outfile(OStreamLike& outfile);
     virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
@@ -134,9 +136,10 @@ protected:
     std::vector<SupportedFormats> header_bytes;
 public:
     std::optional<unsigned int> depth_limit;
+    bool recursion_allowed;
 
-    PrecompFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
-        : header_bytes(_header_bytes), depth_limit(_depth_limit) {}
+    PrecompFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt, bool _recursion_allowed = false)
+        : header_bytes(_header_bytes), depth_limit(_depth_limit), recursion_allowed(_recursion_allowed) {}
 
     // The quick check should attempt to detect applicable format data by inspecting File Signatures/Magic Bytes or via any other easy/quick check that could
     // be done by using the small buffered chunk provided.

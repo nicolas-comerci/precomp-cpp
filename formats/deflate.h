@@ -23,13 +23,10 @@ public:
   recompress_deflate_result rdres;
   std::vector<unsigned char> zlib_header;
   bool inc_last_hdr_byte = false;
-  bool recursion_used = false;
-  long long recursion_filesize;
 
   explicit deflate_precompression_result(SupportedFormats format);
 
   void dump_header_to_outfile(OStreamLike& outfile) const override;
-  void dump_precompressed_data_to_outfile(OStreamLike& outfile) override;
   void dump_to_outfile(OStreamLike& outfile) override;
 };
 
@@ -76,7 +73,7 @@ class DeflateFormatHandler : public PrecompFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
 public:
 	explicit DeflateFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
-		: PrecompFormatHandler(_header_bytes, _depth_limit) {}
+		: PrecompFormatHandler(_header_bytes, _depth_limit, true) {}
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
 

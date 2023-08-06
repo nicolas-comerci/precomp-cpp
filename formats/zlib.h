@@ -11,7 +11,7 @@ class ZlibFormatHandler : public PrecompFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
 public:
 	explicit ZlibFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
-		: PrecompFormatHandler(_header_bytes, _depth_limit) {}
+		: PrecompFormatHandler(_header_bytes, _depth_limit, true) {}
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override {
 		return zlib_header_check(buffer);

@@ -109,7 +109,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_BRUTE, DeflateFormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
-  outfile.put(static_cast<char>(flags));
+  outfile.put(static_cast<char>(flags | (recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
   outfile.put(format);
 }
 
@@ -129,7 +129,9 @@ void precompression_result::dump_stream_sizes_to_outfile(OStreamLike& outfile) c
 }
 
 void precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
-  fast_copy(*precompressed_stream, outfile, precompressed_size);
+  if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
+  auto out_size = recursion_used ? recursion_filesize : precompressed_size;
+  fast_copy(*precompressed_stream, outfile, out_size);
 }
 
 void precompression_result::dump_to_outfile(OStreamLike& outfile) {
@@ -569,6 +571,23 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
         if (!result || !result->success) continue;
+
+        // If the format allows for it, recurse inside the most likely newly decompressed data
+        if (formatHandler->recursion_allowed) {
+            auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
+            recursion_result r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+            if (r.success) {
+                auto rec_tmpfile = new PrecompTmpFile();
+                rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
+                result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
+                result->recursion_filesize = r.file_length;
+                result->recursion_used = true;
+            }
+            else {
+                // ensure that the precompressed stream is ready to read from the start, as if recursion attempt never happened
+                result->precompressed_stream->seekg(0, std::ios_base::beg);
+            }
+        }
 
         bool verify = false;
         if (verify) {

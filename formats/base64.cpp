@@ -26,16 +26,8 @@ public:
     std::vector<unsigned char> base64_header;
     int line_case = 0;
     std::vector<unsigned int> base64_line_len;
-    bool recursion_used = false;
-    long long recursion_filesize = 0;
 
     explicit base64_precompression_result() : precompression_result(D_BASE64) {}
-
-    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override {
-        if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
-        auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-        fast_copy(*precompressed_stream, outfile, out_size);
-    }
 
     void dump_to_outfile(OStreamLike& outfile) override {
         dump_header_to_outfile(outfile);
@@ -332,14 +324,10 @@ std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp
       // check recursion
       tmpfile->close();
       tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
-      recursion_result r = recursion_compress(precomp_mgr, compressed_size, decoded_size, *tmpfile, tmpfile->file_path + "_");
       tmpfile->close();
 
       // write compressed data header (Base64)
       std::byte header_byte = std::byte{ 0b1 } | (line_case << 2);
-      if (r.success) {
-        header_byte |= std::byte{ 0b10000000 };
-      }
 
       result->flags = header_byte;
       result->base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
@@ -349,17 +337,8 @@ std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp
       result->precompressed_size = compressed_size;
 
       // write decompressed data
-      if (r.success) {
-        auto rec_tmpfile = new PrecompTmpFile();
-        rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-        result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-        result->recursion_filesize = r.file_length;
-        result->recursion_used = true;
-      }
-      else {
-        tmpfile->reopen();
-        result->precompressed_stream = std::move(tmpfile);
-      }
+      tmpfile->reopen();
+      result->precompressed_stream = std::move(tmpfile);
     }
     else {
       print_to_log(PRECOMP_DEBUG_LOG, "No match\n");

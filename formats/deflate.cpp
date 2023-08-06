@@ -20,7 +20,7 @@ void deflate_precompression_result::dump_recon_data_to_outfile(OStreamLike& outf
 deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
 void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
-  outfile.put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags));
+  outfile.put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags | (recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
   outfile.put(format);
   if (rdres.zlib_perfect) {
     outfile.put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
@@ -33,11 +33,6 @@ void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile)
     outfile.write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size() - 1);
     outfile.put(zlib_header[zlib_header.size() - 1] + 1);
   }
-}
-void deflate_precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
-  if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
-  auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-  fast_copy(*precompressed_stream, outfile, out_size);
 }
 void deflate_precompression_result::dump_to_outfile(OStreamLike& outfile) {
   dump_header_to_outfile(outfile);
@@ -264,7 +259,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
         tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
         recurse_istream = tmpfile.get();
       }
-      recursion_result r = recursion_compress(precomp_mgr, rdres.compressed_stream_size, rdres.uncompressed_stream_size, *recurse_istream, tmpfile->file_path + "_");
       tmpfile->close();
 
 #if 0
@@ -279,25 +273,15 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
 
       debug_pos(*precomp_mgr.ctx);
 
-      result->flags = r.success ? std::byte{ 0b10000000 } : std::byte{ 0 };
       result->inc_last_hdr_byte = inc_last;
       result->zlib_header = std::vector(hdr, hdr + hdr_length);
-      if (r.success) {
-        auto rec_tmpfile = new PrecompTmpFile();
-        rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-        result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-        result->recursion_filesize = r.file_length;
-        result->recursion_used = true;
-      }
-      else {
-        if (!rdres.uncompressed_stream_mem.empty()) {
+      if (!rdres.uncompressed_stream_mem.empty()) {
           auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
           result->precompressed_stream = std::move(memstream);
-        }
-        else {
+      }
+      else {
           tmpfile->reopen();
           result->precompressed_stream = std::move(tmpfile);
-        }
       }
 
       result->rdres = std::move(rdres);
