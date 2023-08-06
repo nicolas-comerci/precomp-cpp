@@ -499,6 +499,7 @@ std::istream::int_type DebugComparatorIStreamLike::get() {
   if (buff_chr != test_chr) {
     throw std::runtime_error("Different data read between known_good and test_stream!");
   }
+  return buff_chr;
 }
 
 std::streamsize DebugComparatorIStreamLike::gcount() {
