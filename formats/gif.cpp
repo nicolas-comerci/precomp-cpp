@@ -20,7 +20,7 @@ public:
 
     explicit gif_precompression_result() : precompression_result(D_GIF) {}
 
-    void dump_to_outfile(OStreamLike& outfile) override {
+    void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         dump_gif_diff_to_outfile(outfile);
         dump_penaltybytes_to_outfile(outfile);

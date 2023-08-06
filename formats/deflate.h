@@ -27,7 +27,7 @@ public:
   explicit deflate_precompression_result(SupportedFormats format);
 
   void dump_header_to_outfile(OStreamLike& outfile) const override;
-  void dump_to_outfile(OStreamLike& outfile) override;
+  void dump_to_outfile(OStreamLike& outfile) const override;
 };
 
 struct DeflateHistogramFalsePositiveDetector {

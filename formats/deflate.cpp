@@ -34,7 +34,7 @@ void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile)
     outfile.put(zlib_header[zlib_header.size() - 1] + 1);
   }
 }
-void deflate_precompression_result::dump_to_outfile(OStreamLike& outfile) {
+void deflate_precompression_result::dump_to_outfile(OStreamLike& outfile) const {
   dump_header_to_outfile(outfile);
   dump_penaltybytes_to_outfile(outfile);
   dump_recon_data_to_outfile(outfile);

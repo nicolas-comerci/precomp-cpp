@@ -16,7 +16,11 @@ private:
     unsigned int img_width;
     unsigned int img_height;
 
-    void dump_bmp_hdr_to_outfile(OStreamLike& outfile) {
+    unsigned int img_width_bytes() const {
+        return bmp_header_type == BMP_HEADER_24BPP ? img_width * 3 : img_width;
+    }
+
+    void dump_bmp_hdr_to_outfile(OStreamLike& outfile) const {
         if (bmp_header_type == BMP_HEADER_NONE) return;
         int i;
 
@@ -68,9 +72,7 @@ private:
             outfile.put(0);
         }
 
-        if (bmp_header_type == BMP_HEADER_24BPP)  img_width *= 3;
-
-        auto datasize = ((img_width + 3) & -4) * img_height;
+        auto datasize = ((img_width_bytes() + 3) & -4) * img_height;
         if (bmp_header_type == BMP_HEADER_24BPP) datasize *= 3;
         fout_fput32_little_endian(outfile, datasize);
 
@@ -91,9 +93,10 @@ public:
     explicit pdf_precompression_result(unsigned int img_width, unsigned int img_height)
         : deflate_precompression_result(D_PDF), img_width(img_width), img_height(img_height) {}
 
-    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override {
+    void dump_precompressed_data_to_outfile(OStreamLike& outfile) const override {
         bool must_pad_bmp = false;
-        if ((bmp_header_type != BMP_HEADER_NONE) && ((img_width % 4) != 0)) {
+        unsigned int width_bytes = img_width_bytes();
+        if ((bmp_header_type != BMP_HEADER_NONE) && ((width_bytes % 4) != 0)) {
             must_pad_bmp = true;
         }
         if (!must_pad_bmp) {
@@ -101,15 +104,15 @@ public:
         }
         else {
             for (int y = 0; y < img_height; y++) {
-                fast_copy(*precompressed_stream, outfile, img_width);
+                fast_copy(*precompressed_stream, outfile, width_bytes);
 
-                for (int i = 0; i < (4 - (img_width % 4)); i++) {
+                for (int i = 0; i < (4 - (width_bytes % 4)); i++) {
                     outfile.put(0);
                 }
             }
         }
     }
-    void dump_to_outfile(OStreamLike& outfile) override {
+    void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         dump_penaltybytes_to_outfile(outfile);
         dump_recon_data_to_outfile(outfile);

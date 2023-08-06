@@ -109,7 +109,7 @@ protected:
     virtual void dump_header_to_outfile(OStreamLike& outfile) const;
     void dump_penaltybytes_to_outfile(OStreamLike& outfile) const;
     void dump_stream_sizes_to_outfile(OStreamLike& outfile) const;
-    virtual void dump_precompressed_data_to_outfile(OStreamLike& outfile);
+    virtual void dump_precompressed_data_to_outfile(OStreamLike& outfile) const;
 public:
     explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
 
@@ -124,7 +124,7 @@ public:
     bool recursion_used = false;
     long long recursion_filesize = 0;
 
-    virtual void dump_to_outfile(OStreamLike& outfile);
+    virtual void dump_to_outfile(OStreamLike& outfile) const;
     virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
 };
 

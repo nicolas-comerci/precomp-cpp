@@ -128,13 +128,13 @@ void precompression_result::dump_stream_sizes_to_outfile(OStreamLike& outfile) c
   fout_fput_vlint(outfile, precompressed_size);
 }
 
-void precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
+void precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) const {
   if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
   auto out_size = recursion_used ? recursion_filesize : precompressed_size;
   fast_copy(*precompressed_stream, outfile, out_size);
 }
 
-void precompression_result::dump_to_outfile(OStreamLike& outfile) {
+void precompression_result::dump_to_outfile(OStreamLike& outfile) const {
   dump_header_to_outfile(outfile);
   dump_penaltybytes_to_outfile(outfile);
   dump_stream_sizes_to_outfile(outfile);
@@ -247,9 +247,9 @@ const char* PrecompGetOutputFilename(Precomp* precomp_mgr) {
 
 //Switches constructor
 Switches::Switches(): CSwitches() {
+  verify_precompressed = false;
   intense_mode = false;
   intense_mode_depth_limit = -1;
-  fast_mode = false;
   brute_mode = false;
   brute_mode_depth_limit = -1;
   pdf_bmp_mode = false;
@@ -500,7 +500,7 @@ void write_header(Precomp& precomp_mgr) {
   delete[] input_file_name_without_path;
 }
 
-bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
+bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
 
 int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
@@ -572,6 +572,20 @@ int compress_file_impl(Precomp& precomp_mgr) {
         auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
         if (!result || !result->success) continue;
 
+        // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
+        // Note that this is done before recursion for 2 reasons:
+        //  1) why bother recursing a stream we might reject
+        //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
+        if (precomp_mgr.switches.verify_precompressed) {
+            if (verify_precompressed_result(precomp_mgr, result, input_file_pos)) {
+                // ensure that the precompressed stream is ready to read from the start, as if verification never happened
+                result->precompressed_stream->seekg(0, std::ios_base::beg);
+            }
+            else {
+                continue;
+            }
+        }
+
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed) {
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
@@ -589,14 +603,8 @@ int compress_file_impl(Precomp& precomp_mgr) {
             }
         }
 
-        bool verify = false;
-        if (verify) {
-            if (!dump_precompressed_result_w_verify(precomp_mgr, result, input_file_pos)) continue;
-        }
-        else {
-            end_uncompressed_data(precomp_mgr);
-            result->dump_to_outfile(*precomp_mgr.ctx->fout);
-        }
+        end_uncompressed_data(precomp_mgr);
+        result->dump_to_outfile(*precomp_mgr.ctx->fout);
 
         // start new uncompressed data
 
@@ -784,7 +792,7 @@ void recursion_pop(Precomp& precomp_mgr) {
   precomp_mgr.recursion_contexts_stack.pop_back();
 }
 
-bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
+bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
     // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
     recursion_push(*precomp_mgr.ctx, 0);
     auto new_ctx = std::move(precomp_mgr.ctx);
@@ -813,7 +821,7 @@ bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_
     auto verify_result = decompress_file(*new_ctx);
     if (verify_result != RETURN_SUCCESS) return false;
 
-    // Okay at this point we supposedly recompressed the input data successfully, properly verify it now
+    // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
     // TODO: use hash check instead of this nonsense
     verify_tmp_recompressed->close();
     auto recompressed_size = std::filesystem::file_size(verify_recompressed_filename.c_str());
@@ -821,12 +829,6 @@ bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_
     auto equal_bytes = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, *verify_tmp_recompressed, input_file_pos, 0);
 
     if (recompressed_size != equal_bytes) return false;
-
-    // Finally dump the precompressed data to the actual outstream
-    verify_tmp_precompressed->reopen();
-    end_uncompressed_data(precomp_mgr);
-    // copying the temporary precompressed file as the result's dump_to_outfile is not const and thus it might not be safe to re-run it
-    fast_copy(*verify_tmp_precompressed, *precomp_mgr.ctx->fout, precompressed_size);
 
     return true;
 }

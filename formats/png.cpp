@@ -7,21 +7,8 @@
 
 class png_precompression_result : public deflate_precompression_result {
 protected:
-    void dump_idat_to_outfile(OStreamLike& outfile) {
+    void dump_idat_to_outfile(OStreamLike& outfile) const {
         if (format != D_MULTIPNG) return;
-        // simulate IDAT write to get IDAT pairs count
-        int i = 1;
-        auto idat_pos = idat_lengths[0] - 2;
-        if (idat_pos < original_size) {
-            do {
-                idat_pairs_written_count++;
-
-                idat_pos += idat_lengths[i];
-                if (idat_pos >= original_size) break;
-
-                i++;
-            } while (i < idat_count);
-        }
         // store IDAT pairs count
         fout_fput_vlint(outfile, idat_pairs_written_count);
 
@@ -29,15 +16,12 @@ protected:
         fout_fput_vlint(outfile, idat_lengths[0]);
 
         // store IDAT CRCs and lengths
-        i = 1;
-        idat_pos = idat_lengths[0] - 2;
-        idat_pairs_written_count = 0;
+        int i = 1;
+        auto idat_pos = idat_lengths[0] - 2;
         if (idat_pos < original_size) {
             do {
                 fout_fput32(outfile, idat_crcs[i]);
                 fout_fput_vlint(outfile, idat_lengths[i]);
-
-                idat_pairs_written_count++;
 
                 idat_pos += idat_lengths[i];
                 if (idat_pos >= original_size) break;
@@ -63,13 +47,30 @@ public:
         return deflate_precompression_result::input_pos_add_offset() + idat_add_offset;
     }
 
-    void dump_to_outfile(OStreamLike& outfile) override {
+    void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         dump_penaltybytes_to_outfile(outfile);
         dump_idat_to_outfile(outfile);
         dump_recon_data_to_outfile(outfile);
         dump_stream_sizes_to_outfile(outfile);
         dump_precompressed_data_to_outfile(outfile);
+    }
+
+    void calculate_idat_count() {
+        if (format != D_MULTIPNG) return;
+        // simulate IDAT write to get IDAT pairs count
+        int i = 1;
+        auto idat_pos = idat_lengths[0] - 2;
+        if (idat_pos < original_size) {
+            do {
+                idat_pairs_written_count++;
+
+                idat_pos += idat_lengths[i];
+                if (idat_pos >= original_size) break;
+
+                i++;
+            } while (i < idat_count);
+        }
     }
 };
 
@@ -126,6 +127,7 @@ std::unique_ptr<precompression_result> try_decompression_png_multi(Precomp& prec
       result->idat_count = idat_count;
       result->idat_lengths = std::move(idat_lengths);
       result->idat_crcs = std::move(idat_crcs);
+      result->calculate_idat_count();
 
       if (!rdres.uncompressed_stream_mem.empty()) {
         auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);

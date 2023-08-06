@@ -267,10 +267,6 @@ void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
       log_output_func(make_cstyle_format_string("%i", precomp_statistics->max_recursion_depth_used));
   }
 
-  if ((level_count == 1) && (!precomp_switches.fast_mode)) {
-      log_output_func("\n\nFast mode does exactly the same for this file, only faster.\n");
-  }
-
   log_output_func("\n");
 }
 
@@ -543,6 +539,9 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         else if (strlen(argv[i]) == 8 && parsePrefixText(argv[i] + 1, "vstderr")) {
           log_output_func = &print_to_stderr;
         }
+        else if (strlen(argv[i]) == 7 && parsePrefixText(argv[i] + 1, "verify")) {
+            precomp_switches.verify_precompressed = true;
+        }
         else { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
@@ -619,14 +618,6 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         break;
       }
 
-      case 'F':
-      {
-        precomp_switches.fast_mode = true;
-        if (argv[i][2] != 0) { // Extra Parameters?
-          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
-        }
-        break;
-      }
       case 'E':
       {
         preserve_extension = true;
@@ -746,6 +737,7 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
     log_output_func("  e            preserve original extension of input name for output name <off>\n");
     log_output_func("  v            Verbose (debug) mode <off>\n");
     log_output_func("  vstderr      Output messages to stderr instead of directly to the console <off>\n");
+    log_output_func("  verify       Verify that precompressed data recompresses correctly with hash check <off>\n");
     log_output_func("  d[depth]     Set maximal recursion depth <10>\n");
     //log_output_func("  zl[1..9][1..9] zLib levels to try for compression (comma separated) <all>\n");
     if (long_help) {
@@ -765,7 +757,6 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
       log_output_func("  longhelp     Show long help\n");
     }
     else {
-      log_output_func("  f            Fast mode, use first found compression lvl for all streams <off>\n");
       log_output_func("  i[pos]       Ignore stream at input file position [pos] <none>\n");
       log_output_func("  s[size]      Set minimal identical byte size to [size] <4 (64 intense mode)>\n");
       log_output_func("  pdfbmp[+-]   Wrap a BMP header around PDF images <off>\n");

@@ -29,7 +29,7 @@ public:
 
     explicit base64_precompression_result() : precompression_result(D_BASE64) {}
 
-    void dump_to_outfile(OStreamLike& outfile) override {
+    void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         dump_base64_header(outfile);
         dump_penaltybytes_to_outfile(outfile);
@@ -148,7 +148,7 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
         file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
         size1 = file1.gcount();
         file2.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
-        size1 = file2.gcount();
+        size2 = file2.gcount();
 
         minsize = std::min(size1, size2);
         for (i = 0; i < minsize; i++) {

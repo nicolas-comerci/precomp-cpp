@@ -71,9 +71,9 @@ ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
 typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
 
+  bool verify_precompressed;	 // (default: off)
   bool intense_mode;             //intense mode (default: off)
   int intense_mode_depth_limit;
-  bool fast_mode;                //fast mode (default: off)
   bool brute_mode;               //brute mode (default: off)
   int brute_mode_depth_limit;
   bool pdf_bmp_mode;             //wrap BMP header around PDF images (default: off)
@@ -104,8 +104,6 @@ typedef struct {
   bool preflate_verify;
 
   int max_recursion_depth;
-
-  int conversion_to_method;
 } CSwitches;
 
 typedef struct {

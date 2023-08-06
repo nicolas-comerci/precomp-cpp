@@ -139,11 +139,6 @@ Using -t-j for example disables JPEG recompression and leaves all other types as
 -d: (Comfort: Maximal_Recursion_Depth)
 Sets the maximal recursion depth. Several streams can contain additional streams inside, for example ZIP or MIME Base64 streams. This switch specifies the maximal "depth" where Precomp will look for streams. Setting this to 0 disables recursion, the default is 10 which should be enough for most filetypes.
 
--f: (Comfort: Fast_Mode)
-
-Fast mode to speed up Precomp. This uses the first found compression for all streams instead of trying all 81 combinations when not sure. This will work fine on files that use only a few compression methods, but will result in worse compression for files with many compression methods used. Good candidates are PDF and ZIP/JAR/GZ files. Bad candidates are archives containing many files.
-In non-fast mode, there is a message when only one level combination is used. This means that fast mode will do absolutely the same on this file, but faster.
-
 -intense: (Comfort: Intense_Mode)
 
 Slow mode will slow down Precomp much. It looks for raw zLib headers, and recognizes more file formats like SIS and SWF or special formats used only for one single program. However, the zLib header consists of only 2 bytes, so there can be many false-detected streams that aren't zLib streams but are handled like them, which results in a slower and more instable behaviour.

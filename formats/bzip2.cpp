@@ -12,7 +12,7 @@ public:
 
     explicit bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
 
-    void dump_to_outfile(OStreamLike& outfile) override {
+    void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         outfile.put(compression_level);
         dump_penaltybytes_to_outfile(outfile);
