@@ -7,82 +7,74 @@
 
 class png_precompression_result : public deflate_precompression_result {
 protected:
-    void dump_idat_to_outfile(Precomp& precomp_mgr);
+    void dump_idat_to_outfile(OStreamLike& outfile) {
+        if (format != D_MULTIPNG) return;
+        // simulate IDAT write to get IDAT pairs count
+        int i = 1;
+        auto idat_pos = idat_lengths[0] - 2;
+        if (idat_pos < original_size) {
+            do {
+                idat_pairs_written_count++;
+
+                idat_pos += idat_lengths[i];
+                if (idat_pos >= original_size) break;
+
+                i++;
+            } while (i < idat_count);
+        }
+        // store IDAT pairs count
+        fout_fput_vlint(outfile, idat_pairs_written_count);
+
+        // store IDAT CRCs and lengths
+        fout_fput_vlint(outfile, idat_lengths[0]);
+
+        // store IDAT CRCs and lengths
+        i = 1;
+        idat_pos = idat_lengths[0] - 2;
+        idat_pairs_written_count = 0;
+        if (idat_pos < original_size) {
+            do {
+                fout_fput32(outfile, idat_crcs[i]);
+                fout_fput_vlint(outfile, idat_lengths[i]);
+
+                idat_pairs_written_count++;
+
+                idat_pos += idat_lengths[i];
+                if (idat_pos >= original_size) break;
+
+                i++;
+            } while (i < idat_count);
+        }
+    }
 public:
     std::vector<unsigned int> idat_crcs;
     std::vector<unsigned int> idat_lengths;
     int idat_count;
     unsigned int idat_pairs_written_count = 0;
 
-    png_precompression_result();
+    explicit png_precompression_result() : deflate_precompression_result(D_PNG) {}
 
-    long long input_pos_add_offset() override;
+    long long input_pos_add_offset() override {
+        unsigned int idat_add_offset = 0;
+        if (format == D_MULTIPNG) {
+            // add IDAT chunk overhead
+            idat_add_offset += idat_pairs_written_count * 12;
+        }
+        return deflate_precompression_result::input_pos_add_offset() + idat_add_offset;
+    }
 
-    void dump_to_outfile(Precomp& precomp_mgr) override;
+    void dump_to_outfile(OStreamLike& outfile) override {
+        dump_header_to_outfile(outfile);
+        dump_penaltybytes_to_outfile(outfile);
+        dump_idat_to_outfile(outfile);
+        dump_recon_data_to_outfile(outfile);
+        dump_stream_sizes_to_outfile(outfile);
+        dump_precompressed_data_to_outfile(outfile);
+    }
 };
 
 bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   return memcmp(buffer.data(), "IDAT", 4) == 0;
-}
-
-png_precompression_result::png_precompression_result() : deflate_precompression_result(D_PNG) {}
-
-void png_precompression_result::dump_idat_to_outfile(Precomp & precomp_mgr) {
-  if (format != D_MULTIPNG) return;
-  // simulate IDAT write to get IDAT pairs count
-  int i = 1;
-  auto idat_pos = idat_lengths[0] - 2;
-  if (idat_pos < original_size) {
-    do {
-      idat_pairs_written_count++;
-
-      idat_pos += idat_lengths[i];
-      if (idat_pos >= original_size) break;
-
-      i++;
-    } while (i < idat_count);
-  }
-  // store IDAT pairs count
-  fout_fput_vlint(*precomp_mgr.ctx->fout, idat_pairs_written_count);
-
-  // store IDAT CRCs and lengths
-  fout_fput_vlint(*precomp_mgr.ctx->fout, idat_lengths[0]);
-
-  // store IDAT CRCs and lengths
-  i = 1;
-  idat_pos = idat_lengths[0] - 2;
-  idat_pairs_written_count = 0;
-  if (idat_pos < original_size) {
-    do {
-      fout_fput32(*precomp_mgr.ctx->fout, idat_crcs[i]);
-      fout_fput_vlint(*precomp_mgr.ctx->fout, idat_lengths[i]);
-
-      idat_pairs_written_count++;
-
-      idat_pos += idat_lengths[i];
-      if (idat_pos >= original_size) break;
-
-      i++;
-    } while (i < idat_count);
-  }
-}
-
-long long png_precompression_result::input_pos_add_offset() {
-  unsigned int idat_add_offset = 0;
-  if (format == D_MULTIPNG) {
-    // add IDAT chunk overhead
-    idat_add_offset += idat_pairs_written_count * 12;
-  }
-  return deflate_precompression_result::input_pos_add_offset() + idat_add_offset;
-}
-
-void png_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_idat_to_outfile(precomp_mgr);
-  dump_recon_data_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
 }
 
 std::unique_ptr<precompression_result> try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,

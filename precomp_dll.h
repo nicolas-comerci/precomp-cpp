@@ -106,10 +106,10 @@ public:
 class precompression_result
 {
 protected:
-    virtual void dump_header_to_outfile(Precomp& precomp_mgr) const;
-    void dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const;
-    void dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const;
-    virtual void dump_precompressed_data_to_outfile(Precomp& precomp_mgr);
+    virtual void dump_header_to_outfile(OStreamLike& outfile) const;
+    void dump_penaltybytes_to_outfile(OStreamLike& outfile) const;
+    void dump_stream_sizes_to_outfile(OStreamLike& outfile) const;
+    virtual void dump_precompressed_data_to_outfile(OStreamLike& outfile);
 public:
     explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
 
@@ -122,7 +122,7 @@ public:
     long long precompressed_size = -1;
     std::unique_ptr<IStreamLike> precompressed_stream;
 
-    virtual void dump_to_outfile(Precomp& precomp_mgr);
+    virtual void dump_to_outfile(OStreamLike& outfile);
     virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
 };
 

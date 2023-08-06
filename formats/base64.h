@@ -4,6 +4,8 @@
 
 #include <span>
 
+unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2);
+
 class Base64FormatHandler : public PrecompFormatHandler {
 public:
 	explicit Base64FormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)

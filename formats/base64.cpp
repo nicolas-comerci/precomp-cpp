@@ -5,21 +5,21 @@
 #include <memory>
 
 class base64_precompression_result : public precompression_result {
-    void dump_base64_header(Precomp& precomp_mgr) const {
+    void dump_base64_header(OStreamLike& outfile) const {
         // write "header", but change first char to prevent re-detection
-        fout_fput_vlint(*precomp_mgr.ctx->fout, base64_header.size());
-        precomp_mgr.ctx->fout->put(base64_header[0] - 1);
-        precomp_mgr.ctx->fout->write(reinterpret_cast<const char*>(base64_header.data() + 1), base64_header.size() - 1);
+        fout_fput_vlint(outfile, base64_header.size());
+        outfile.put(base64_header[0] - 1);
+        outfile.write(reinterpret_cast<const char*>(base64_header.data() + 1), base64_header.size() - 1);
 
-        fout_fput_vlint(*precomp_mgr.ctx->fout, base64_line_len.size());
+        fout_fput_vlint(outfile, base64_line_len.size());
         if (line_case == 2) {
             for (auto chr : base64_line_len) {
-                precomp_mgr.ctx->fout->put(chr);
+                outfile.put(chr);
             }
         }
         else {
-            precomp_mgr.ctx->fout->put(base64_line_len[0]);
-            if (line_case == 1) precomp_mgr.ctx->fout->put(base64_line_len[base64_line_len.size() - 1]);
+            outfile.put(base64_line_len[0]);
+            if (line_case == 1) outfile.put(base64_line_len[base64_line_len.size() - 1]);
         }
     }
 public:
@@ -31,18 +31,18 @@ public:
 
     explicit base64_precompression_result() : precompression_result(D_BASE64) {}
 
-    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override {
-        if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
+    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override {
+        if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
         auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-        fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+        fast_copy(*precompressed_stream, outfile, out_size);
     }
 
-    void dump_to_outfile(Precomp& precomp_mgr) override {
-        dump_header_to_outfile(precomp_mgr);
-        dump_base64_header(precomp_mgr);
-        dump_penaltybytes_to_outfile(precomp_mgr);
-        dump_stream_sizes_to_outfile(precomp_mgr);
-        dump_precompressed_data_to_outfile(precomp_mgr);
+    void dump_to_outfile(OStreamLike& outfile) override {
+        dump_header_to_outfile(outfile);
+        dump_base64_header(outfile);
+        dump_penaltybytes_to_outfile(outfile);
+        dump_stream_sizes_to_outfile(outfile);
+        dump_precompressed_data_to_outfile(outfile);
     }
 };
 

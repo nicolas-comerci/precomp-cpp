@@ -16,12 +16,12 @@ private:
     unsigned int img_width;
     unsigned int img_height;
 
-    void dump_bmp_hdr_to_outfile(Precomp& precomp_mgr) {
+    void dump_bmp_hdr_to_outfile(OStreamLike& outfile) {
         if (bmp_header_type == BMP_HEADER_NONE) return;
         int i;
 
-        precomp_mgr.ctx->fout->put('B');
-        precomp_mgr.ctx->fout->put('M');
+        outfile.put('B');
+        outfile.put('M');
         // BMP size in bytes
         unsigned int bmp_size = ((img_width + 3) & -4) * img_height;
         if (bmp_header_type == BMP_HEADER_24BPP) bmp_size *= 3;
@@ -31,57 +31,57 @@ private:
         else {
             bmp_size += 54;
         }
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, bmp_size);
+        fout_fput32_little_endian(outfile, bmp_size);
 
         for (i = 0; i < 4; i++) {
-            precomp_mgr.ctx->fout->put(0);
+            outfile.put(0);
         }
-        precomp_mgr.ctx->fout->put(54);
+        outfile.put(54);
         if (bmp_header_type == BMP_HEADER_8BPP) {
-            precomp_mgr.ctx->fout->put(4);
+            outfile.put(4);
         }
         else {
-            precomp_mgr.ctx->fout->put(0);
+            outfile.put(0);
         }
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(40);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
-        precomp_mgr.ctx->fout->put(0);
+        outfile.put(0);
+        outfile.put(0);
+        outfile.put(40);
+        outfile.put(0);
+        outfile.put(0);
+        outfile.put(0);
 
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_width);
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, img_height);
+        fout_fput32_little_endian(outfile, img_width);
+        fout_fput32_little_endian(outfile, img_height);
 
-        precomp_mgr.ctx->fout->put(1);
-        precomp_mgr.ctx->fout->put(0);
+        outfile.put(1);
+        outfile.put(0);
 
         if (bmp_header_type == BMP_HEADER_8BPP) {
-            precomp_mgr.ctx->fout->put(8);
+            outfile.put(8);
         }
         else {
-            precomp_mgr.ctx->fout->put(24);
+            outfile.put(24);
         }
-        precomp_mgr.ctx->fout->put(0);
+        outfile.put(0);
 
         for (i = 0; i < 4; i++) {
-            precomp_mgr.ctx->fout->put(0);
+            outfile.put(0);
         }
 
         if (bmp_header_type == BMP_HEADER_24BPP)  img_width *= 3;
 
         auto datasize = ((img_width + 3) & -4) * img_height;
         if (bmp_header_type == BMP_HEADER_24BPP) datasize *= 3;
-        fout_fput32_little_endian(*precomp_mgr.ctx->fout, datasize);
+        fout_fput32_little_endian(outfile, datasize);
 
         for (i = 0; i < 16; i++) {
-            precomp_mgr.ctx->fout->put(0);
+            outfile.put(0);
         }
 
         if (bmp_header_type == BMP_HEADER_8BPP) {
             // write BMP palette
             for (i = 0; i < 1024; i++) {
-                precomp_mgr.ctx->fout->put(0);
+                outfile.put(0);
             }
         }
     }
@@ -91,31 +91,31 @@ public:
     explicit pdf_precompression_result(unsigned int img_width, unsigned int img_height)
         : deflate_precompression_result(D_PDF), img_width(img_width), img_height(img_height) {}
 
-    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override {
+    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override {
         bool must_pad_bmp = false;
         if ((bmp_header_type != BMP_HEADER_NONE) && ((img_width % 4) != 0)) {
             must_pad_bmp = true;
         }
         if (!must_pad_bmp) {
-            deflate_precompression_result::dump_precompressed_data_to_outfile(precomp_mgr);
+            deflate_precompression_result::dump_precompressed_data_to_outfile(outfile);
         }
         else {
             for (int y = 0; y < img_height; y++) {
-                fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, img_width);
+                fast_copy(*precompressed_stream, outfile, img_width);
 
                 for (int i = 0; i < (4 - (img_width % 4)); i++) {
-                    precomp_mgr.ctx->fout->put(0);
+                    outfile.put(0);
                 }
             }
         }
     }
-    void dump_to_outfile(Precomp& precomp_mgr) override {
-        dump_header_to_outfile(precomp_mgr);
-        dump_penaltybytes_to_outfile(precomp_mgr);
-        dump_recon_data_to_outfile(precomp_mgr);
-        dump_stream_sizes_to_outfile(precomp_mgr);
-        dump_bmp_hdr_to_outfile(precomp_mgr);
-        dump_precompressed_data_to_outfile(precomp_mgr);
+    void dump_to_outfile(OStreamLike& outfile) override {
+        dump_header_to_outfile(outfile);
+        dump_penaltybytes_to_outfile(outfile);
+        dump_recon_data_to_outfile(outfile);
+        dump_stream_sizes_to_outfile(outfile);
+        dump_bmp_hdr_to_outfile(outfile);
+        dump_precompressed_data_to_outfile(outfile);
     }
 };
 

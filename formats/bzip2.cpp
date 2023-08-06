@@ -13,22 +13,22 @@ public:
 
     explicit bzip2_precompression_result(int compression_level);
 
-    void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
-    void dump_to_outfile(Precomp& precomp_mgr) override;
+    void dump_precompressed_data_to_outfile(OStreamLike& outfile) override;
+    void dump_to_outfile(OStreamLike& outfile) override;
 };
 
 bzip2_precompression_result::bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
-void bzip2_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  if (recursion_filesize.has_value()) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize.value());
+void bzip2_precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
+  if (recursion_filesize.has_value()) fout_fput_vlint(outfile, recursion_filesize.value());
   auto out_size = recursion_filesize.has_value() ? recursion_filesize.value() : precompressed_size;
-  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+  fast_copy(*precompressed_stream, outfile, out_size);
 }
-void bzip2_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  precomp_mgr.ctx->fout->put(compression_level);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
+void bzip2_precompression_result::dump_to_outfile(OStreamLike& outfile) {
+  dump_header_to_outfile(outfile);
+  outfile.put(compression_level);
+  dump_penaltybytes_to_outfile(outfile);
+  dump_stream_sizes_to_outfile(outfile);
+  dump_precompressed_data_to_outfile(outfile);
 }
 
 bool BZip2FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {

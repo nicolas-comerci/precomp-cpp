@@ -18,7 +18,7 @@ struct recompress_deflate_result {
 
 class deflate_precompression_result : public precompression_result {
 protected:
-  void dump_recon_data_to_outfile(Precomp& precomp_mgr) const;
+  void dump_recon_data_to_outfile(OStreamLike& outfile) const;
 public:
   recompress_deflate_result rdres;
   std::vector<unsigned char> zlib_header;
@@ -28,9 +28,9 @@ public:
 
   explicit deflate_precompression_result(SupportedFormats format);
 
-  void dump_header_to_outfile(Precomp& precomp_mgr) const override;
-  void dump_precompressed_data_to_outfile(Precomp& precomp_mgr) override;
-  void dump_to_outfile(Precomp& precomp_mgr) override;
+  void dump_header_to_outfile(OStreamLike& outfile) const override;
+  void dump_precompressed_data_to_outfile(OStreamLike& outfile) override;
+  void dump_to_outfile(OStreamLike& outfile) override;
 };
 
 struct DeflateHistogramFalsePositiveDetector {

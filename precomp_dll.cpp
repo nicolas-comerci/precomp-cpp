@@ -107,36 +107,36 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_RAW, ZlibFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BRUTE, DeflateFormatHandler::create);
 
-void precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
+void precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
-  precomp_mgr.ctx->fout->put(static_cast<char>(flags));
-  precomp_mgr.ctx->fout->put(format);
+  outfile.put(static_cast<char>(flags));
+  outfile.put(format);
 }
 
-void precompression_result::dump_penaltybytes_to_outfile(Precomp& precomp_mgr) const {
+void precompression_result::dump_penaltybytes_to_outfile(OStreamLike& outfile) const {
   if (penalty_bytes.empty()) return;
   print_to_log(PRECOMP_DEBUG_LOG, "Penalty bytes were used: %i bytes\n", penalty_bytes.size());
-  fout_fput_vlint(*precomp_mgr.ctx->fout, penalty_bytes.size());
+  fout_fput_vlint(outfile, penalty_bytes.size());
 
   for (auto& chr: penalty_bytes) {
-    precomp_mgr.ctx->fout->put(chr);
+      outfile.put(chr);
   }
 }
 
-void precompression_result::dump_stream_sizes_to_outfile(Precomp& precomp_mgr) const {
-  fout_fput_vlint(*precomp_mgr.ctx->fout, original_size);
-  fout_fput_vlint(*precomp_mgr.ctx->fout, precompressed_size);
+void precompression_result::dump_stream_sizes_to_outfile(OStreamLike& outfile) const {
+  fout_fput_vlint(outfile, original_size);
+  fout_fput_vlint(outfile, precompressed_size);
 }
 
-void precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, precompressed_size);
+void precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
+  fast_copy(*precompressed_stream, outfile, precompressed_size);
 }
 
-void precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
+void precompression_result::dump_to_outfile(OStreamLike& outfile) {
+  dump_header_to_outfile(outfile);
+  dump_penaltybytes_to_outfile(outfile);
+  dump_stream_sizes_to_outfile(outfile);
+  dump_precompressed_data_to_outfile(outfile);
 }
 
 ResultStatistics::ResultStatistics(): CResultStatistics() {
@@ -498,6 +498,8 @@ void write_header(Precomp& precomp_mgr) {
   delete[] input_file_name_without_path;
 }
 
+bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
+
 int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
   if (precomp_mgr.recursion_depth == 0) {
@@ -568,8 +570,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
         auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
         if (!result || !result->success) continue;
 
-        end_uncompressed_data(precomp_mgr);
-        result->dump_to_outfile(precomp_mgr);
+        bool verify = false;
+        if (verify) {
+            if (!dump_precompressed_result_w_verify(precomp_mgr, result, input_file_pos)) continue;
+        }
+        else {
+            end_uncompressed_data(precomp_mgr);
+            result->dump_to_outfile(*precomp_mgr.ctx->fout);
+        }
 
         // start new uncompressed data
 
@@ -755,6 +763,53 @@ RecursionContext& recursion_push(RecursionContext& precomp_ctx, long long recurs
 void recursion_pop(Precomp& precomp_mgr) {
   precomp_mgr.ctx = std::move(precomp_mgr.recursion_contexts_stack.back());
   precomp_mgr.recursion_contexts_stack.pop_back();
+}
+
+bool dump_precompressed_result_w_verify(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
+    // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
+    recursion_push(*precomp_mgr.ctx, 0);
+    auto new_ctx = std::move(precomp_mgr.ctx);
+    recursion_pop(precomp_mgr);
+
+    // Dump precompressed data including format headers
+    std::unique_ptr<PrecompTmpFile> verify_tmp_precompressed = std::make_unique<PrecompTmpFile>();
+    auto verify_precompressed_filename = precomp_mgr.get_tempfile_name("verify_precompressed");
+    verify_tmp_precompressed->open(verify_precompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+    result->dump_to_outfile(*verify_tmp_precompressed);
+
+    // Set it as the input on the context, we will do what ammounts essentially to run Precomp -r on it as it's on its own pretty much
+    // a PCf file without the PCF header, if that makes sense
+    verify_tmp_precompressed->close();
+    auto precompressed_size = std::filesystem::file_size(verify_precompressed_filename.c_str());
+    new_ctx->fin_length = precompressed_size;
+    verify_tmp_precompressed->reopen();
+    new_ctx->fin = std::make_unique<IStreamLikeView>(verify_tmp_precompressed.get(), precompressed_size);
+
+    // Set output to a temporary file which should end up with our original data
+    std::unique_ptr<PrecompTmpFile> verify_tmp_recompressed = std::make_unique<PrecompTmpFile>();
+    auto verify_recompressed_filename = precomp_mgr.get_tempfile_name("verify_recompressed");
+    verify_tmp_recompressed->open(verify_recompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+    new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(verify_tmp_recompressed.get(), false);
+
+    auto verify_result = decompress_file(*new_ctx);
+    if (verify_result != RETURN_SUCCESS) return false;
+
+    // Okay at this point we supposedly recompressed the input data successfully, properly verify it now
+    // TODO: use hash check instead of this nonsense
+    verify_tmp_recompressed->close();
+    auto recompressed_size = std::filesystem::file_size(verify_recompressed_filename.c_str());
+    verify_tmp_recompressed->reopen();
+    auto equal_bytes = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, *verify_tmp_recompressed, input_file_pos, 0);
+
+    if (recompressed_size != equal_bytes) return false;
+
+    // Finally dump the precompressed data to the actual outstream
+    verify_tmp_precompressed->reopen();
+    end_uncompressed_data(precomp_mgr);
+    // copying the temporary precompressed file as the result's dump_to_outfile is not const and thus it might not be safe to re-run it
+    fast_copy(*verify_tmp_precompressed, *precomp_mgr.ctx->fout, precompressed_size);
+
+    return true;
 }
 
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {

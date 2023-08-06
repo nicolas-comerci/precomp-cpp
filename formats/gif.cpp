@@ -6,32 +6,28 @@
 #include <cstring>
 
 class gif_precompression_result : public precompression_result {
-    void dump_gif_diff_to_outfile(Precomp& precomp_mgr) const;
+    void dump_gif_diff_to_outfile(OStreamLike& outfile) const {
+        // store diff bytes
+        fout_fput_vlint(outfile, gif_diff.size());
+        if (!gif_diff.empty())
+            print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gif_diff.size());
+        for (unsigned char dbc : gif_diff) {
+            outfile.put(dbc);
+        }
+    }
 public:
     std::vector<unsigned char> gif_diff;
 
-    explicit gif_precompression_result();
+    explicit gif_precompression_result() : precompression_result(D_GIF) {}
 
-    void dump_to_outfile(Precomp& precomp_mgr) override;
+    void dump_to_outfile(OStreamLike& outfile) override {
+        dump_header_to_outfile(outfile);
+        dump_gif_diff_to_outfile(outfile);
+        dump_penaltybytes_to_outfile(outfile);
+        dump_stream_sizes_to_outfile(outfile);
+        dump_precompressed_data_to_outfile(outfile);
+    }
 };
-
-gif_precompression_result::gif_precompression_result() : precompression_result(D_GIF) {}
-void gif_precompression_result::dump_gif_diff_to_outfile(Precomp& precomp_mgr) const {
-  // store diff bytes
-  fout_fput_vlint(*precomp_mgr.ctx->fout, gif_diff.size());
-  if (!gif_diff.empty())
-    print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gif_diff.size());
-  for (unsigned char dbc : gif_diff) {
-    precomp_mgr.ctx->fout->put(dbc);
-  }
-}
-void gif_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_gif_diff_to_outfile(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
-}
 
 int DGifGetLineByte(GifFileType* GifFile, GifPixelType* Line, int LineLen, GifCodeStruct* g)
 {

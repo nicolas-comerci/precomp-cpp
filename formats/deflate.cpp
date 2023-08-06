@@ -11,40 +11,40 @@ std::byte make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
   return std::byte{ 0b1 } | (rdres.zlib_perfect ? static_cast<std::byte>(rdres.zlib_comp_level) << 2 : std::byte{ 0b10 });
 }
 
-void deflate_precompression_result::dump_recon_data_to_outfile(Precomp& precomp_mgr) const {
+void deflate_precompression_result::dump_recon_data_to_outfile(OStreamLike& outfile) const {
   if (!rdres.zlib_perfect) {
-    fout_fput_vlint(*precomp_mgr.ctx->fout, rdres.recon_data.size());
-    precomp_mgr.ctx->fout->write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
+    fout_fput_vlint(outfile, rdres.recon_data.size());
+    outfile.write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
   }
 }
 deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
-void deflate_precompression_result::dump_header_to_outfile(Precomp& precomp_mgr) const {
+void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
-  precomp_mgr.ctx->fout->put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags));
-  precomp_mgr.ctx->fout->put(format);
+  outfile.put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags));
+  outfile.put(format);
   if (rdres.zlib_perfect) {
-    precomp_mgr.ctx->fout->put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
+    outfile.put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
   }
-  fout_fput_vlint(*precomp_mgr.ctx->fout, zlib_header.size());
+  fout_fput_vlint(outfile, zlib_header.size());
   if (!inc_last_hdr_byte) {
-    precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size());
+    outfile.write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size());
   }
   else {
-    precomp_mgr.ctx->fout->write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size() - 1);
-    precomp_mgr.ctx->fout->put(zlib_header[zlib_header.size() - 1] + 1);
+    outfile.write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size() - 1);
+    outfile.put(zlib_header[zlib_header.size() - 1] + 1);
   }
 }
-void deflate_precompression_result::dump_precompressed_data_to_outfile(Precomp& precomp_mgr) {
-  if (recursion_used) fout_fput_vlint(*precomp_mgr.ctx->fout, recursion_filesize);
+void deflate_precompression_result::dump_precompressed_data_to_outfile(OStreamLike& outfile) {
+  if (recursion_used) fout_fput_vlint(outfile, recursion_filesize);
   auto out_size = recursion_used ? recursion_filesize : precompressed_size;
-  fast_copy(*precompressed_stream, *precomp_mgr.ctx->fout, out_size);
+  fast_copy(*precompressed_stream, outfile, out_size);
 }
-void deflate_precompression_result::dump_to_outfile(Precomp& precomp_mgr) {
-  dump_header_to_outfile(precomp_mgr);
-  dump_penaltybytes_to_outfile(precomp_mgr);
-  dump_recon_data_to_outfile(precomp_mgr);
-  dump_stream_sizes_to_outfile(precomp_mgr);
-  dump_precompressed_data_to_outfile(precomp_mgr);
+void deflate_precompression_result::dump_to_outfile(OStreamLike& outfile) {
+  dump_header_to_outfile(outfile);
+  dump_penaltybytes_to_outfile(outfile);
+  dump_recon_data_to_outfile(outfile);
+  dump_stream_sizes_to_outfile(outfile);
+  dump_precompressed_data_to_outfile(outfile);
 }
 
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
