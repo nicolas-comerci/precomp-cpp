@@ -9,6 +9,9 @@
 #include <map>
 #include <span>
 #include <vector>
+#include <optional>
+#include <mutex>
+#include <condition_variable>
 
 #ifndef __unix
 #define PATH_DELIM '\\'
@@ -456,6 +459,67 @@ public:
     void clear() override {}
 
     std::string get_digest();
+};
+
+/*
+* A PasstroughStream is a stream takes a function that takes an OStreamLike, and runs it on another thread, buffering up to a given amount of the written data in memory.
+* When the buffer is filled, the thread will stop execution until you read some from the Passthrough stream, read data is immediately discarded from the buffer, and
+* the stopped thread is allowed to resume execution now that there is more space in the buffer to store new result data.
+* This essentially allows us to pipe data around and consume it as its needed, instead of having to produce it first in its entirety and consuming it later, which could entail
+* large amounts of memory usage or even having to rely on temporary files.
+* Note that this only works for sequential generation and consumption of the data, that is seekg nor seekp is allowed.
+*/
+class PasstroughStream : public IStreamLike, public OStreamLike {
+    // boost::circular_buffer would be a good idea here
+    std::vector<unsigned char> buffer{};
+    unsigned int buffer_size;
+    unsigned int buffer_already_read_count = 0;
+    unsigned int accumulated_already_read_count = 0;
+
+    // With this we will be able to check for some error conditions when reading or writing from the spawned thread and throw exceptions to force it to end if needed.
+    // Some of the places we throw might be overkill for general usage, like if trying to read/write past eof, but works for our purposes, at least for now.
+    std::thread::id owner_thread_id;
+    std::thread thread;
+    std::mutex mtx;
+    std::condition_variable data_needed_cv;  // this is used to signal that reads had to stop because all buffered data was already used
+    std::condition_variable data_available_cv;  // this is used to signal that writes had to stop because the buffer is full
+
+    bool write_eof = false;
+    bool read_eof = false;
+
+    long long _gcount = 0;
+
+    unsigned int data_available() const { return buffer.size() - buffer_already_read_count; }
+    const unsigned char* buffer_current_pos() const { return buffer.data() + buffer_already_read_count; }
+
+    void unlock_everything();
+
+public:
+    std::optional<std::exception> thread_error = std::nullopt;
+
+    PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size = CHUNK);
+    virtual ~PasstroughStream() override;
+    void wait_thread_completed();
+
+    PasstroughStream& read(char* buff, std::streamsize count) override;
+
+    std::istream::int_type get() override;
+
+    std::streamsize gcount() override;
+    PasstroughStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+    std::istream::pos_type tellg() override;
+    bool eof() override;
+    bool good() override;
+    bool bad() override;
+    void clear() override;
+
+    PasstroughStream& write(const char* buf, std::streamsize count) override;
+
+    PasstroughStream& put(char chr);
+
+    void flush() override;
+    std::ostream::pos_type tellp() override;
+    OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
 };
 
 #ifdef DEBUG
