@@ -799,6 +799,8 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     recursion_pop(precomp_mgr);
 
     // Dump precompressed data including format headers
+    // TODO: We should be able to use a PassthroughStream here to avoid having to dump a temporary file, I tried it and it failed, didn't want to spend more
+    // time on it right now, but might be worth it to do this optimization later.
     std::unique_ptr<PrecompTmpFile> verify_tmp_precompressed = std::make_unique<PrecompTmpFile>();
     auto verify_precompressed_filename = precomp_mgr.get_tempfile_name("verify_precompressed");
     verify_tmp_precompressed->open(verify_precompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -812,24 +814,22 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     verify_tmp_precompressed->reopen();
     new_ctx->fin = std::make_unique<IStreamLikeView>(verify_tmp_precompressed.get(), precompressed_size);
 
-    // Set output to a temporary file which should end up with our original data
-    std::unique_ptr<PrecompTmpFile> verify_tmp_recompressed = std::make_unique<PrecompTmpFile>();
-    auto verify_recompressed_filename = precomp_mgr.get_tempfile_name("verify_recompressed");
-    verify_tmp_recompressed->open(verify_recompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-    new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(verify_tmp_recompressed.get(), false);
+    // Set output to a stream that calculates it's SHA1 sum without actually writting anything anywhere
+    auto sha1_ostream = Sha1Ostream();
+    new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
 
-    auto verify_result = decompress_file(*new_ctx);
+    int verify_result = decompress_file(*new_ctx);
     if (verify_result != RETURN_SUCCESS) return false;
 
     // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
-    // TODO: use hash check instead of this nonsense
-    verify_tmp_recompressed->close();
-    auto recompressed_size = std::filesystem::file_size(verify_recompressed_filename.c_str());
-    verify_tmp_recompressed->reopen();
-    auto equal_bytes = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, *verify_tmp_recompressed, input_file_pos, 0);
+    auto recompressed_size = sha1_ostream.tellp();
+    auto recompressed_data_sha1 = sha1_ostream.get_digest();
 
-    if (recompressed_size != equal_bytes) return false;
+    precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
+    auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);
+    auto original_data_sha1 = calculate_sha1(original_data_view, 0);
 
+    if (original_data_sha1 != recompressed_data_sha1) return false;
     return true;
 }
 

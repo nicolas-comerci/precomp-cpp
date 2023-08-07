@@ -1,6 +1,8 @@
 #ifndef PRECOMP_IO_H
 #define PRECOMP_IO_H
 
+#include "../boost/uuid/detail/sha1.hpp"
+
 #include <memory>
 #include <fstream>
 #include <functional>
@@ -434,6 +436,27 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
 );
 
 constexpr auto CHUNK = 262144; // 256 KB buffersize
+
+std::string calculate_sha1(IStreamLike& file1, unsigned int pos1);
+
+// This Ostream will process any written data to compute a SHA1 digest, but otherwise discards any data that goes through it, useful for data verification purposes
+class Sha1Ostream : public OStreamLike {
+    boost::uuids::detail::sha1 s;
+    uint64_t dataLength = 0;
+public:
+    Sha1Ostream& write(const char* buf, std::streamsize count) override;
+    Sha1Ostream& put(char chr) override;
+    void flush() override {};
+    std::ostream::pos_type tellp() override;
+    Sha1Ostream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override;
+
+    bool eof() override { return false; }
+    bool good() override { return true; }
+    bool bad() override { return false; }
+    void clear() override {}
+
+    std::string get_digest();
+};
 
 #ifdef DEBUG
 /*

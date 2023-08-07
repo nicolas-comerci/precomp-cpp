@@ -1,11 +1,66 @@
 #include "precomp_io.h"
-
-#include <array>
-
 #include "precomp_utils.h"
 
+#include <array>
 #include <filesystem>
 #include <memory>
+
+std::string get_sha1_hash(boost::uuids::detail::sha1& s) {
+    unsigned int hash[5];
+    s.get_digest(hash);
+    
+    // Back to string
+    char buf[41] = { 0 };
+
+    for (int i = 0; i < 5; i++)
+    {
+        std::sprintf(buf + (i << 3), "%08x", hash[i]);
+    }
+
+    return std::string(buf);
+}
+
+std::string calculate_sha1(IStreamLike& file1, unsigned int pos1) {
+    std::vector<unsigned char> input_bytes1;
+    input_bytes1.resize(CHUNK);
+    long long size1;
+    boost::uuids::detail::sha1 s;
+
+    file1.seekg(pos1, std::ios_base::beg);
+
+    do {
+        file1.read(reinterpret_cast<char*>(input_bytes1.data()), CHUNK);
+        size1 = file1.gcount();
+        s.process_bytes(input_bytes1.data(), size1);
+    } while (size1 == CHUNK);
+
+    return get_sha1_hash(s);
+}
+
+Sha1Ostream& Sha1Ostream::write(const char* buf, std::streamsize count) {
+    s.process_bytes(reinterpret_cast<const unsigned char*>(buf), count);
+    dataLength += count;
+    return *this;
+}
+
+Sha1Ostream& Sha1Ostream::put(char chr) {
+    char buf[1];
+    buf[0] = chr;
+    write(buf, 1);
+    return *this;
+}
+
+std::ostream::pos_type Sha1Ostream::tellp() {
+    return dataLength;
+}
+
+Sha1Ostream& Sha1Ostream::seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) {
+    throw std::runtime_error("Can't seek on Sha1Ostream");
+}
+
+std::string Sha1Ostream::get_digest() {
+    return get_sha1_hash(s);
+}
 
 size_t ostream_printf(OStreamLike& out, const std::string& str) {
   for (char character : str) {
