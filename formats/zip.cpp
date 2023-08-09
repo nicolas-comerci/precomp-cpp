@@ -36,7 +36,7 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
   auto result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
     D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_mgr.get_tempfile_name("decomp_zip"));
 
-  result->input_pos_extra_add += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
+  result->original_size_extra += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
   return result;
 }
 

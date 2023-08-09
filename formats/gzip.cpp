@@ -72,7 +72,7 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
     "in GZIP", precomp_mgr.get_tempfile_name("precomp_gzip"));
 
-  result->input_pos_extra_add += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
+  result->original_size_extra += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
   return result;
 }
 

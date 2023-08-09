@@ -20,7 +20,7 @@ std::unique_ptr<precompression_result> SwfFormatHandler::attempt_precompression(
     D_SWF, checkbuf_span.data() + 3, 7, deflate_stream_pos, true,
     "in SWF", precomp_mgr.get_tempfile_name("original_swf"));
 
-  result->input_pos_extra_add += 10;
+  result->original_size_extra += 10;
   return result;
 }
 

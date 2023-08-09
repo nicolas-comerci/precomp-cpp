@@ -222,7 +222,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
     }
   }
 
-  result->input_pos_extra_add += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
+  result->original_size_extra += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
   return result;
 }
 

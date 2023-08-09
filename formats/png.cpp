@@ -38,13 +38,13 @@ public:
 
     explicit png_precompression_result() : deflate_precompression_result(D_PNG) {}
 
-    long long input_pos_add_offset() override {
+    long long complete_original_size() const override {
         unsigned int idat_add_offset = 0;
         if (format == D_MULTIPNG) {
             // add IDAT chunk overhead
             idat_add_offset += idat_pairs_written_count * 12;
         }
-        return deflate_precompression_result::input_pos_add_offset() + idat_add_offset;
+        return deflate_precompression_result::complete_original_size() + idat_add_offset;
     }
 
     void dump_to_outfile(OStreamLike& outfile) const override {
@@ -260,7 +260,7 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
 
   auto result = try_decompression_png_multi(precomp_mgr, *temp_png, 0, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
-  result->input_pos_extra_add = 6;  // add header length to the deflate stream size for full input size
+  result->original_size_extra = 6;  // add header length to the deflate stream size for full input size
   return result;
 }
 

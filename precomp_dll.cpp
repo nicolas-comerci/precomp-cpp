@@ -566,10 +566,18 @@ int compress_file_impl(Precomp& precomp_mgr) {
           if (ignore_this_position) continue;
         }
 
-        bool quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
+        bool quick_check_result = false;
+        try {
+          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
+        }
+        catch (...) {}  // TODO: print/record/report handler failed
         if (!quick_check_result) continue;
 
-        auto result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+        std::unique_ptr<precompression_result> result {};
+        try {
+          result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+        }
+        catch (...) {}  // TODO: print/record/report handler failed
         if (!result || !result->success) continue;
 
         // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
@@ -577,19 +585,26 @@ int compress_file_impl(Precomp& precomp_mgr) {
         //  1) why bother recursing a stream we might reject
         //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
         if (precomp_mgr.switches.verify_precompressed) {
-            if (verify_precompressed_result(precomp_mgr, result, input_file_pos)) {
-                // ensure that the precompressed stream is ready to read from the start, as if verification never happened
-                result->precompressed_stream->seekg(0, std::ios_base::beg);
-            }
-            else {
-                continue;
-            }
+          bool verification_success = false;
+          try
+          {
+            verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
+          }
+          catch (...) {}  // TODO: print/record/report handler failed
+          if (!verification_success) continue;
+          // ensure that the precompressed stream is ready to read from the start, as if verification never happened
+          result->precompressed_stream->seekg(0, std::ios_base::beg);
         }
 
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed) {
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
-            recursion_result r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+            recursion_result r{};
+            try
+            {
+              r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+            }
+            catch (...) {}  // TODO: print/record/report handler failed
             if (r.success) {
                 auto rec_tmpfile = new PrecompTmpFile();
                 rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
@@ -609,7 +624,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // start new uncompressed data
 
         // set input file pointer after recompressed data
-        input_file_pos += result->input_pos_add_offset();
+        input_file_pos += result->complete_original_size() - 1;
         compressed_data_found = result->success;
         break;
       }
@@ -824,6 +839,9 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
     auto recompressed_size = sha1_ostream.tellp();
     auto recompressed_data_sha1 = sha1_ostream.get_digest();
+
+    // Validate that the recompressed_size is what we expect
+    if (recompressed_size != result->complete_original_size()) return false;
 
     precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
     auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);

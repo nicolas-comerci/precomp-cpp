@@ -116,14 +116,17 @@ public:
     std::byte flags{ 0 };
     std::vector<char> penalty_bytes;
     long long original_size = -1;
-    long long input_pos_extra_add = 0;  // this is so we can skip headers and stuff like that as well as the precompressed stream, after the module is done
+    // The original_size field only refers to the actual data subject to precompression/recompression which usually
+    // does not include the size of headers for example, this field allows us to track the complete size of the data
+    // to be reconstructed during recompression
+    long long original_size_extra = 0;
     long long precompressed_size = -1;
     std::unique_ptr<IStreamLike> precompressed_stream;
     bool recursion_used = false;
     long long recursion_filesize = 0;
 
     virtual void dump_to_outfile(OStreamLike& outfile) const;
-    virtual long long input_pos_add_offset() { return input_pos_extra_add + original_size - 1; }
+    virtual long long complete_original_size() const { return original_size_extra + original_size; }
 };
 
 class PrecompFormatHandler;

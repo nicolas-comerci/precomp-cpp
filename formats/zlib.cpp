@@ -19,7 +19,7 @@ std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression
     result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
       D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", precomp_mgr.get_tempfile_name("original_zlib"));
 
-    result->input_pos_extra_add += 2;
+    result->original_size_extra += 2;
   }
   return result;
 }
