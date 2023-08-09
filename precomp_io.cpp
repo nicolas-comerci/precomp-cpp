@@ -268,7 +268,10 @@ IStreamLikeView::IStreamLikeView(IStreamLike* istream_, long long final_allowed_
   current_stream_pos = starting_stream_pos;
 }
 IStreamLikeView& IStreamLikeView::read(char* buff, std::streamsize count) {
-  if (_eof) return *this;
+  if (_eof) {
+    _gcount = 0;
+    return *this;
+  }
 
   std::streamsize effective_count = count;
   if (current_stream_pos + count > final_allowed_stream_pos) {
@@ -277,18 +280,18 @@ IStreamLikeView& IStreamLikeView::read(char* buff, std::streamsize count) {
   }
 
   istream->read(buff, effective_count);
-  long long amt_read = istream->gcount();
-  if (amt_read < effective_count) _eof = true;
-  current_stream_pos += amt_read;
+  _gcount = istream->gcount();
+  if (_gcount < effective_count) _eof = true;
+  current_stream_pos += _gcount;
 
   return *this;
 }
 std::istream::int_type IStreamLikeView::get() {
   unsigned char chr[1];
   read(reinterpret_cast<char*>(&chr[0]), 1);
-  return istream->gcount() == 1 ? chr[0] : EOF;
+  return _gcount == 1 ? chr[0] : EOF;
 }
-std::streamsize IStreamLikeView::gcount() { return istream->gcount(); }
+std::streamsize IStreamLikeView::gcount() { return _gcount; }
 std::istream::pos_type IStreamLikeView::tellg() { return _eof ? -1 : current_stream_pos - starting_stream_pos; }
 bool IStreamLikeView::eof() { return _eof; }
 bool IStreamLikeView::good() { return istream->good() && !eof(); }

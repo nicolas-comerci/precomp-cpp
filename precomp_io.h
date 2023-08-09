@@ -260,6 +260,7 @@ public:
   long long current_stream_pos;
   long long final_allowed_stream_pos;
   bool _eof = false;
+  std::streamsize _gcount = 0;
 
   explicit IStreamLikeView(IStreamLike* istream_, long long final_allowed_stream_pos_);
 
