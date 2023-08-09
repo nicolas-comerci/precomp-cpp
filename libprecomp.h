@@ -71,7 +71,7 @@ ExternC LIBPRECOMP void PrecompGetCopyrightMsg(char* msg);
 typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
 
-  bool verify_precompressed;	 // (default: off)
+  bool verify_precompressed;     // (default: on)
   bool intense_mode;             //intense mode (default: off)
   int intense_mode_depth_limit;
   bool brute_mode;               //brute mode (default: off)

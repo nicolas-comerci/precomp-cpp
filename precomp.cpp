@@ -515,18 +515,20 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
       }
       case 'C':
       {
-        if (
-          strlen(argv[i]) == 8 &&
-          toupper(argv[i][2]) == 'O' &&
-          toupper(argv[i][3]) == 'M' &&
-          toupper(argv[i][4]) == 'F' &&
-          toupper(argv[i][5]) == 'O' &&
-          toupper(argv[i][6]) == 'R' &&
-          toupper(argv[i][7]) == 'T'
-          ) {
+        if (strlen(argv[i]) == 8 && parsePrefixText(argv[i] + 1, "comfort")) {
           comfort_mode = true;
         }
-        if (argv[i][2] != 0 && !comfort_mode) { // Extra Parameters?
+        else { // Extra Parameters?
+          throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
+        }
+        break;
+      }
+      case 'N':
+      {
+        if (strlen(argv[i]) == 10 && parsePrefixText(argv[i] + 1, "no-verify")) {
+          precomp_switches.verify_precompressed = false;
+        }
+        else { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));
         }
         break;
@@ -538,9 +540,6 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         }
         else if (strlen(argv[i]) == 8 && parsePrefixText(argv[i] + 1, "vstderr")) {
           log_output_func = &print_to_stderr;
-        }
-        else if (strlen(argv[i]) == 7 && parsePrefixText(argv[i] + 1, "verify")) {
-            precomp_switches.verify_precompressed = true;
         }
         else { // Extra Parameters?
           throw std::runtime_error(make_cstyle_format_string("ERROR: Unknown switch \"%s\"\n", argv[i]));

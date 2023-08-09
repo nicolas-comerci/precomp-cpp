@@ -814,10 +814,6 @@ namespace NCompress
 
          if (_props._level > 0) switches->intense_mode = true;  //f=precomp:x1 => intense mode
          if (_props._level > 1) switches->brute_mode = true;  //f=precomp:x2 => brute mode (+ intense mode)
-         // I anticipate the 7zip plugin might end up being used by less tech savvy users, in which case we want to ensure we verify the data to minimize the
-         // chances of data loss, even at the expense of speed (non savvy users might not realize/assume they should verify their data before deleting the original).
-         // While Precomp is provided as-is and don't assume any responsability legaly, I want to make such an occurrence as unlikely as possible
-         switches->verify_precompressed = true;
 
          // Reopen file as read only and set it as input for precomp
          ftmp = fopen(filename.c_str(), "rb");

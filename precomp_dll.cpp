@@ -247,7 +247,7 @@ const char* PrecompGetOutputFilename(Precomp* precomp_mgr) {
 
 //Switches constructor
 Switches::Switches(): CSwitches() {
-  verify_precompressed = false;
+  verify_precompressed = true;
   intense_mode = false;
   intense_mode_depth_limit = -1;
   brute_mode = false;
