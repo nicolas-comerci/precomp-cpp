@@ -37,10 +37,15 @@ public:
     return _data[_pos + offset];
   }
   void advance(const unsigned l) {
-    _pos += l;
+    if (_pos + l > _size) {
+      _pos = _size;
+    }
+    else {
+      _pos += l;
+    }
   }
   const unsigned remaining() const {
-    return _size - _pos;
+    return _size > _pos ? _size - _pos : 0;
   }
 
 private:
