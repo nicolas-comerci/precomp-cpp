@@ -78,7 +78,7 @@ bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
   return memcmp(buffer.data(), "IDAT", 4) == 0;
 }
 
-std::unique_ptr<precompression_result> try_decompression_png_multi(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
+std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
   std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>();
 
@@ -232,33 +232,47 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
     break;
   }
 
-  // copy to tempfile before trying to recompress
-  std::string png_tmp_filename = precomp_mgr.get_tempfile_name("original_png");
-  remove(png_tmp_filename.c_str());
+  if (idat_count == 0) return std::unique_ptr<precompression_result>{};
 
-  precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
+  IStreamLike* png_input;
+  uint64_t png_input_deflate_stream_pos;
+  std::unique_ptr<IStreamLike> temp_png;
+  if (idat_count == 1) {
+    png_input = precomp_mgr.ctx->fin.get();
+    png_input_deflate_stream_pos = deflate_stream_pos;
+  }
+  else {
+    // copy to tempfile before trying to recompress
+    std::string png_tmp_filename = precomp_mgr.get_tempfile_name("original_png");
+    remove(png_tmp_filename.c_str());
 
-  auto png_length = idat_lengths[0] - 2; // 2 = zLib header length
-  for (int i = 1; i < idat_count; i++) {
-    png_length += idat_lengths[i];
+    precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
+
+    auto png_length = idat_lengths[0] - 2; // 2 = zLib header length
+    for (int i = 1; i < idat_count; i++) {
+      png_length += idat_lengths[i];
+    }
+
+    auto copy_to_temp = [&idat_lengths, &idat_count, &precomp_mgr](IStreamLike& src, OStreamLike& dst)  {
+      idat_lengths[0] -= 2; // zLib header length
+      for (int i = 0; i < idat_count; i++) {
+        fast_copy(src, dst, idat_lengths[i]);
+        src.seekg(12, std::ios_base::cur);
+      }
+      idat_lengths[0] += 2;
+    };
+
+    temp_png = make_temporary_stream(
+      deflate_stream_pos, png_length, checkbuf, 
+      *precomp_mgr.ctx->fin, original_input_pos, png_tmp_filename,
+      copy_to_temp, 50 * 1024 * 1024  // 50mb
+    );
+
+    png_input = temp_png.get();
+    png_input_deflate_stream_pos = 0;
   }
 
-  auto copy_to_temp = [&idat_lengths, &idat_count, &precomp_mgr](IStreamLike& src, OStreamLike& dst)  {
-    idat_lengths[0] -= 2; // zLib header length
-    for (int i = 0; i < idat_count; i++) {
-      fast_copy(src, dst, idat_lengths[i]);
-      src.seekg(12, std::ios_base::cur);
-    }
-    idat_lengths[0] += 2;
-  };
-
-  std::unique_ptr<IStreamLike> temp_png = make_temporary_stream(
-    deflate_stream_pos, png_length, checkbuf, 
-    *precomp_mgr.ctx->fin, original_input_pos, png_tmp_filename,
-    copy_to_temp, 50 * 1024 * 1024  // 50mb
-  );
-
-  auto result = try_decompression_png_multi(precomp_mgr, *temp_png, 0, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
+  auto result = try_decompression_png(precomp_mgr, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
   result->original_size_extra = 6;  // add header length to the deflate stream size for full input size
   return result;
