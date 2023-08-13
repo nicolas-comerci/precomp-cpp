@@ -406,10 +406,18 @@ std::streambuf::pos_type memiostream::membuf::seekoff(std::streambuf::off_type o
     if (which & std::ios_base::in) new_gptr = eback() + off;
     if (which & std::ios_base::out) new_pptr = pbase() + off;
   }
+
   if (new_gptr < eback() || new_gptr > egptr() || new_pptr < pbase() || new_pptr > epptr()) return pos_type(off_type(-1));
-  if (which & std::ios_base::in) setg(eback(), new_gptr, egptr());
-  if (which & std::ios_base::out) setg(pbase(), new_pptr, epptr());
-  return which & std::ios_base::in ? gptr() - eback() : pptr() - epptr();
+  if (which & std::ios_base::in) {
+    setg(eback(), new_gptr, egptr());
+    auto newoff = gptr() - eback();
+    return newoff;
+  }
+  else {
+    setp(pbase(), new_pptr, epptr());
+    auto newoff = pptr() - pbase();
+    return newoff;
+  }
 }
 std::streambuf::pos_type memiostream::membuf::seekpos(std::streambuf::pos_type sp, std::ios_base::openmode which) {
   return seekoff(sp - pos_type(off_type(0)), std::ios_base::beg, which);
@@ -487,7 +495,7 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
     std::vector<char> mem{};
     mem.resize(stream_size);
     auto mem_png = memiostream::make(std::move(mem));
-    if (stream_size < checkbuf.size()) {  // The whole file did fit the checkbuf, we can copy it from there
+    if (!checkbuf.empty() && stream_size < checkbuf.size()) {  // The whole file did fit the checkbuf, we can copy it from there
       auto checkbuf_stream = memiostream::make(checkbuf.data(), checkbuf.data() + checkbuf.size());
       checkbuf_stream->seekg(stream_pos - original_input_pos, std::ios_base::beg);
       copy_to_temp(*checkbuf_stream, *mem_png);
