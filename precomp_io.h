@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 #include <optional>
+#include <thread>
 #include <mutex>
 #include <condition_variable>
 

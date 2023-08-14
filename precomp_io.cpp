@@ -414,7 +414,8 @@ std::streambuf::pos_type memiostream::membuf::seekoff(std::streambuf::off_type o
     return newoff;
   }
   else {
-    setp(pbase(), new_pptr, epptr());
+    setp(pbase(), epptr());
+    pbump(new_pptr - pbase());
     auto newoff = pptr() - pbase();
     return newoff;
   }
