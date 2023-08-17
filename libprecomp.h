@@ -72,6 +72,7 @@ typedef struct {
   bool DEBUG_MODE;               //debug mode (default: off)
 
   bool verify_precompressed;     // (default: on)
+  uintmax_t uncompressed_block_length;  // (default: 100mb)
   bool intense_mode;             //intense mode (default: off)
   int intense_mode_depth_limit;
   bool brute_mode;               //brute mode (default: off)

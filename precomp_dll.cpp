@@ -248,6 +248,7 @@ const char* PrecompGetOutputFilename(Precomp* precomp_mgr) {
 //Switches constructor
 Switches::Switches(): CSwitches() {
   verify_precompressed = true;
+  uncompressed_block_length = 100 * 1024 * 1024;
   intense_mode = false;
   intense_mode_depth_limit = -1;
   brute_mode = false;
@@ -596,6 +597,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
           result->precompressed_stream->seekg(0, std::ios_base::beg);
         }
 
+        // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
+        // going to write this stream, which means we can as well write any pending uncompressed data now
+        // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
+        end_uncompressed_data(precomp_mgr);
+
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed) {
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
@@ -617,8 +623,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
                 result->precompressed_stream->seekg(0, std::ios_base::beg);
             }
         }
-
-        end_uncompressed_data(precomp_mgr);
+        
         result->dump_to_outfile(*precomp_mgr.ctx->fout);
 
         // start new uncompressed data
@@ -640,6 +645,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
       }
       (*precomp_mgr.ctx->uncompressed_length)++;
       precomp_mgr.ctx->uncompressed_bytes_total++;
+      // If there is a maximum uncompressed_block_length we dump the current uncompressed data as a single block, this makes it so anything waiting on data from Precomp
+      // can get some data to possibly process earlier
+      if (precomp_mgr.switches.uncompressed_block_length != 0 && precomp_mgr.ctx->uncompressed_length >= precomp_mgr.switches.uncompressed_block_length) {
+        end_uncompressed_data(precomp_mgr);
+      }
     }
   }
 
