@@ -387,43 +387,53 @@ bool recompress_gif(IStreamLike& srcfile, OStreamLike& dstfile, unsigned char bl
   return recompress_gif_ok(ScreenBuff, myGifFile, newGifFile);
 }
 
-void GifFormatHandler::recompress(RecursionContext& context, std::byte header1, SupportedFormats precomp_hdr_format) {
-  unsigned char block_size = 255;
-
-  const bool penalty_bytes_stored = ((header1 & std::byte{ 0b10 }) == std::byte{ 0b10 });
-  if ((header1 & std::byte{ 0b100 }) == std::byte{ 0b100 }) block_size = 254;
-  const bool recompress_success_needed = ((header1 & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 });
-
+class GifFormatHeaderData: public PrecompFormatHeaderData {
+public:
   GifDiffStruct gDiff;
+  unsigned char block_size;
+  bool recompress_success_needed;
+};
+
+std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  auto fmt_hdr = std::make_unique<GifFormatHeaderData>();
+
+  bool penalty_bytes_stored = (precomp_hdr_flags & std::byte{ 0b10 }) == std::byte{ 0b10 };
+  fmt_hdr->block_size = 255;
+  if ((precomp_hdr_flags & std::byte{ 0b100 }) == std::byte{ 0b100 }) fmt_hdr->block_size = 254;
+  fmt_hdr->recompress_success_needed = ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 });
 
   // read diff bytes
-  gDiff.GIFDiffIndex = fin_fget_vlint(*context.fin);
-  gDiff.GIFDiff = (unsigned char*)malloc(gDiff.GIFDiffIndex * sizeof(unsigned char));
-  context.fin->read(reinterpret_cast<char*>(gDiff.GIFDiff), gDiff.GIFDiffIndex);
-  print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", gDiff.GIFDiffIndex);
-  gDiff.GIFDiffSize = gDiff.GIFDiffIndex;
-  gDiff.GIFDiffIndex = 0;
-  gDiff.GIFCodeCount = 0;
+  fmt_hdr->gDiff.GIFDiffIndex = fin_fget_vlint(*context.fin);
+  fmt_hdr->gDiff.GIFDiff = (unsigned char*)malloc(fmt_hdr->gDiff.GIFDiffIndex * sizeof(unsigned char));
+  context.fin->read(reinterpret_cast<char*>(fmt_hdr->gDiff.GIFDiff), fmt_hdr->gDiff.GIFDiffIndex);
+  print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", fmt_hdr->gDiff.GIFDiffIndex);
+  fmt_hdr->gDiff.GIFDiffSize = fmt_hdr->gDiff.GIFDiffIndex;
+  fmt_hdr->gDiff.GIFDiffIndex = 0;
+  fmt_hdr->gDiff.GIFCodeCount = 0;
 
   // read penalty bytes
-  std::vector<char> penalty_bytes;
   if (penalty_bytes_stored) {
     auto penalty_bytes_len = fin_fget_vlint(*context.fin);
-    penalty_bytes.resize(penalty_bytes_len);
-    context.fin->read(penalty_bytes.data(), penalty_bytes_len);
+    fmt_hdr->penalty_bytes.resize(penalty_bytes_len);
+    context.fin->read(reinterpret_cast<char*>(fmt_hdr->penalty_bytes.data()), penalty_bytes_len);
   }
 
-  const long long recompressed_data_length = fin_fget_vlint(*context.fin);
-  const long long decompressed_data_length = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
 
-  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
+  return fmt_hdr;
+}
+
+void GifFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  auto& gif_precomp_hdr_format = static_cast<GifFormatHeaderData&>(precomp_hdr_data);
+  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", gif_precomp_hdr_format.original_size, gif_precomp_hdr_format.precompressed_size);
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile = context.precomp.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
   std::string tempfile2 = context.precomp.get_tempfile_name(tmp_tag + "_recompressed_gif", false);
 
-  dump_to_file(*context.fin, tempfile, decompressed_data_length);
-  bool recompress_success = false;
+  dump_to_file(*context.fin, tempfile, gif_precomp_hdr_format.precompressed_size);
+  bool recompress_success;
 
   {
     remove(tempfile2.c_str());
@@ -433,14 +443,15 @@ void GifFormatHandler::recompress(RecursionContext& context, std::byte header1, 
     // recompress data
     WrappedFStream ftempout;
     ftempout.open(tempfile, std::ios_base::in | std::ios_base::binary);
-    recompress_success = recompress_gif(ftempout, frecomp, block_size, nullptr, &gDiff);
+    recompress_success = recompress_gif(ftempout, frecomp, gif_precomp_hdr_format.block_size, nullptr, &gif_precomp_hdr_format.gDiff);
     frecomp.close();
     ftempout.close();
   }
 
-  if (recompress_success_needed) {
+  // TODO: wtf is this? how can recompression fail? do we just allow bad data?
+  if (gif_precomp_hdr_format.recompress_success_needed) {
     if (!recompress_success) {
-      GifDiffFree(&gDiff);
+      GifDiffFree(&gif_precomp_hdr_format.gDiff);
       throw PrecompError(ERR_DURING_RECOMPRESSION);
     }
   }
@@ -450,32 +461,32 @@ void GifFormatHandler::recompress(RecursionContext& context, std::byte header1, 
   {
     PrecompTmpFile frecomp;
     frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    fast_copy(frecomp, *context.fout, recompressed_data_length);
+    fast_copy(frecomp, *context.fout, gif_precomp_hdr_format.original_size);
   }
 
   remove(tempfile2.c_str());
   remove(tempfile.c_str());
 
-  if (penalty_bytes_stored) {
+  if (!gif_precomp_hdr_format.penalty_bytes.empty()) {
     context.fout->flush();
 
     const long long fsave_fout_pos = context.fout->tellp();
 
     int pb_pos = 0;
-    for (int pbc = 0; pbc < penalty_bytes.size(); pbc += 5) {
-      pb_pos = ((unsigned char)penalty_bytes[pbc]) << 24;
-      pb_pos += ((unsigned char)penalty_bytes[pbc + 1]) << 16;
-      pb_pos += ((unsigned char)penalty_bytes[pbc + 2]) << 8;
-      pb_pos += (unsigned char)penalty_bytes[pbc + 3];
+    for (int pbc = 0; pbc < gif_precomp_hdr_format.penalty_bytes.size(); pbc += 5) {
+      pb_pos = ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc]) << 24;
+      pb_pos += ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 1]) << 16;
+      pb_pos += ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 2]) << 8;
+      pb_pos += (unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 3];
 
       context.fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      context.fout->write(penalty_bytes.data() + pbc + 4, 1);
+      context.fout->write(reinterpret_cast<char*>(gif_precomp_hdr_format.penalty_bytes.data()) + pbc + 4, 1);
     }
 
     context.fout->seekp(fsave_fout_pos, std::ios_base::beg);
   }
 
-  GifDiffFree(&gDiff);
+  GifDiffFree(&gif_precomp_hdr_format.gDiff);
 }
 
 std::tuple<long long, std::vector<char>> compare_files_penalty(Precomp& precomp_mgr, RecursionContext& context, IStreamLike& file1, IStreamLike& file2, long long pos1, long long pos2) {

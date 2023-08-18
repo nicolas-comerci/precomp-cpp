@@ -24,10 +24,14 @@ std::unique_ptr<precompression_result> SwfFormatHandler::attempt_precompression(
   return result;
 }
 
-void SwfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> SwfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  return read_deflate_format_header(context, precomp_hdr_flags, true);
+}
+
+void SwfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   context.fout->put('C');
   context.fout->put('W');
   context.fout->put('S');
 
-  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_swf"), "SWF");
+  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_swf"), "SWF");
 }

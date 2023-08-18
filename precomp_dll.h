@@ -129,6 +129,19 @@ public:
     virtual long long complete_original_size() const { return original_size_extra + original_size; }
 };
 
+// When Precomp detects and precompresses a stream, there is a header that is written before the precompressed data with information about the precompressed stream
+// such as the length, penalty bytes and if recursion was used.
+// Format handlers may opt to write longer headers with additional data, in which case they must handle it correctly, respecting the API provided.
+class PrecompFormatHeaderData {
+public:
+  std::byte option_flags;
+  SupportedFormats format;
+  std::vector<unsigned char> penalty_bytes;
+  unsigned long long original_size = 0;
+  unsigned long long precompressed_size = 0;
+  unsigned long long recursion_data_size = 0;
+};
+
 class PrecompFormatHandler;
 extern std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHandlerFactoryFunctions;
 
@@ -154,7 +167,10 @@ public:
     // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
     virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
 
-    virtual void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
+    virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
+    // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
+    // with your extra format header data, provided you are using and returned such an instance from read_format_header()
+    virtual void recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) = 0;
 
     // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
     // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector

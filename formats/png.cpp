@@ -278,10 +278,10 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
   return result;
 }
 
-void recompress_png(RecursionContext& context, std::byte precomp_hdr_flags) {
+void recompress_png(RecursionContext& context, DeflateFormatHeaderData& deflate_precomp_hdr_data) {
   // restore IDAT
   ostream_printf(*context.fout, "IDAT");
-  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_png"), "PNG");
+  recompress_deflate(context, deflate_precomp_hdr_data, context.precomp.get_tempfile_name("recomp_png"), "PNG");
 }
 
 class OwnOStreamMultiPNG : public OutputStream {
@@ -337,52 +337,76 @@ bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin,
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-void recompress_multipng(RecursionContext& context, std::byte precomp_hdr_flags) {
+class MultiPngFormatHeaderData: public DeflateFormatHeaderData {
+public:
+  long long idat_count;
+  std::vector<unsigned int> idat_crcs;
+  std::vector<unsigned int> idat_lengths;
+};
+
+void recompress_multipng(RecursionContext& context, MultiPngFormatHeaderData& multipng_precomp_hdr_data) {
   // restore first IDAT
   ostream_printf(*context.fout, "IDAT");
 
-  recompress_deflate_result rdres;
-  unsigned hdr_length;
-  std::vector<unsigned char> in_buf{};
-  in_buf.resize(CHUNK);
-  fin_fget_deflate_hdr(*context.fin, *context.fout, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, true);
+  // Write zlib_header
+  context.fout->write(reinterpret_cast<char*>(multipng_precomp_hdr_data.stream_hdr.data()), multipng_precomp_hdr_data.stream_hdr.size());
 
-  // get IDAT count
-  auto idat_count = fin_fget_vlint(*context.fin) + 1;
-
-  std::vector<unsigned int> idat_crcs;
-  idat_crcs.resize(idat_count * sizeof(unsigned int));
-  std::vector<unsigned int> idat_lengths;
-  idat_lengths.resize(idat_count * sizeof(unsigned int));
-
-  // get first IDAT length
-  idat_lengths[0] = fin_fget_vlint(*context.fin) - 2; // zLib header length
-
-  // get IDAT chunk lengths and CRCs
-  for (int i = 1; i < idat_count; i++) {
-    idat_crcs[i] = fin_fget32(*context.fin);
-    idat_lengths[i] = fin_fget_vlint(*context.fin);
-  }
-
-  fin_fget_recon_data(*context.fin, rdres);
-  debug_sums(context, rdres);
+  debug_sums(context, multipng_precomp_hdr_data.rdres);
   debug_pos(context);
 
-  debug_deflate_reconstruct(rdres, "PNG multi", hdr_length, 0);
+  debug_deflate_reconstruct(multipng_precomp_hdr_data.rdres, "PNG multi", multipng_precomp_hdr_data.stream_hdr.size(), 0);
 
-  if (!try_reconstructing_deflate_multipng(context.precomp, *context.fin, *context.fout, rdres, idat_count, idat_crcs.data(), idat_lengths.data())) {
+  if (!try_reconstructing_deflate_multipng(context.precomp, *context.fin, *context.fout, multipng_precomp_hdr_data.rdres,
+    multipng_precomp_hdr_data.idat_count, multipng_precomp_hdr_data.idat_crcs.data(), multipng_precomp_hdr_data.idat_lengths.data())) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }
 
-void PngFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  switch (precomp_hdr_format) {
+  case D_PNG: {
+    return read_deflate_format_header(context, precomp_hdr_flags, true);
+  }
+  case D_MULTIPNG: {
+    auto fmt_hdr = std::make_unique<MultiPngFormatHeaderData>();
+    unsigned hdr_length;
+    fmt_hdr->stream_hdr.resize(CHUNK);
+    fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, true);
+    fmt_hdr->stream_hdr.resize(hdr_length);
+
+    // get IDAT count
+    fmt_hdr->idat_count = fin_fget_vlint(*context.fin) + 1;
+        
+    fmt_hdr->idat_crcs.resize(fmt_hdr->idat_count * sizeof(unsigned int));
+    fmt_hdr->idat_lengths.resize(fmt_hdr->idat_count * sizeof(unsigned int));
+
+    // get first IDAT length
+    fmt_hdr->idat_lengths[0] = fin_fget_vlint(*context.fin) - 2; // zLib header length
+
+    // get IDAT chunk lengths and CRCs
+    for (int i = 1; i < fmt_hdr->idat_count; i++) {
+      fmt_hdr->idat_crcs[i] = fin_fget32(*context.fin);
+      fmt_hdr->idat_lengths[i] = fin_fget_vlint(*context.fin);
+    }
+
+    fin_fget_recon_data(*context.fin, fmt_hdr->rdres);
+    return fmt_hdr;
+  }
+  default:
+    throw PrecompError(ERR_DURING_RECOMPRESSION);
+  }
+}
+
+void PngFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
     switch (precomp_hdr_format) {
     case D_PNG: {
-        recompress_png(context, precomp_hdr_flags);
+        auto& deflate_precomp_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+        recompress_png(context, deflate_precomp_hdr_data);
         break;
     }
     case D_MULTIPNG: {
-        recompress_multipng(context, precomp_hdr_flags);
+        auto& multipng_precomp_hdr_data = static_cast<MultiPngFormatHeaderData&>(precomp_hdr_data);
+        recompress_multipng(context, multipng_precomp_hdr_data);
         break;
     }
     default:

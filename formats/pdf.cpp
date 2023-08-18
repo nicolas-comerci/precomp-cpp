@@ -354,17 +354,25 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
   return result;
 }
 
-void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  recompress_deflate_result rdres;
-  unsigned hdr_length;
+std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  return read_deflate_format_header(context, precomp_hdr_flags, false);
+}
+
+void PdfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  auto& deflate_precomp_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+
   // restore PDF header
   ostream_printf(*context.fout, "/FlateDecode");
+  
+  debug_deflate_reconstruct(deflate_precomp_hdr_data.rdres, "PDF", deflate_precomp_hdr_data.stream_hdr.size(), 0);
+
+  // Write zlib_header
+  context.fout->write(reinterpret_cast<char*>(deflate_precomp_hdr_data.stream_hdr.data()), deflate_precomp_hdr_data.stream_hdr.size());
+
   std::vector<unsigned char> in_buf{};
   in_buf.resize(CHUNK);
-  fin_fget_deflate_rec(context, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, false);
-  debug_deflate_reconstruct(rdres, "PDF", hdr_length, 0);
 
-  int bmp_c = static_cast<int>(precomp_hdr_flags & std::byte{ 0b11000000 });
+  int bmp_c = static_cast<int>(deflate_precomp_hdr_data.option_flags & std::byte{ 0b11000000 });
   if (bmp_c == 1) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (8-Bit)\n");
   if (bmp_c == 2) print_to_log(PRECOMP_DEBUG_LOG, "Skipping BMP header (24-Bit)\n");
 
@@ -386,7 +394,7 @@ void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_h
   uint64_t read_part, skip_part;
   if ((bmp_c == 0) || ((bmp_width % 4) == 0)) {
     // recompress directly to fout
-    read_part = rdres.uncompressed_stream_size;
+    read_part = deflate_precomp_hdr_data.rdres.uncompressed_stream_size;
     skip_part = 0;
   }
   else { // lines aligned to 4 byte, skip those bytes
@@ -394,7 +402,7 @@ void PdfFormatHandler::recompress(RecursionContext& context, std::byte precomp_h
     read_part = bmp_width;
     skip_part = (-bmp_width) & 3;
   }
-  if (!try_reconstructing_deflate_skip(context, *context.fin, *context.fout, rdres, read_part, skip_part)) {
+  if (!try_reconstructing_deflate_skip(context, *context.fin, *context.fout, deflate_precomp_hdr_data.rdres, read_part, skip_part)) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }

@@ -40,10 +40,14 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
   return result;
 }
 
-void ZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> ZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  return read_deflate_format_header(context, precomp_hdr_flags, false);
+}
+
+void ZipFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   context.fout->put('P');
   context.fout->put('K');
   context.fout->put(3);
   context.fout->put(4);
-  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_zip"), "ZIP");
+  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_zip"), "ZIP");
 }

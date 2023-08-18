@@ -141,9 +141,6 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
       precomp_mgr.switches.preflate_meta_block_size); // you can set a minimum deflate stream size here
     result.compressed_stream_size = compressed_stream_size;
     result.uncompressed_stream_size = uos.written();
-    if (uos.in_memory()) {
-      result.uncompressed_stream_mem = uos.decomp_io_buf;
-    }
 
     if (precomp_mgr.switches.preflate_verify && result.accepted) {
       file.seekg(file_deflate_stream_pos, std::ios_base::beg);
@@ -175,6 +172,10 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
           break;
         }
       }
+    }
+
+    if (uos.in_memory()) {
+      result.uncompressed_stream_mem = std::move(uos.decomp_io_buf);
     }
   }
   // If you think "hey I'll remove this std::move here so we can have copy elision", thread lightly... I tried it and it got me invalid precompressed streams...
@@ -472,7 +473,7 @@ bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin
   return preflate_reencode(os, rdres.recon_data, unpacked_output, [&context]() { context.precomp.call_progress_callback(); });
 }
 
-void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
+void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags,
   unsigned char* hdr_data, unsigned& hdr_length,
   const bool inc_last_hdr_byte) {
   rdres.zlib_perfect = (flags & std::byte{ 0b10 }) == std::byte{ 0 };
@@ -490,11 +491,10 @@ void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_de
     input.read(reinterpret_cast<char*>(hdr_data), hdr_length - 1);
     hdr_data[hdr_length - 1] = input.get() - 1;
   }
-  output.write(reinterpret_cast<char*>(hdr_data), hdr_length);
 }
 
 void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
-  fin_fget_deflate_hdr(*context.fin, *context.fout, rdres, flags, hdr, hdr_length, inc_last);
+  fin_fget_deflate_hdr(*context.fin, rdres, flags, hdr, hdr_length, inc_last);
   fin_fget_recon_data(*context.fin, rdres);
 
   debug_sums(context, rdres);
@@ -522,37 +522,47 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
 
-void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type) {
-  recompress_deflate_result rdres;
+std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(RecursionContext& context, std::byte precomp_hdr_flags, bool inc_last_hdr_byte) {
+  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
   unsigned hdr_length;
-  int64_t recursion_data_length = 0;
+  fmt_hdr->stream_hdr.resize(CHUNK);
+
+  fin_fget_deflate_rec(context, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, inc_last_hdr_byte);
+  fmt_hdr->stream_hdr.resize(hdr_length);
+  if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
+    fmt_hdr->recursion_data_size = fin_fget_vlint(*context.fin);
+  }
+  return fmt_hdr;
+}
+
+void recompress_deflate(RecursionContext& context, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type) {
   bool ok;
-  std::vector<unsigned char> in_buf{};
-  in_buf.resize(CHUNK);
-  fin_fget_deflate_rec(context, rdres, precomp_hdr_flags, in_buf.data(), hdr_length, incl_last_hdr_byte);
+
+  // Write zlib_header
+  context.fout->write(reinterpret_cast<char*>(precomp_hdr_data.stream_hdr.data()), precomp_hdr_data.stream_hdr.size());
 
   // write decompressed data
-  if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
-    recursion_data_length = fin_fget_vlint(*context.fin);
-    auto r = recursion_decompress(context, recursion_data_length, filename);
+  if (precomp_hdr_data.recursion_data_size > 0) {
+    auto r = recursion_decompress(context, precomp_hdr_data.recursion_data_size, filename);
     debug_pos(context);
-    ok = try_reconstructing_deflate(context.precomp, *r, *context.fout, rdres);
+    ok = try_reconstructing_deflate(context.precomp, *r, *context.fout, precomp_hdr_data.rdres);
     debug_pos(context);
     r->get_recursion_return_code();
   }
   else {
     debug_pos(context);
-    ok = try_reconstructing_deflate(context.precomp, *context.fin, *context.fout, rdres);
+    ok = try_reconstructing_deflate(context.precomp, *context.fin, *context.fout, precomp_hdr_data.rdres);
     debug_pos(context);
   }
 
-  debug_deflate_reconstruct(rdres, type.c_str(), hdr_length, recursion_data_length);
+  debug_deflate_reconstruct(precomp_hdr_data.rdres, type.c_str(), precomp_hdr_data.stream_hdr.size(), precomp_hdr_data.recursion_data_size);
 
   if (!ok) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }
 
-void DeflateFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_deflate"), "brute mode");
+void DeflateFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_deflate"), "brute mode");
 }
+

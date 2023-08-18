@@ -76,8 +76,12 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
   return result;
 }
 
-void GZipFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> GZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  return read_deflate_format_header(context, precomp_hdr_flags, false);
+}
+
+void GZipFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   context.fout->put(31);
   context.fout->put(139);
-  recompress_deflate(context, precomp_hdr_flags, false, context.precomp.get_tempfile_name("recomp_gzip"), "GZIP");
+  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_gzip"), "GZIP");
 }

@@ -24,6 +24,10 @@ std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression
   return result;
 }
 
-void ZlibFormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  recompress_deflate(context, precomp_hdr_flags, true, context.precomp.get_tempfile_name("recomp_zlib"), "raw zLib");
+std::unique_ptr<PrecompFormatHeaderData> ZlibFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  return read_deflate_format_header(context, precomp_hdr_flags, true);
+}
+
+void ZlibFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_zlib"), "raw zLib");
 }

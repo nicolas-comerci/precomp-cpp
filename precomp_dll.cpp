@@ -709,7 +709,8 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
       for (const auto& formatHandler : format_handlers) {
         for (auto formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
-            formatHandler->recompress(precomp_ctx, header1, formatHandlerHeaderByte);
+            auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
+            formatHandler->recompress(precomp_ctx, *format_hdr_data, formatHandlerHeaderByte);
             handlerFound = true;
             break;
           }

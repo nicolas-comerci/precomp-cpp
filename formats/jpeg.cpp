@@ -394,48 +394,62 @@ int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
   return count;
 }
 
-void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, SupportedFormats precomp_hdr_format) {
-  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
+class JpegFormatHeaderData: public PrecompFormatHeaderData {
+public:
+  bool mjpg_dht_used = false;
+  bool brunsli_used = false;
+};
 
-  auto random_tag = temp_files_tag();
-  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_jpg", false);
-  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_jpg", false);
+std::unique_ptr<PrecompFormatHeaderData> JpegFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  auto fmt_hdr = std::make_unique<JpegFormatHeaderData>();
 
-  bool mjpg_dht_used = (flags & std::byte{ 0b100 }) == std::byte{ 0b100 };
-  bool brunsli_used = (flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };
+  fmt_hdr->mjpg_dht_used = (precomp_hdr_flags & std::byte{ 0b100 }) == std::byte{ 0b100 };
+  fmt_hdr->brunsli_used = (precomp_hdr_flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };
   {
-    bool brotli_used = (flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
+    bool brotli_used = (precomp_hdr_flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
     if (brotli_used) {
       throw PrecompError(ERR_BROTLI_NO_LONGER_SUPPORTED);
     }
   }
 
-  long long recompressed_data_length = fin_fget_vlint(*context.fin);
-  long long precompressed_data_length = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
 
-  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, precompressed_data_length);
+  return fmt_hdr;
+}
+
+void JpegFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
+  auto& jpeg_format_hdr_data = static_cast<JpegFormatHeaderData&>(precomp_hdr_data);
+
+
+  auto random_tag = temp_files_tag();
+  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_jpg", false);
+  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_jpg", false);
+
+  print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", jpeg_format_hdr_data.original_size, jpeg_format_hdr_data.precompressed_size);
 
   char recompress_msg[256];
   std::vector<unsigned char> jpg_mem_in {};
   std::unique_ptr<unsigned char[]> jpg_mem_out;
   unsigned int jpg_mem_out_size = -1;
-  bool in_memory = recompressed_data_length <= JPG_MAX_MEMORY_SIZE;
+  bool in_memory = jpeg_format_hdr_data.original_size <= JPG_MAX_MEMORY_SIZE;
   bool recompress_success = false;
 
   if (in_memory) {
-    jpg_mem_in.resize(precompressed_data_length);
-    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + precompressed_data_length);
-    fast_copy(*context.fin, *memstream, precompressed_data_length);
+    jpg_mem_in.resize(jpeg_format_hdr_data.precompressed_size);
+    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpeg_format_hdr_data.precompressed_size);
+    fast_copy(*context.fin, *memstream, jpeg_format_hdr_data.precompressed_size);
 
-    if (brunsli_used) {
+    if (jpeg_format_hdr_data.brunsli_used) {
       brunsli::JPEGData jpegData;
-      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in.data(), precompressed_data_length, &jpegData) == brunsli::BRUNSLI_OK) {
-        if (mjpg_dht_used) {
-          auto mem = new unsigned char[recompressed_data_length + MJPGDHT_LEN];
+      if (brunsli::BrunsliDecodeJpeg(jpg_mem_in.data(), jpeg_format_hdr_data.precompressed_size, &jpegData) == brunsli::BRUNSLI_OK) {
+        if (jpeg_format_hdr_data.mjpg_dht_used) {
+          auto mem = new unsigned char[jpeg_format_hdr_data.original_size + MJPGDHT_LEN];
           jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
         }
         else {
-          auto mem = new unsigned char[recompressed_data_length];
+          auto mem = new unsigned char[jpeg_format_hdr_data.original_size];
           jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
         }
         std::string output;
@@ -449,13 +463,13 @@ void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, S
     }
     else {
       unsigned char* mem = nullptr;
-      pjglib_init_streams(jpg_mem_in.data(), 1, precompressed_data_length, mem, 1);
+      pjglib_init_streams(jpg_mem_in.data(), 1, jpeg_format_hdr_data.precompressed_size, mem, 1);
       recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
       jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
     }
   }
   else {
-    dump_to_file(*context.fin, precompressed_filename, precompressed_data_length);
+    dump_to_file(*context.fin, precompressed_filename, jpeg_format_hdr_data.precompressed_size);
 
     remove(recompressed_filename.c_str());
 
@@ -472,7 +486,7 @@ void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, S
     frecomp.open(recompressed_filename, std::ios_base::in | std::ios_base::binary);
   }
 
-  if (mjpg_dht_used) {
+  if (jpeg_format_hdr_data.mjpg_dht_used) {
     long long frecomp_pos = 0;
     bool found_ffda = false;
     bool found_ff = false;
@@ -517,8 +531,8 @@ void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, S
     if (in_memory) {
       auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
       fast_copy(*memstream1, *context.fout, ffda_pos - 1 - MJPGDHT_LEN);
-      auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (recompressed_data_length + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(*memstream2, *context.fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (jpeg_format_hdr_data.original_size + MJPGDHT_LEN) - (ffda_pos - 1));
+      fast_copy(*memstream2, *context.fout, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
@@ -526,16 +540,16 @@ void JpegFormatHandler::recompress(RecursionContext& context, std::byte flags, S
 
       frecomp_pos += ffda_pos - 1;
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(frecomp, *context.fout, recompressed_data_length + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(frecomp, *context.fout, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
     }
   }
   else {
     if (in_memory) {
-      auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + recompressed_data_length);
-      fast_copy(*memstream, *context.fout, recompressed_data_length);
+      auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + jpeg_format_hdr_data.original_size);
+      fast_copy(*memstream, *context.fout, jpeg_format_hdr_data.original_size);
     }
     else {
-      fast_copy(frecomp, *context.fout, recompressed_data_length);
+      fast_copy(frecomp, *context.fout, jpeg_format_hdr_data.original_size);
     }
   }
 

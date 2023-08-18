@@ -59,15 +59,21 @@ bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDe
 
 bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part);
 
-void fin_fget_deflate_hdr(IStreamLike& input, OStreamLike& output, recompress_deflate_result& rdres, const std::byte flags,
-  unsigned char* hdr_data, unsigned& hdr_length,
-  const bool inc_last_hdr_byte);
+void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte);
 
 void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length);
 
-void recompress_deflate(RecursionContext& context, std::byte precomp_hdr_flags, bool incl_last_hdr_byte, std::string filename, std::string type);
+class DeflateFormatHeaderData: public PrecompFormatHeaderData {
+public:
+  recompress_deflate_result rdres;  // not the cleanest for this to be here, but for now it simplifies the refactoring for simplified recursion/penalty_bytes support in Precomp
+  std::vector<unsigned char> stream_hdr;
+};
+
+void recompress_deflate(RecursionContext& context, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type);
+
+std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(RecursionContext& context, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
 
 class DeflateFormatHandler : public PrecompFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
@@ -79,7 +85,11 @@ public:
 
 	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-	void recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
+  std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override {
+    return read_deflate_format_header(context, precomp_hdr_flags, false);
+  }
+
+	void recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) override;
 
 	static DeflateFormatHandler* create() {
 		return new DeflateFormatHandler({ D_BRUTE });

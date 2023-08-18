@@ -363,7 +363,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   return result;
 }
 
-void get_next_penalty_byte_and_pos(long long& penalty_bytes_index, std::optional<char>& next_penalty_byte, std::optional<uint32_t>& next_penalty_byte_pos, std::vector<char>& penalty_bytes) {
+void get_next_penalty_byte_and_pos(long long& penalty_bytes_index, std::optional<char>& next_penalty_byte, std::optional<uint32_t>& next_penalty_byte_pos, std::vector<unsigned char>& penalty_bytes) {
   if (penalty_bytes.size() == penalty_bytes_index) {
     next_penalty_byte = std::nullopt;
     next_penalty_byte_pos = std::nullopt;
@@ -379,7 +379,12 @@ void get_next_penalty_byte_and_pos(long long& penalty_bytes_index, std::optional
   penalty_bytes_index += 5;
 }
 
-int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLike& dest, std::vector<char>& penalty_bytes, int level, long long stream_size_in, long long stream_size_out) {
+class BZip2FormatHeaderData : public PrecompFormatHeaderData {
+public:
+  int level;
+};
+
+int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLike& dest, BZip2FormatHeaderData& bzip2_precomp_hdr_data) {
   int flush;
   bz_stream strm;
 
@@ -387,7 +392,7 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
   strm.bzalloc = nullptr;
   strm.bzfree = nullptr;
   strm.opaque = nullptr;
-  int ret = BZ2_bzCompressInit(&strm, level, 0, 0);
+  int ret = BZ2_bzCompressInit(&strm, bzip2_precomp_hdr_data.level, 0, 0);
   if (ret != BZ_OK)
     return ret;
 
@@ -397,13 +402,13 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
   std::optional<char> next_penalty_byte = std::nullopt;
   std::optional<uint32_t> next_penalty_byte_pos = std::nullopt;
   long long penalty_bytes_index = 0;
-  get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, penalty_bytes);
+  get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, bzip2_precomp_hdr_data.penalty_bytes);
 
   /* compress until end of file */
   std::vector<unsigned char> in_buf{};
   in_buf.resize(CHUNK);
   do {
-    if ((stream_size_in - pos_in) > CHUNK) {
+    if ((bzip2_precomp_hdr_data.precompressed_size - pos_in) > CHUNK) {
       precomp_ctx.precomp.call_progress_callback();
 
       source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
@@ -412,7 +417,7 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
       flush = BZ_RUN;
     }
     else {
-      source.read(reinterpret_cast<char*>(in_buf.data()), stream_size_in - pos_in);
+      source.read(reinterpret_cast<char*>(in_buf.data()), bzip2_precomp_hdr_data.precompressed_size - pos_in);
       strm.avail_in = source.gcount();
       flush = BZ_FINISH;
     }
@@ -430,14 +435,14 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
 
       unsigned int have = CHUNK - strm.avail_out;
 
-      if ((pos_out + static_cast<signed int>(have)) > stream_size_out) {
-        have = stream_size_out - pos_out;
+      if ((pos_out + static_cast<signed int>(have)) > bzip2_precomp_hdr_data.original_size) {
+        have = bzip2_precomp_hdr_data.original_size - pos_out;
       }
 
       while (next_penalty_byte_pos.has_value() && next_penalty_byte_pos.value() < pos_out + static_cast<signed int>(have)) {
         uint32_t next_penalty_byte_pos_in_buffer = next_penalty_byte_pos.value() - pos_out;
         precomp_ctx.tmp_out[next_penalty_byte_pos_in_buffer] = next_penalty_byte.value();
-        get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, penalty_bytes);
+        get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, bzip2_precomp_hdr_data.penalty_bytes);
       }
 
       pos_out += have;
@@ -455,48 +460,51 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
   return BZ_OK;
 }
 
-void BZip2FormatHandler::recompress(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
-
-  unsigned char header2 = context.fin->get();
+std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  auto fmt_hdr = std::make_unique<BZip2FormatHeaderData>();
+ 
+  fmt_hdr->level = context.fin->get();
 
   bool penalty_bytes_stored = (precomp_hdr_flags & std::byte{ 0b10 }) == std::byte{ 0b10 };
   bool recursion_used = (precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
-  int level = header2;
-
-  print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", level);
 
   // read penalty bytes
-  std::vector<char> penalty_bytes;
   if (penalty_bytes_stored) {
     auto penalty_bytes_len = fin_fget_vlint(*context.fin);
-    penalty_bytes.resize(penalty_bytes_len);
-    context.fin->read(penalty_bytes.data(), penalty_bytes_len);
+    fmt_hdr->penalty_bytes.resize(penalty_bytes_len);
+    context.fin->read(reinterpret_cast<char*>(fmt_hdr->penalty_bytes.data()), penalty_bytes_len);
   }
 
-  long long recompressed_data_length = fin_fget_vlint(*context.fin);
-  long long decompressed_data_length = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
 
-  long long recursion_data_length = 0;
   if (recursion_used) {
-    recursion_data_length = fin_fget_vlint(*context.fin);
+    fmt_hdr->recursion_data_size = fin_fget_vlint(*context.fin);
   }
 
-  if (recursion_used) {
-    print_to_log(PRECOMP_DEBUG_LOG, "Recursion data length: %lli\n", recursion_data_length);
+  return fmt_hdr;
+}
+
+void BZip2FormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
+  auto& bzip2_precomp_hdr_data = static_cast<BZip2FormatHeaderData&>(precomp_hdr_data);
+  print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", bzip2_precomp_hdr_data.level);
+
+  if (bzip2_precomp_hdr_data.recursion_data_size > 0) {
+    print_to_log(PRECOMP_DEBUG_LOG, "Recursion data length: %lli\n", bzip2_precomp_hdr_data.recursion_data_size);
   }
   else {
-    print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", recompressed_data_length, decompressed_data_length);
+    print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", bzip2_precomp_hdr_data.original_size, bzip2_precomp_hdr_data.precompressed_size);
   }
 
   int retval;
-  if (recursion_used) {
-    auto r = recursion_decompress(context, recursion_data_length, context.precomp.get_tempfile_name("recomp_bzip2"));
-    retval = def_part_bzip2(context, *r, *context.fout, penalty_bytes, level, decompressed_data_length, recompressed_data_length);
+  if (bzip2_precomp_hdr_data.recursion_data_size) {
+    auto r = recursion_decompress(context, bzip2_precomp_hdr_data.recursion_data_size, context.precomp.get_tempfile_name("recomp_bzip2"));
+    retval = def_part_bzip2(context, *r, *context.fout, bzip2_precomp_hdr_data);
     r->get_recursion_return_code();
   }
   else {
-    retval = def_part_bzip2(context, *context.fin, *context.fout, penalty_bytes, level, decompressed_data_length, recompressed_data_length);
+    retval = def_part_bzip2(context, *context.fin, *context.fout, bzip2_precomp_hdr_data);
   }
 
   if (retval != BZ_OK) {
