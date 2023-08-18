@@ -110,6 +110,7 @@ protected:
     virtual void dump_precompressed_data_to_outfile(OStreamLike& outfile) const;
 public:
     explicit precompression_result(SupportedFormats format) : success(false), format(format) {}
+    virtual ~precompression_result() = default;
 
     bool success;
     char format;
@@ -134,6 +135,8 @@ public:
 // Format handlers may opt to write longer headers with additional data, in which case they must handle it correctly, respecting the API provided.
 class PrecompFormatHeaderData {
 public:
+  virtual ~PrecompFormatHeaderData() = default;
+
   std::byte option_flags;
   SupportedFormats format;
   std::vector<unsigned char> penalty_bytes;
@@ -154,6 +157,7 @@ public:
 
     PrecompFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt, bool _recursion_allowed = false)
         : header_bytes(_header_bytes), depth_limit(_depth_limit), recursion_allowed(_recursion_allowed) {}
+    virtual ~PrecompFormatHandler() = default;
 
     // The quick check should attempt to detect applicable format data by inspecting File Signatures/Magic Bytes or via any other easy/quick check that could
     // be done by using the small buffered chunk provided.
