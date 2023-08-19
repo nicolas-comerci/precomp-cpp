@@ -386,7 +386,7 @@ std::unique_ptr<PrecompFormatHeaderData> Mp3FormatHandler::read_format_header(Re
   return fmt_hdr;
 }
 
-void Mp3FormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   print_to_log(PRECOMP_DEBUG_LOG, "Prcompressed data - MP3\n");
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli  - precompressed length: %lli\n", precomp_hdr_data.original_size, precomp_hdr_data.precompressed_size);
@@ -398,17 +398,17 @@ void Mp3FormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
   bool recompress_success = false;
 
   auto random_tag = temp_files_tag();
-  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_mp3", false);
-  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_mp3", false);
+  std::string precompressed_filename = tools.get_tempfile_name(random_tag + "_precompressed_mp3", false);
+  std::string recompressed_filename = tools.get_tempfile_name(random_tag + "_original_mp3", false);
 
-  std::unique_ptr<IStreamLike> recompressed_stream;
+  std::unique_ptr<IStreamLike> recompressed_tmp;
 
   if (in_memory) {
     std::vector<unsigned char> mp3_mem_in {};
     mp3_mem_in.resize(precomp_hdr_data.precompressed_size);
     {
       auto memstream = memiostream::make(mp3_mem_in.data(), mp3_mem_in.data() + precomp_hdr_data.precompressed_size);
-      fast_copy(*context.fin, *memstream, precomp_hdr_data.precompressed_size);
+      fast_copy(precompressed_input, *memstream, precomp_hdr_data.precompressed_size);
     }
 
     unsigned char* mp3_mem_out = nullptr;
@@ -418,7 +418,7 @@ void Mp3FormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
     recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
 
     if (recompress_success) {
-      recompressed_stream = memiostream::make(mp3_mem_out, mp3_mem_out + precomp_hdr_data.original_size, true);
+      recompressed_tmp = memiostream::make(mp3_mem_out, mp3_mem_out + precomp_hdr_data.original_size, true);
       mp3_mem_out = nullptr;
     }
     else {
@@ -426,13 +426,13 @@ void Mp3FormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
     }
   }
   else {
-    dump_to_file(*context.fin, precompressed_filename, precomp_hdr_data.precompressed_size);
+    dump_to_file(precompressed_input, precompressed_filename, precomp_hdr_data.precompressed_size);
     recompress_success = pmplib_convert_file2file(const_cast<char*>(precompressed_filename.c_str()), const_cast<char*>(recompressed_filename.c_str()), recompress_msg);
 
     if (recompress_success) {
       auto recompressed_stream_tmpfile = std::make_unique<PrecompTmpFile>();
       recompressed_stream_tmpfile->open(recompressed_filename, std::ios_base::in | std::ios_base::binary);
-      recompressed_stream = std::move(recompressed_stream_tmpfile);
+      recompressed_tmp = std::move(recompressed_stream_tmpfile);
     }
   }
 
@@ -441,5 +441,5 @@ void Mp3FormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 
-  fast_copy(*recompressed_stream, *context.fout, precomp_hdr_data.original_size);
+  fast_copy(*recompressed_tmp, recompressed_stream, precomp_hdr_data.original_size);
 }

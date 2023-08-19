@@ -48,20 +48,18 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
 
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos);
 
-void debug_sums(RecursionContext& context, const recompress_deflate_result& rdres);
-
-void debug_pos(RecursionContext& context);
+void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, const recompress_deflate_result& rdres);
 
 std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
   const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename);
 
 bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDetector, uintptr_t current_input_id, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters = false);
 
-bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part);
+bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part, const std::function<void()>& progress_callback);
 
 void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte);
 
-void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
+void fin_fget_deflate_rec(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length);
 
@@ -71,9 +69,9 @@ public:
   std::vector<unsigned char> stream_hdr;
 };
 
-void recompress_deflate(RecursionContext& context, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type);
+void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools);
 
-std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(RecursionContext& context, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
+std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
 
 class DeflateFormatHandler : public PrecompFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
@@ -86,14 +84,15 @@ public:
 	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
   std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override {
-    return read_deflate_format_header(context, precomp_hdr_flags, false);
+    return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
   }
 
-	void recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) override;
+  void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) override;
+  void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) override;
 
-	static DeflateFormatHandler* create() {
-		return new DeflateFormatHandler({ D_BRUTE });
-	}
+  static DeflateFormatHandler* create() {
+    return new DeflateFormatHandler({ D_BRUTE });
+  }
 };
 
 #endif //PRECOMP_DEFLATE_HANDLER_H

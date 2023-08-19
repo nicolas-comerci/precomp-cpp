@@ -93,7 +93,6 @@ public:
 
   long long input_file_pos;
   unsigned char in_buf[IN_BUF_SIZE];
-  unsigned char tmp_out[CHUNK];
 
   // Uncompressed data info
   long long uncompressed_pos;
@@ -137,7 +136,7 @@ class PrecompFormatHeaderData {
 public:
   virtual ~PrecompFormatHeaderData() = default;
 
-  std::byte option_flags;
+  std::byte option_flags { 0b0 };
   SupportedFormats format;
   std::vector<unsigned char> penalty_bytes;
   unsigned long long original_size = 0;
@@ -152,6 +151,17 @@ class PrecompFormatHandler {
 protected:
     std::vector<SupportedFormats> header_bytes;
 public:
+    // This class serves to provide a PrecompFormatHandler with some tools to facilitate their functioning and communication with the Precomp, without giving it
+    // access to its internals
+    class Tools {
+    public:
+      std::function<void()> progress_callback;
+      std::function<std::string(const std::string& name, bool append_tag)> get_tempfile_name;
+
+      Tools(std::function<void()>&& _progress_callback, std::function<std::string(const std::string& name, bool append_tag)>&& _get_tempfile_name):
+        progress_callback(std::move(_progress_callback)), get_tempfile_name(std::move(_get_tempfile_name)) {}
+    };
+
     std::optional<unsigned int> depth_limit;
     bool recursion_allowed;
 
@@ -174,7 +184,10 @@ public:
     virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
     // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
     // with your extra format header data, provided you are using and returned such an instance from read_format_header()
-    virtual void recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) = 0;
+    virtual void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) = 0;
+    // Any data that must be written before the actual stream's data, where recursion can occur, must be written here as this is executed before recompress()
+    // Such data should be things like Zip/ZLib or any other compression/container headers.
+    virtual void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {}
 
     // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
     // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector
@@ -239,25 +252,5 @@ long long fin_fget_vlint(IStreamLike& input);
 void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
-
-struct recursion_result {
-  bool success;
-  std::string file_name;
-  long long file_length;
-  std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
-};
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
-
-class RecursionPasstroughStream : public PasstroughStream {
-  int recompression_code;
-public:
-  std::unique_ptr<RecursionContext> ctx;
-
-  RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_);
-  virtual ~RecursionPasstroughStream() override {};
-
-  int get_recursion_return_code(bool throw_on_failure = true);
-};
-std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length, std::string tmpfile);
 
 #endif // PRECOMP_DLL_H

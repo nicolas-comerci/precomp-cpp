@@ -25,13 +25,16 @@ std::unique_ptr<precompression_result> SwfFormatHandler::attempt_precompression(
 }
 
 std::unique_ptr<PrecompFormatHeaderData> SwfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(context, precomp_hdr_flags, true);
+  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, true);
 }
 
-void SwfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
-  context.fout->put('C');
-  context.fout->put('W');
-  context.fout->put('S');
+void SwfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  recompressed_stream.put('C');
+  recompressed_stream.put('W');
+  recompressed_stream.put('S');
+  // Write zlib_header
+  recompressed_stream.write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 
-  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_swf"), "SWF");
+  recompress_deflate(precompressed_input, recompressed_stream, precomp_deflate_hdr_data, tools.get_tempfile_name("recomp_swf", true), "SWF", tools);
 }

@@ -203,18 +203,14 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
 }
 
 static uint64_t sum_compressed = 0, sum_uncompressed = 0, sum_recon = 0, sum_expansion = 0;
-void debug_sums(RecursionContext& context, const recompress_deflate_result& rdres) {
+void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, const recompress_deflate_result& rdres) {
   if (PRECOMP_VERBOSITY_LEVEL < PRECOMP_DEBUG_LOG) return;
   sum_compressed += rdres.compressed_stream_size;
   sum_uncompressed += rdres.uncompressed_stream_size;
   sum_expansion += rdres.uncompressed_stream_size - rdres.compressed_stream_size;
   sum_recon += rdres.recon_data.size();
   print_to_log(PRECOMP_DEBUG_LOG, "deflate sums: c %I64d, u %I64d, x %I64d, r %I64d, i %I64d, o %I64d\n",
-    sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
-}
-
-void debug_pos(RecursionContext& context) {
-  print_to_log(PRECOMP_DEBUG_LOG, "deflate pos: i %I64d, o %I64d\n", (uint64_t)context.fin->tellg(), (uint64_t)context.fout->tellp());
+    sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precompressed_input.tellg(), (uint64_t)recompressed_stream.tellp());
 }
 
 std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
@@ -241,11 +237,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
 
       precomp_mgr.ctx->non_zlib_was_used = true;
 
-      debug_sums(*precomp_mgr.ctx, rdres);
-
-      // end uncompressed data
-
-      debug_pos(*precomp_mgr.ctx);
+      debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
 
       // check recursion
       std::unique_ptr<memiostream> recurse_memstream;
@@ -272,8 +264,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       }
 #endif
 
-      debug_pos(*precomp_mgr.ctx);
-
       result->inc_last_hdr_byte = inc_last;
       result->zlib_header = std::vector(hdr, hdr + hdr_length);
       if (!rdres.uncompressed_stream_mem.empty()) {
@@ -286,8 +276,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       }
 
       result->rdres = std::move(rdres);
-
-      debug_pos(*precomp_mgr.ctx);
     }
     else {
       if (type == D_SWF && precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_pos - 2);
@@ -422,10 +410,10 @@ std::unique_ptr<precompression_result> DeflateFormatHandler::attempt_precompress
     "(brute mode)", precomp_mgr.get_tempfile_name("decomp_brute"));
 }
 
-bool try_reconstructing_deflate(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres) {
+bool try_reconstructing_deflate(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const std::function<void()>& progress_callback) {
   OwnOStream os(&fout);
   OwnIStream is(&fin);
-  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, progress_callback);
   return result;
 }
 
@@ -460,7 +448,7 @@ size_t fread_skip(unsigned char* ptr, size_t size, size_t count, IStreamLike& st
   return bytes_read;
 }
 
-bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part) {
+bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part, const std::function<void()>& progress_callback) {
   std::vector<unsigned char> unpacked_output;
   unpacked_output.resize(rdres.uncompressed_stream_size);
   unsigned int frs_offset = 0;
@@ -470,7 +458,7 @@ bool try_reconstructing_deflate_skip(RecursionContext& context, IStreamLike& fin
     return false;
   }
   OwnOStream os(&fout);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&context]() { context.precomp.call_progress_callback(); });
+  return preflate_reencode(os, rdres.recon_data, unpacked_output, progress_callback);
 }
 
 void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags,
@@ -493,11 +481,11 @@ void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, 
   }
 }
 
-void fin_fget_deflate_rec(RecursionContext& context, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
-  fin_fget_deflate_hdr(*context.fin, rdres, flags, hdr, hdr_length, inc_last);
-  fin_fget_recon_data(*context.fin, rdres);
+void fin_fget_deflate_rec(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
+  fin_fget_deflate_hdr(precompressed_input, rdres, flags, hdr, hdr_length, inc_last);
+  fin_fget_recon_data(precompressed_input, rdres);
 
-  debug_sums(context, rdres);
+  debug_sums(precompressed_input, recompressed_stream, rdres);
 }
 
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length) {
@@ -522,38 +510,24 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
 }
 
-std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(RecursionContext& context, std::byte precomp_hdr_flags, bool inc_last_hdr_byte) {
+std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, std::byte precomp_hdr_flags, bool inc_last_hdr_byte) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
   unsigned hdr_length;
   fmt_hdr->stream_hdr.resize(CHUNK);
 
-  fin_fget_deflate_rec(context, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, inc_last_hdr_byte);
+  fin_fget_deflate_rec(precompressed_input, recompressed_stream, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, inc_last_hdr_byte);
   fmt_hdr->stream_hdr.resize(hdr_length);
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
-    fmt_hdr->recursion_data_size = fin_fget_vlint(*context.fin);
+    fmt_hdr->recursion_data_size = fin_fget_vlint(precompressed_input);
   }
   return fmt_hdr;
 }
 
-void recompress_deflate(RecursionContext& context, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type) {
+void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools) {
   bool ok;
 
-  // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(precomp_hdr_data.stream_hdr.data()), precomp_hdr_data.stream_hdr.size());
-
   // write decompressed data
-  if (precomp_hdr_data.recursion_data_size > 0) {
-    auto r = recursion_decompress(context, precomp_hdr_data.recursion_data_size, filename);
-    debug_pos(context);
-    ok = try_reconstructing_deflate(context.precomp, *r, *context.fout, precomp_hdr_data.rdres);
-    debug_pos(context);
-    r->get_recursion_return_code();
-  }
-  else {
-    debug_pos(context);
-    ok = try_reconstructing_deflate(context.precomp, *context.fin, *context.fout, precomp_hdr_data.rdres);
-    debug_pos(context);
-  }
+  ok = try_reconstructing_deflate(precompressed_input, recompressed_stream, precomp_hdr_data.rdres, tools.progress_callback);
 
   debug_deflate_reconstruct(precomp_hdr_data.rdres, type.c_str(), precomp_hdr_data.stream_hdr.size(), precomp_hdr_data.recursion_data_size);
 
@@ -562,7 +536,16 @@ void recompress_deflate(RecursionContext& context, DeflateFormatHeaderData& prec
   }
 }
 
-void DeflateFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
-  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_deflate"), "brute mode");
+void DeflateFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  // Write zlib_header
+  // TODO: wait a second, this is brute mode, so there should never be a header here... confirm and delete if true
+  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
+}
+
+void DeflateFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  auto& deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  auto tmpfile_name = tools.get_tempfile_name("recomp_deflate", true);
+  recompress_deflate(precompressed_input, recompressed_stream, deflate_hdr_data, tmpfile_name, "brute mode", tools);
 }
 

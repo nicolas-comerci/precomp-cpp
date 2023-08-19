@@ -418,14 +418,13 @@ std::unique_ptr<PrecompFormatHeaderData> JpegFormatHandler::read_format_header(R
   return fmt_hdr;
 }
 
-void JpegFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
   auto& jpeg_format_hdr_data = static_cast<JpegFormatHeaderData&>(precomp_hdr_data);
 
-
   auto random_tag = temp_files_tag();
-  std::string precompressed_filename = context.precomp.get_tempfile_name(random_tag + "_precompressed_jpg", false);
-  std::string recompressed_filename = context.precomp.get_tempfile_name(random_tag + "_original_jpg", false);
+  std::string precompressed_filename = tools.get_tempfile_name(random_tag + "_precompressed_jpg", false);
+  std::string recompressed_filename = tools.get_tempfile_name(random_tag + "_original_jpg", false);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", jpeg_format_hdr_data.original_size, jpeg_format_hdr_data.precompressed_size);
 
@@ -439,7 +438,7 @@ void JpegFormatHandler::recompress(RecursionContext& context, PrecompFormatHeade
   if (in_memory) {
     jpg_mem_in.resize(jpeg_format_hdr_data.precompressed_size);
     auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpeg_format_hdr_data.precompressed_size);
-    fast_copy(*context.fin, *memstream, jpeg_format_hdr_data.precompressed_size);
+    fast_copy(precompressed_input, *memstream, jpeg_format_hdr_data.precompressed_size);
 
     if (jpeg_format_hdr_data.brunsli_used) {
       brunsli::JPEGData jpegData;
@@ -469,7 +468,7 @@ void JpegFormatHandler::recompress(RecursionContext& context, PrecompFormatHeade
     }
   }
   else {
-    dump_to_file(*context.fin, precompressed_filename, jpeg_format_hdr_data.precompressed_size);
+    dump_to_file(precompressed_input, precompressed_filename, jpeg_format_hdr_data.precompressed_size);
 
     remove(recompressed_filename.c_str());
 
@@ -530,26 +529,26 @@ void JpegFormatHandler::recompress(RecursionContext& context, PrecompFormatHeade
     // remove motion JPG huffman table
     if (in_memory) {
       auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
-      fast_copy(*memstream1, *context.fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(*memstream1, recompressed_stream, ffda_pos - 1 - MJPGDHT_LEN);
       auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (jpeg_format_hdr_data.original_size + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(*memstream2, *context.fout, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(*memstream2, recompressed_stream, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(frecomp, *context.fout, ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(frecomp, recompressed_stream, ffda_pos - 1 - MJPGDHT_LEN);
 
       frecomp_pos += ffda_pos - 1;
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
-      fast_copy(frecomp, *context.fout, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
+      fast_copy(frecomp, recompressed_stream, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
     }
   }
   else {
     if (in_memory) {
       auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + jpeg_format_hdr_data.original_size);
-      fast_copy(*memstream, *context.fout, jpeg_format_hdr_data.original_size);
+      fast_copy(*memstream, recompressed_stream, jpeg_format_hdr_data.original_size);
     }
     else {
-      fast_copy(frecomp, *context.fout, jpeg_format_hdr_data.original_size);
+      fast_copy(frecomp, recompressed_stream, jpeg_format_hdr_data.original_size);
     }
   }
 

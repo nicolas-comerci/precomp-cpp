@@ -502,6 +502,13 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
+struct recursion_result {
+  bool success;
+  std::string file_name;
+  long long file_length;
+  std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
+};
+recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
 
 int compress_file_impl(Precomp& precomp_mgr) {
   precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
@@ -587,8 +594,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
         if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
-          try
-          {
+          try {
             verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
@@ -606,8 +612,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (formatHandler->recursion_allowed) {
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
             recursion_result r{};
-            try
-            {
+            try {
               r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
             }
             catch (...) {}  // TODO: print/record/report handler failed
@@ -682,9 +687,25 @@ int compress_file(Precomp& precomp_mgr)
   return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr); });
 }
 
+class RecursionPasstroughStream : public PasstroughStream {
+  int recompression_code;
+public:
+  std::unique_ptr<RecursionContext> ctx;
+
+  RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_);
+  ~RecursionPasstroughStream() override {}
+
+  int get_recursion_return_code(bool throw_on_failure = true);
+};
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length);
+
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
   const auto& format_handlers = precomp_ctx.precomp.get_format_handlers();
+  const auto handler_tools = PrecompFormatHandler::Tools(
+    [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
+    [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
+  );
 
   long long fin_pos = precomp_ctx.fin->tellg();
 
@@ -710,7 +731,16 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
         for (auto formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
             auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
-            formatHandler->recompress(precomp_ctx, *format_hdr_data, formatHandlerHeaderByte);
+            formatHandler->write_pre_recursion_data(precomp_ctx, *format_hdr_data);
+
+            if (format_hdr_data->recursion_data_size > 0) {
+              auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
+              formatHandler->recompress(*recurse_passthrough_input, *precomp_ctx.fout, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+              recurse_passthrough_input->get_recursion_return_code();
+            }
+            else {
+              formatHandler->recompress(*precomp_ctx.fin, *precomp_ctx.fout, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+            }
             handlerFound = true;
             break;
           }
@@ -942,7 +972,7 @@ int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) 
     return recompression_code;
 }
 
-std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length, std::string tmpfile) {
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length) {
   auto original_pos = context.fin->tellg();
   auto& precomp_mgr = context.precomp;
 

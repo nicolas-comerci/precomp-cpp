@@ -424,15 +424,15 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
   return fmt_hdr;
 }
 
-void GifFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   auto& gif_precomp_hdr_format = static_cast<GifFormatHeaderData&>(precomp_hdr_data);
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", gif_precomp_hdr_format.original_size, gif_precomp_hdr_format.precompressed_size);
 
   std::string tmp_tag = temp_files_tag();
-  std::string tempfile = context.precomp.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
-  std::string tempfile2 = context.precomp.get_tempfile_name(tmp_tag + "_recompressed_gif", false);
+  std::string tempfile = tools.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
+  std::string tempfile2 = tools.get_tempfile_name(tmp_tag + "_recompressed_gif", false);
 
-  dump_to_file(*context.fin, tempfile, gif_precomp_hdr_format.precompressed_size);
+  dump_to_file(precompressed_input, tempfile, gif_precomp_hdr_format.precompressed_size);
   bool recompress_success;
 
   {
@@ -456,21 +456,21 @@ void GifFormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
     }
   }
 
-  const long long old_fout_pos = context.fout->tellp();
+  const long long old_fout_pos = recompressed_stream.tellp();
 
   {
     PrecompTmpFile frecomp;
     frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    fast_copy(frecomp, *context.fout, gif_precomp_hdr_format.original_size);
+    fast_copy(frecomp, recompressed_stream, gif_precomp_hdr_format.original_size);
   }
 
   remove(tempfile2.c_str());
   remove(tempfile.c_str());
 
   if (!gif_precomp_hdr_format.penalty_bytes.empty()) {
-    context.fout->flush();
+    recompressed_stream.flush();
 
-    const long long fsave_fout_pos = context.fout->tellp();
+    const long long fsave_fout_pos = recompressed_stream.tellp();
 
     int pb_pos = 0;
     for (int pbc = 0; pbc < gif_precomp_hdr_format.penalty_bytes.size(); pbc += 5) {
@@ -479,11 +479,11 @@ void GifFormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
       pb_pos += ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 2]) << 8;
       pb_pos += (unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 3];
 
-      context.fout->seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      context.fout->write(reinterpret_cast<char*>(gif_precomp_hdr_format.penalty_bytes.data()) + pbc + 4, 1);
+      recompressed_stream.seekp(old_fout_pos + pb_pos, std::ios_base::beg);
+      recompressed_stream.write(reinterpret_cast<char*>(gif_precomp_hdr_format.penalty_bytes.data()) + pbc + 4, 1);
     }
 
-    context.fout->seekp(fsave_fout_pos, std::ios_base::beg);
+    recompressed_stream.seekp(fsave_fout_pos, std::ios_base::beg);
   }
 
   GifDiffFree(&gif_precomp_hdr_format.gDiff);

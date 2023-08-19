@@ -25,9 +25,15 @@ std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression
 }
 
 std::unique_ptr<PrecompFormatHeaderData> ZlibFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(context, precomp_hdr_flags, true);
+  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, true);
 }
 
-void ZlibFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
-  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_zlib"), "raw zLib");
+void ZlibFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  // Write zlib_header
+  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
+}
+
+void ZlibFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.get_tempfile_name("recomp_zlib", true), "raw zLib", tools);
 }

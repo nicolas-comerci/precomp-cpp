@@ -80,7 +80,7 @@ long long compare_file_mem_penalty(IStreamLike& file1, const unsigned char* inpu
   return same_byte_count;
 }
 
-std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& decompressed_stream, IStreamLike& original_bzip2, long long original_input_pos, int level) {
+std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& precomp_mgr, IStreamLike& decompressed_stream, IStreamLike& original_bzip2, long long original_input_pos, int level, std::span<unsigned char> tmp_out) {
   int ret, flush;
   unsigned have;
   bz_stream strm;
@@ -124,7 +124,7 @@ std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& p
 
     do {
       strm.avail_out = DEF_COMPARE_CHUNK;
-      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
+      strm.next_out = reinterpret_cast<char*>(tmp_out.data());
 
       ret = BZ2_bzCompress(&strm, flush);
 
@@ -132,10 +132,10 @@ std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& p
 
       if (have > 0) {
         if (&original_bzip2 == precomp_mgr.ctx->fin.get()) {
-          identical_bytes_compare = compare_file_mem_penalty(original_bzip2, precomp_mgr.ctx->tmp_out, original_input_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes, penalty_bytes);
+          identical_bytes_compare = compare_file_mem_penalty(original_bzip2, tmp_out.data(), original_input_pos + comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes, penalty_bytes);
         }
         else {
-          identical_bytes_compare = compare_file_mem_penalty(original_bzip2, precomp_mgr.ctx->tmp_out, comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes, penalty_bytes);
+          identical_bytes_compare = compare_file_mem_penalty(original_bzip2, tmp_out.data(), comp_pos, have, total_same_byte_count, total_same_byte_count_penalty, rek_same_byte_count, rek_same_byte_count_penalty, rek_penalty_bytes_len, local_penalty_bytes_len, use_penalty_bytes, penalty_bytes);
         }
       }
 
@@ -159,23 +159,23 @@ std::tuple<long long, long long, std::vector<char>> def_compare_bzip2(Precomp& p
   return { rek_same_byte_count, decompressed_bytes_used, std::move(penalty_bytes) };
 }
 
-std::tuple<long long, long long, std::vector<char>> file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, int level, long long& decompressed_bytes_total, IStreamLike& decompressed_stream) {
+std::tuple<long long, long long, std::vector<char>> file_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, int level, long long& decompressed_bytes_total, IStreamLike& decompressed_stream, std::span<unsigned char> tmp_out) {
   decompressed_stream.seekg(0, std::ios_base::end);
   decompressed_bytes_total = decompressed_stream.tellg();
 
   decompressed_stream.seekg(0, std::ios_base::beg);
-  auto [retval, decompressed_bytes_used, penalty_bytes] = def_compare_bzip2(precomp_mgr, decompressed_stream, bzip2_stream, original_input_pos, level);
+  auto [retval, decompressed_bytes_used, penalty_bytes] = def_compare_bzip2(precomp_mgr, decompressed_stream, bzip2_stream, original_input_pos, level, tmp_out);
   return { retval < 0 ? -1 : retval, decompressed_bytes_used, std::move(penalty_bytes) };
 }
 
-[[nodiscard]] std::tuple<long long, long long, std::vector<char>> try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, long long original_input_pos, int level, long long& compressed_stream_size, IStreamLike& tmpfile) {
+[[nodiscard]] std::tuple<long long, long long, std::vector<char>> try_recompress_bzip2(Precomp& precomp_mgr, IStreamLike& origfile, long long original_input_pos, int level, long long& compressed_stream_size, IStreamLike& tmpfile, std::span<unsigned char> tmp_out) {
   precomp_mgr.call_progress_callback();
 
   long long decomp_bytes_total;
   std::vector<char> best_penalty_bytes;
   long long best_identical_bytes;
   long long best_identical_bytes_decomp;
-  auto [identical_bytes, identical_bytes_decomp, penalty_bytes] = file_recompress_bzip2(precomp_mgr, origfile, original_input_pos, level, decomp_bytes_total, tmpfile);
+  auto [identical_bytes, identical_bytes_decomp, penalty_bytes] = file_recompress_bzip2(precomp_mgr, origfile, original_input_pos, level, decomp_bytes_total, tmpfile, tmp_out);
   if (identical_bytes > -1) { // successfully recompressed?
     if (identical_bytes > precomp_mgr.switches.min_ident_size) {
       print_to_log(PRECOMP_DEBUG_LOG, "Identical recompressed bytes: %lli of %lli\n", identical_bytes, compressed_stream_size);
@@ -208,7 +208,7 @@ std::tuple<long long, long long, std::vector<char>> file_recompress_bzip2(Precom
   return { best_identical_bytes, best_identical_bytes_decomp, best_penalty_bytes };
 }
 
-int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size) {
+int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size, std::span<unsigned char> tmp_out) {
   int ret;
   unsigned have;
   bz_stream strm;
@@ -245,7 +245,7 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
 
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out);
+      strm.next_out = reinterpret_cast<char*>(tmp_out.data());
 
       ret = BZ2_bzDecompress(&strm);
       if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
@@ -257,7 +257,7 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
       avail_in_before = strm.avail_in;
 
       have = CHUNK - strm.avail_out;
-      dest.write(reinterpret_cast<char*>(precomp_mgr.ctx->tmp_out), have);
+      dest.write(reinterpret_cast<char*>(tmp_out.data()), have);
       if (dest.bad()) {
         (void)BZ2_bzDecompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -276,7 +276,7 @@ int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long
 
 }
 
-long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, long long& compressed_stream_size, PrecompTmpFile& decompressed_stream) {
+long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, long long& compressed_stream_size, PrecompTmpFile& decompressed_stream, std::span<unsigned char> tmp_out) {
   long long r, decompressed_stream_size;
 
   precomp_mgr.call_progress_callback();
@@ -285,7 +285,7 @@ long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_strea
 
   bzip2_stream.seekg(&bzip2_stream == precomp_mgr.ctx->fin.get() ? original_input_pos : 0, std::ios_base::beg);
 
-  r = inf_bzip2(precomp_mgr, bzip2_stream, decompressed_stream, compressed_stream_size, decompressed_stream_size);
+  r = inf_bzip2(precomp_mgr, bzip2_stream, decompressed_stream, compressed_stream_size, decompressed_stream_size, tmp_out);
   if (r == BZ_OK) return decompressed_stream_size;
 
   return r;
@@ -301,7 +301,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
 
   // try to decompress at current position
   long long compressed_stream_size = -1;
-  auto retval = try_to_decompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compressed_stream_size, *tmpfile);
+  auto retval = try_to_decompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compressed_stream_size, *tmpfile, tmp_out);
 
   if (retval > 0) { // seems to be a zLib-Stream
 
@@ -322,7 +322,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   if (!tmpfile->is_open()) {
     throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
   }
-  auto [best_identical_bytes, best_identical_bytes_decomp, best_penalty_bytes] = try_recompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compression_level, compressed_stream_size, *tmpfile);
+  auto [best_identical_bytes, best_identical_bytes_decomp, best_penalty_bytes] = try_recompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compression_level, compressed_stream_size, *tmpfile, tmp_out);
 
   if ((best_identical_bytes > precomp_mgr.switches.min_ident_size) && (best_identical_bytes < best_identical_bytes_decomp)) {
     precomp_mgr.statistics.recompressed_streams_count++;
@@ -384,7 +384,7 @@ public:
   int level;
 };
 
-int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLike& dest, BZip2FormatHeaderData& bzip2_precomp_hdr_data) {
+int def_part_bzip2(IStreamLike& source, OStreamLike& dest, BZip2FormatHeaderData& bzip2_precomp_hdr_data, std::span<unsigned char> tmp_out, const std::function<void()>& progress_callback) {
   int flush;
   bz_stream strm;
 
@@ -409,7 +409,7 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
   in_buf.resize(CHUNK);
   do {
     if ((bzip2_precomp_hdr_data.precompressed_size - pos_in) > CHUNK) {
-      precomp_ctx.precomp.call_progress_callback();
+      progress_callback();
 
       source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
       strm.avail_in = source.gcount();
@@ -429,7 +429,7 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
 
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = reinterpret_cast<char*>(precomp_ctx.tmp_out);
+      strm.next_out = reinterpret_cast<char*>(tmp_out.data());
 
       ret = BZ2_bzCompress(&strm, flush);
 
@@ -441,13 +441,13 @@ int def_part_bzip2(RecursionContext& precomp_ctx, IStreamLike& source, OStreamLi
 
       while (next_penalty_byte_pos.has_value() && next_penalty_byte_pos.value() < pos_out + static_cast<signed int>(have)) {
         uint32_t next_penalty_byte_pos_in_buffer = next_penalty_byte_pos.value() - pos_out;
-        precomp_ctx.tmp_out[next_penalty_byte_pos_in_buffer] = next_penalty_byte.value();
+        tmp_out[next_penalty_byte_pos_in_buffer] = next_penalty_byte.value();
         get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, bzip2_precomp_hdr_data.penalty_bytes);
       }
 
       pos_out += have;
 
-      dest.write(reinterpret_cast<char*>(precomp_ctx.tmp_out), have);
+      dest.write(reinterpret_cast<char*>(tmp_out.data()), have);
       if (dest.bad()) {
         (void)BZ2_bzCompressEnd(&strm);
         return BZ_DATA_ERROR;
@@ -485,7 +485,7 @@ std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(
   return fmt_hdr;
 }
 
-void BZip2FormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void BZip2FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
   auto& bzip2_precomp_hdr_data = static_cast<BZip2FormatHeaderData&>(precomp_hdr_data);
   print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", bzip2_precomp_hdr_data.level);
@@ -497,16 +497,7 @@ void BZip2FormatHandler::recompress(RecursionContext& context, PrecompFormatHead
     print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", bzip2_precomp_hdr_data.original_size, bzip2_precomp_hdr_data.precompressed_size);
   }
 
-  int retval;
-  if (bzip2_precomp_hdr_data.recursion_data_size) {
-    auto r = recursion_decompress(context, bzip2_precomp_hdr_data.recursion_data_size, context.precomp.get_tempfile_name("recomp_bzip2"));
-    retval = def_part_bzip2(context, *r, *context.fout, bzip2_precomp_hdr_data);
-    r->get_recursion_return_code();
-  }
-  else {
-    retval = def_part_bzip2(context, *context.fin, *context.fout, bzip2_precomp_hdr_data);
-  }
-
+  int retval = def_part_bzip2(precompressed_input, recompressed_stream, bzip2_precomp_hdr_data, tmp_out, tools.progress_callback);
   if (retval != BZ_OK) {
     print_to_log(PRECOMP_DEBUG_LOG, "BZIP2 retval = %lli\n", retval);
     throw PrecompError(ERR_DURING_RECOMPRESSION);

@@ -405,13 +405,16 @@ std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header
   return fmt_hdr;
 }
 
-void Base64FormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
-  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - Base64\n");
-  auto& precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
-
+void Base64FormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+  auto precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
   // Write Base64 header
   context.fout->put(precomp_b64_hdr_data.base64_stream_hdr[0] + 1); // first char was decreased
   context.fout->write(reinterpret_cast<char*>(precomp_b64_hdr_data.base64_stream_hdr.data() + 1), precomp_b64_hdr_data.base64_stream_hdr.size() - 1);
+}
+
+void Base64FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - Base64\n");
+  auto& precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
 
   if (precomp_b64_hdr_data.recursion_data_size > 0) {
     print_to_log(PRECOMP_DEBUG_LOG, "Recursion data length: %lli\n", precomp_b64_hdr_data.recursion_data_size);
@@ -420,13 +423,5 @@ void Base64FormatHandler::recompress(RecursionContext& context, PrecompFormatHea
     print_to_log(PRECOMP_DEBUG_LOG, "Encoded length: %lli - decoded length: %lli\n", precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);
   }
 
-  // re-encode Base64
-  if (precomp_b64_hdr_data.recursion_data_size > 0) {
-    auto r = recursion_decompress(context, precomp_b64_hdr_data.recursion_data_size, context.precomp.get_tempfile_name("recomp_base64"));
-    base64_reencode(*r, *context.fout, precomp_b64_hdr_data.base64_line_len, 0x7FFFFFFFFFFFFFFF, precomp_b64_hdr_data.precompressed_size);
-    r->get_recursion_return_code();
-  }
-  else {
-    base64_reencode(*context.fin, *context.fout, precomp_b64_hdr_data.base64_line_len, precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);
-  }
+  base64_reencode(precompressed_input, recompressed_stream, precomp_b64_hdr_data.base64_line_len, precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);
 }

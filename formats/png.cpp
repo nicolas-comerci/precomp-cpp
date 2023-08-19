@@ -117,12 +117,10 @@ std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mg
 
       precomp_mgr.ctx->non_zlib_was_used = true;
 
-      debug_sums(*precomp_mgr.ctx, rdres);
+      debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
 
       result->success = true;
       result->format = idat_count > 1 ? D_MULTIPNG : D_PNG;
-
-      debug_pos(*precomp_mgr.ctx);
 
       result->idat_count = idat_count;
       result->idat_lengths = std::move(idat_lengths);
@@ -141,8 +139,6 @@ std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mg
       result->rdres = std::move(rdres);
       std::copy(zlib_header.begin(), zlib_header.end(), std::back_inserter(result->zlib_header));
       result->inc_last_hdr_byte = true;
-
-      debug_pos(*precomp_mgr.ctx);
     }
     else {
       if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_original_pos - 2);
@@ -278,10 +274,12 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
   return result;
 }
 
-void recompress_png(RecursionContext& context, DeflateFormatHeaderData& deflate_precomp_hdr_data) {
+void recompress_png(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& deflate_precomp_hdr_data, const PrecompFormatHandler::Tools& tools) {
   // restore IDAT
-  ostream_printf(*context.fout, "IDAT");
-  recompress_deflate(context, deflate_precomp_hdr_data, context.precomp.get_tempfile_name("recomp_png"), "PNG");
+  ostream_printf(recompressed_stream, "IDAT");
+  // Write zlib_header
+  recompressed_stream.write(reinterpret_cast<char*>(deflate_precomp_hdr_data.stream_hdr.data()), deflate_precomp_hdr_data.stream_hdr.size());
+  recompress_deflate(precompressed_input, recompressed_stream, deflate_precomp_hdr_data, tools.get_tempfile_name("recomp_png", true), "PNG", tools);
 }
 
 class OwnOStreamMultiPNG : public OutputStream {
@@ -325,18 +323,6 @@ private:
   size_t _idat_idx, _to_read;
 };
 
-bool try_reconstructing_deflate_multipng(Precomp& precomp_mgr, IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres,
-  const size_t idat_count, const uint32_t* idat_crcs, const uint32_t* idat_lengths) {
-  std::vector<unsigned char> unpacked_output;
-  unpacked_output.resize(rdres.uncompressed_stream_size);
-  fin.read(reinterpret_cast<char*>(unpacked_output.data()), rdres.uncompressed_stream_size);
-  if ((int64_t)fin.gcount() != rdres.uncompressed_stream_size) {
-    return false;
-  }
-  OwnOStreamMultiPNG os(&fout, idat_count, idat_crcs, idat_lengths);
-  return preflate_reencode(os, rdres.recon_data, unpacked_output, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
-}
-
 class MultiPngFormatHeaderData: public DeflateFormatHeaderData {
 public:
   long long idat_count;
@@ -344,20 +330,28 @@ public:
   std::vector<unsigned int> idat_lengths;
 };
 
-void recompress_multipng(RecursionContext& context, MultiPngFormatHeaderData& multipng_precomp_hdr_data) {
+bool try_reconstructing_deflate_multipng(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, MultiPngFormatHeaderData& multipng_precomp_hdr_data, const std::function<void()>& progress_callback) {
+  std::vector<unsigned char> unpacked_output;
+  unpacked_output.resize(rdres.uncompressed_stream_size);
+  fin.read(reinterpret_cast<char*>(unpacked_output.data()), rdres.uncompressed_stream_size);
+  if ((int64_t)fin.gcount() != rdres.uncompressed_stream_size) {
+    return false;
+  }
+  OwnOStreamMultiPNG os(&fout, multipng_precomp_hdr_data.idat_count, multipng_precomp_hdr_data.idat_crcs.data(), multipng_precomp_hdr_data.idat_lengths.data());
+  return preflate_reencode(os, rdres.recon_data, unpacked_output, progress_callback);
+}
+
+void recompress_multipng(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, MultiPngFormatHeaderData& multipng_precomp_hdr_data, const PrecompFormatHandler::Tools& tools) {
   // restore first IDAT
-  ostream_printf(*context.fout, "IDAT");
-
+  ostream_printf(recompressed_stream, "IDAT");
   // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(multipng_precomp_hdr_data.stream_hdr.data()), multipng_precomp_hdr_data.stream_hdr.size());
+  recompressed_stream.write(reinterpret_cast<char*>(multipng_precomp_hdr_data.stream_hdr.data()), multipng_precomp_hdr_data.stream_hdr.size());
 
-  debug_sums(context, multipng_precomp_hdr_data.rdres);
-  debug_pos(context);
+  debug_sums(precompressed_input, recompressed_stream, multipng_precomp_hdr_data.rdres);
 
   debug_deflate_reconstruct(multipng_precomp_hdr_data.rdres, "PNG multi", multipng_precomp_hdr_data.stream_hdr.size(), 0);
 
-  if (!try_reconstructing_deflate_multipng(context.precomp, *context.fin, *context.fout, multipng_precomp_hdr_data.rdres,
-    multipng_precomp_hdr_data.idat_count, multipng_precomp_hdr_data.idat_crcs.data(), multipng_precomp_hdr_data.idat_lengths.data())) {
+  if (!try_reconstructing_deflate_multipng(precompressed_input, recompressed_stream, multipng_precomp_hdr_data.rdres, multipng_precomp_hdr_data, tools.progress_callback)) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }
@@ -365,7 +359,7 @@ void recompress_multipng(RecursionContext& context, MultiPngFormatHeaderData& mu
 std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   switch (precomp_hdr_format) {
   case D_PNG: {
-    return read_deflate_format_header(context, precomp_hdr_flags, true);
+    return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, true);
   }
   case D_MULTIPNG: {
     auto fmt_hdr = std::make_unique<MultiPngFormatHeaderData>();
@@ -397,16 +391,16 @@ std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(Re
   }
 }
 
-void PngFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void PngFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
     switch (precomp_hdr_format) {
     case D_PNG: {
         auto& deflate_precomp_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
-        recompress_png(context, deflate_precomp_hdr_data);
+        recompress_png(precompressed_input, recompressed_stream, deflate_precomp_hdr_data, tools);
         break;
     }
     case D_MULTIPNG: {
         auto& multipng_precomp_hdr_data = static_cast<MultiPngFormatHeaderData&>(precomp_hdr_data);
-        recompress_multipng(context, multipng_precomp_hdr_data);
+        recompress_multipng(precompressed_input, recompressed_stream, multipng_precomp_hdr_data, tools);
         break;
     }
     default:

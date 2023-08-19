@@ -41,13 +41,20 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
 }
 
 std::unique_ptr<PrecompFormatHeaderData> ZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(context, precomp_hdr_flags, false);
+  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
 }
 
-void ZipFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void ZipFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  // ZIP header
   context.fout->put('P');
   context.fout->put('K');
   context.fout->put(3);
   context.fout->put(4);
-  recompress_deflate(context, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), context.precomp.get_tempfile_name("recomp_zip"), "ZIP");
+  // Write zlib_header
+  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
+}
+
+void ZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.get_tempfile_name("recomp_zip", true), "ZIP", tools);
 }

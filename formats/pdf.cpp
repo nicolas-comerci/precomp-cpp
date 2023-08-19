@@ -159,7 +159,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
       precomp_mgr.statistics.recompressed_pdf_count++;
 
       precomp_mgr.ctx->non_zlib_was_used = true;
-      debug_sums(*precomp_mgr.ctx, rdres);
+      debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
 
       if (img_bpc == 8) {
         if (rdres.uncompressed_stream_size == (img_width * img_height)) {
@@ -182,8 +182,6 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
           precomp_mgr.statistics.decompressed_pdf_count++;
         }
       }
-
-      debug_pos(*precomp_mgr.ctx);
 
       // write compressed data header (PDF) without 12 first bytes
       //   (/FlateDecode)
@@ -211,9 +209,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
         tmpfile->reopen();
         result->precompressed_stream = std::move(tmpfile);
       }
-        result->rdres = std::move(rdres);
-
-      debug_pos(*precomp_mgr.ctx);
+      result->rdres = std::move(rdres);
     }
     else {
       if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_pos - 2);
@@ -355,19 +351,19 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
 }
 
 std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(context, precomp_hdr_flags, false);
+  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
 }
 
-void PdfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+void PdfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   auto& deflate_precomp_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
 
   // restore PDF header
-  ostream_printf(*context.fout, "/FlateDecode");
+  ostream_printf(recompressed_stream, "/FlateDecode");
   
   debug_deflate_reconstruct(deflate_precomp_hdr_data.rdres, "PDF", deflate_precomp_hdr_data.stream_hdr.size(), 0);
 
   // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(deflate_precomp_hdr_data.stream_hdr.data()), deflate_precomp_hdr_data.stream_hdr.size());
+  recompressed_stream.write(reinterpret_cast<char*>(deflate_precomp_hdr_data.stream_hdr.data()), deflate_precomp_hdr_data.stream_hdr.size());
 
   std::vector<unsigned char> in_buf{};
   in_buf.resize(CHUNK);
@@ -380,10 +376,10 @@ void PdfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
   int bmp_width = 0;
   switch (bmp_c) {
   case 1:
-    context.fin->read(reinterpret_cast<char*>(in_buf.data()), 54 + 1024);
+    precompressed_input.read(reinterpret_cast<char*>(in_buf.data()), 54 + 1024);
     break;
   case 2:
-    context.fin->read(reinterpret_cast<char*>(in_buf.data()), 54);
+    precompressed_input.read(reinterpret_cast<char*>(in_buf.data()), 54);
     break;
   }
   if (bmp_c > 0) {
@@ -402,7 +398,7 @@ void PdfFormatHandler::recompress(RecursionContext& context, PrecompFormatHeader
     read_part = bmp_width;
     skip_part = (-bmp_width) & 3;
   }
-  if (!try_reconstructing_deflate_skip(context, *context.fin, *context.fout, deflate_precomp_hdr_data.rdres, read_part, skip_part)) {
+  if (!try_reconstructing_deflate_skip(precompressed_input, recompressed_stream, deflate_precomp_hdr_data.rdres, read_part, skip_part, tools.progress_callback)) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }
