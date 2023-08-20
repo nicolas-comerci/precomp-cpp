@@ -1097,6 +1097,52 @@ long long fin_fget_vlint(IStreamLike& input) {
   return v + o + (((long long)c) << s);
 }
 
+std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(Precomp& precomp_mgr, IStreamLike& original, IStreamLike& candidate, long long original_size) {
+  unsigned char input_bytes1[COMP_CHUNK];
+  unsigned char input_bytes2[COMP_CHUNK];
+  uint32_t pos = 0;
+  bool endNow = false;
+
+  std::vector<std::tuple<uint32_t, char>> penalty_bytes;
+
+  do {
+    precomp_mgr.call_progress_callback();
+
+    original.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
+    long long original_chunk_size = original.gcount();
+    candidate.read(reinterpret_cast<char*>(input_bytes2), COMP_CHUNK);
+    long long candidate_chunk_size = candidate.gcount();
+
+    uint32_t i;
+    for (i = 0; i < original_chunk_size && pos < original_size; i++, pos++) {
+      // if we ran out of candidate, it might still be possible to recover the original file if we can fill the whole end with penalty bytes,
+      // and of course if we find a mismatching byte we must patch it with a penalty byte
+      if (i + 1 > candidate_chunk_size || input_bytes1[i] != input_bytes2[i]) {  // should not be out of bounds on input_bytes2 because of short-circuit evaluation
+        // if penalty_bytes_size gets too large, stop
+        // penalty_bytes will be larger than 1/6th of stream? bail, why 1/6th? beats me, but this is roughly equivalent to what Precomp v0.4.8 was doing,
+        // only much much simpler
+        if (static_cast<double>(penalty_bytes.size() + 1) >= static_cast<double>(original_size) * (1.0 / 6)) {
+          endNow = true;
+          break;
+        }
+
+        // stop, if penalty_bytes len gets too big
+        if ((penalty_bytes.size() + 1) * 5 >= MAX_PENALTY_BYTES) {  // 4 bytes = position uint32, 1 byte = patch byte
+          endNow = true;
+          break;
+        }
+
+        // add the penalty byte
+        penalty_bytes.emplace_back(pos, input_bytes1[i]);
+        if (endNow) break;
+      }
+    }
+    if (pos == original_size) endNow = true;
+  } while (!endNow);
+
+  return { pos, penalty_bytes };
+}
+
 // C API STUFF
 Precomp* PrecompCreate() { return new Precomp(); }
 void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float)) { precomp_mgr->set_progress_callback(callback); }
