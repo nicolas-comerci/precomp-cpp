@@ -3,7 +3,6 @@
 
 #ifndef STDTHREAD_IMPORTED
 #define STDTHREAD_IMPORTED
-#include <memory>
 #include <thread>
 #endif
 
@@ -13,6 +12,7 @@
 
 #include <cstdio>
 #include <array>
+#include <queue>
 #include <vector>
 #include <set>
 #include <string>
@@ -138,7 +138,7 @@ public:
 
   std::byte option_flags { 0b0 };
   SupportedFormats format;
-  std::vector<unsigned char> penalty_bytes;
+  std::queue<std::tuple<uint32_t, unsigned char>> penalty_bytes;
   unsigned long long original_size = 0;
   unsigned long long precompressed_size = 0;
   unsigned long long recursion_data_size = 0;

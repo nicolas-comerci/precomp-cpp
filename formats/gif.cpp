@@ -161,22 +161,14 @@ bool decompress_gif(Precomp& precomp_mgr, IStreamLike& srcfile, OStreamLike& dst
       srcfile_pos = srcfile.tellg();
       if (last_pos != srcfile_pos) {
         if (last_pos == -1) {
-          srcfile.seekg(src_pos, std::ios_base::beg);
-          fast_copy(srcfile, dstfile, srcfile_pos - src_pos);
-          srcfile.seekg(srcfile_pos, std::ios_base::beg);
-
-          long long dstfile_pos = dstfile.tellp();
-          dstfile.seekp(0, std::ios_base::beg);
+          last_pos = src_pos + 2;
           // change GIF8xa to PGF8xa
           dstfile.put('P');
           dstfile.put('G');
-          dstfile.seekp(dstfile_pos, std::ios_base::beg);
         }
-        else {
-          srcfile.seekg(last_pos, std::ios_base::beg);
-          fast_copy(srcfile, dstfile, srcfile_pos - last_pos);
-          srcfile.seekg(srcfile_pos, std::ios_base::beg);
-        }
+        srcfile.seekg(last_pos, std::ios_base::beg);
+        fast_copy(srcfile, dstfile, srcfile_pos - last_pos);
+        srcfile.seekg(srcfile_pos, std::ios_base::beg);
       }
 
       unsigned char c;
@@ -308,22 +300,14 @@ bool recompress_gif(IStreamLike& srcfile, OStreamLike& dstfile, unsigned char bl
       src_pos = srcfile.tellg();
       if (last_pos != src_pos) {
         if (last_pos == -1) {
-          srcfile.seekg(init_src_pos, std::ios_base::beg);
-          fast_copy(srcfile, dstfile, src_pos - init_src_pos);
-          srcfile.seekg(src_pos, std::ios_base::beg);
-
-          long long dstfile_pos = dstfile.tellp();
-          dstfile.seekp(0, std::ios_base::beg);
+          last_pos = init_src_pos + 2;
           // change PGF8xa to GIF8xa
           dstfile.put('G');
           dstfile.put('I');
-          dstfile.seekp(dstfile_pos, std::ios_base::beg);
         }
-        else {
-          srcfile.seekg(last_pos, std::ios_base::beg);
-          fast_copy(srcfile, dstfile, src_pos - last_pos);
-          srcfile.seekg(src_pos, std::ios_base::beg);
-        }
+        srcfile.seekg(last_pos, std::ios_base::beg);
+        fast_copy(srcfile, dstfile, src_pos - last_pos);
+        srcfile.seekg(src_pos, std::ios_base::beg);
       }
 
       Row = myGifFile->Image.Top; /* Image Position relative to Screen. */
@@ -414,8 +398,18 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
   // read penalty bytes
   if (penalty_bytes_stored) {
     auto penalty_bytes_len = fin_fget_vlint(*context.fin);
-    fmt_hdr->penalty_bytes.resize(penalty_bytes_len);
-    context.fin->read(reinterpret_cast<char*>(fmt_hdr->penalty_bytes.data()), penalty_bytes_len);
+    while (penalty_bytes_len > 0) {
+      unsigned char pb_data[5];
+      context.fin->read(reinterpret_cast<char*>(pb_data), 5);
+      penalty_bytes_len -= 5;
+
+      uint32_t next_pb_pos = pb_data[0] << 24;
+      next_pb_pos += pb_data[1] << 16;
+      next_pb_pos += pb_data[2] << 8;
+      next_pb_pos += pb_data[3];
+
+      fmt_hdr->penalty_bytes.emplace(next_pb_pos, pb_data[4]);
+    }
   }
 
   fmt_hdr->original_size = fin_fget_vlint(*context.fin);
@@ -430,21 +424,15 @@ void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
 
   std::string tmp_tag = temp_files_tag();
   std::string tempfile = tools.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
-  std::string tempfile2 = tools.get_tempfile_name(tmp_tag + "_recompressed_gif", false);
 
   dump_to_file(precompressed_input, tempfile, gif_precomp_hdr_format.precompressed_size);
   bool recompress_success;
 
   {
-    remove(tempfile2.c_str());
-    WrappedFStream frecomp;
-    frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
-
     // recompress data
     WrappedFStream ftempout;
     ftempout.open(tempfile, std::ios_base::in | std::ios_base::binary);
-    recompress_success = recompress_gif(ftempout, frecomp, gif_precomp_hdr_format.block_size, nullptr, &gif_precomp_hdr_format.gDiff);
-    frecomp.close();
+    recompress_success = recompress_gif(ftempout, recompressed_stream, gif_precomp_hdr_format.block_size, nullptr, &gif_precomp_hdr_format.gDiff);
     ftempout.close();
   }
 
@@ -456,36 +444,7 @@ void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
     }
   }
 
-  const long long old_fout_pos = recompressed_stream.tellp();
-
-  {
-    PrecompTmpFile frecomp;
-    frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    fast_copy(frecomp, recompressed_stream, gif_precomp_hdr_format.original_size);
-  }
-
-  remove(tempfile2.c_str());
   remove(tempfile.c_str());
-
-  if (!gif_precomp_hdr_format.penalty_bytes.empty()) {
-    recompressed_stream.flush();
-
-    const long long fsave_fout_pos = recompressed_stream.tellp();
-
-    int pb_pos = 0;
-    for (int pbc = 0; pbc < gif_precomp_hdr_format.penalty_bytes.size(); pbc += 5) {
-      pb_pos = ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc]) << 24;
-      pb_pos += ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 1]) << 16;
-      pb_pos += ((unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 2]) << 8;
-      pb_pos += (unsigned char)gif_precomp_hdr_format.penalty_bytes[pbc + 3];
-
-      recompressed_stream.seekp(old_fout_pos + pb_pos, std::ios_base::beg);
-      recompressed_stream.write(reinterpret_cast<char*>(gif_precomp_hdr_format.penalty_bytes.data()) + pbc + 4, 1);
-    }
-
-    recompressed_stream.seekp(fsave_fout_pos, std::ios_base::beg);
-  }
-
   GifDiffFree(&gif_precomp_hdr_format.gDiff);
 }
 

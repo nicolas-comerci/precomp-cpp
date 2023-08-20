@@ -699,6 +699,56 @@ public:
 };
 std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length);
 
+class PenaltyBytesPatchedOStream : public OStreamLike {
+  OStreamLike* ostream = nullptr;
+  uint64_t next_pos = 0;
+  std::queue<std::tuple<uint32_t, unsigned char>>* penalty_bytes = nullptr;
+public:
+  PenaltyBytesPatchedOStream(OStreamLike* _ostream, std::queue<std::tuple<uint32_t, unsigned char>>* _penalty_bytes) : ostream(_ostream), penalty_bytes(_penalty_bytes) {}
+
+  PenaltyBytesPatchedOStream& write(const char* buf, std::streamsize count) override {
+    auto chunk_last_post = next_pos + count - 1;
+    // If no penalty_bytes at all, or left, or any that apply to the data about to be written, just use the original ostream, unpatched
+    if (!penalty_bytes || penalty_bytes->empty() || std::get<0>(penalty_bytes->front()) > chunk_last_post) {
+      ostream->write(buf, count);
+    }
+    // Copy input buffer and patch applicable penalty bytes before writing
+    else {
+      std::vector<char> buf_cpy{};
+      buf_cpy.resize(count);
+      std::copy_n(buf, count, buf_cpy.data());
+      while (!penalty_bytes->empty()) {
+        const auto& next_pb_tuple = penalty_bytes->front();
+        const auto& next_pb_pos = std::get<0>(next_pb_tuple);
+        if (next_pb_pos > chunk_last_post) break;
+        buf_cpy[next_pb_pos - next_pos] = static_cast<char>(std::get<1>(next_pb_tuple));
+        penalty_bytes->pop();
+      }
+      ostream->write(buf_cpy.data(), count);
+    }
+    next_pos += count;
+    return *this;
+  }
+
+  PenaltyBytesPatchedOStream& put(char chr) override {
+    char buf[1];
+    buf[0] = chr;
+    return write(buf, 1);
+  }
+
+  void flush() override { ostream->flush(); }
+  std::ostream::pos_type tellp() override { return ostream->tellp(); }
+  PenaltyBytesPatchedOStream& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
+    ostream->seekp(offset, dir);
+    return *this;
+  }
+
+  bool eof() override { return ostream->eof(); }
+  bool bad() override { return ostream->bad(); }
+  bool good() override { return ostream->good(); }
+  void clear() override { ostream->clear(); }
+};
+
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
   const auto& format_handlers = precomp_ctx.precomp.get_format_handlers();
@@ -710,7 +760,7 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
   long long fin_pos = precomp_ctx.fin->tellg();
 
   while (precomp_ctx.fin->good()) {
-    std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
+    const std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
     if (!precomp_ctx.fin->good()) break;
 
     if (header1 == std::byte{ 0 }) { // uncompressed data
@@ -724,22 +774,30 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
   
     }
     else { // decompressed data, recompress
-      unsigned char headertype = precomp_ctx.fin->get();
+      const unsigned char headertype = precomp_ctx.fin->get();
   
       bool handlerFound = false;
       for (const auto& formatHandler : format_handlers) {
-        for (auto formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
+        for (const auto& formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
             auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
             formatHandler->write_pre_recursion_data(precomp_ctx, *format_hdr_data);
 
+            OStreamLike* output = precomp_ctx.fout.get();
+            // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
+            std::unique_ptr<PenaltyBytesPatchedOStream> patched_ostream{};
+            if (!format_hdr_data->penalty_bytes.empty()) {
+              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(precomp_ctx.fout.get(), &format_hdr_data->penalty_bytes);
+              output = patched_ostream.get();
+            }
+
             if (format_hdr_data->recursion_data_size > 0) {
               auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
-              formatHandler->recompress(*recurse_passthrough_input, *precomp_ctx.fout, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
               recurse_passthrough_input->get_recursion_return_code();
             }
             else {
-              formatHandler->recompress(*precomp_ctx.fin, *precomp_ctx.fout, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
             }
             handlerFound = true;
             break;

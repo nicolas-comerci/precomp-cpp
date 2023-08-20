@@ -363,22 +363,6 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   return result;
 }
 
-void get_next_penalty_byte_and_pos(long long& penalty_bytes_index, std::optional<char>& next_penalty_byte, std::optional<uint32_t>& next_penalty_byte_pos, std::vector<unsigned char>& penalty_bytes) {
-  if (penalty_bytes.size() == penalty_bytes_index) {
-    next_penalty_byte = std::nullopt;
-    next_penalty_byte_pos = std::nullopt;
-    return;
-  }
-  uint32_t pb_pos = static_cast<unsigned char>(penalty_bytes[penalty_bytes_index]) << 24;
-  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 1]) << 16;
-  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 2]) << 8;
-  pb_pos += static_cast<unsigned char>(penalty_bytes[penalty_bytes_index + 3]);
-  next_penalty_byte_pos = pb_pos;
-
-  next_penalty_byte = penalty_bytes[penalty_bytes_index + 4];
-  penalty_bytes_index += 5;
-}
-
 class BZip2FormatHeaderData : public PrecompFormatHeaderData {
 public:
   int level;
@@ -398,11 +382,6 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, BZip2FormatHeaderData
 
   long long pos_in = 0;
   long long pos_out = 0;
-
-  std::optional<char> next_penalty_byte = std::nullopt;
-  std::optional<uint32_t> next_penalty_byte_pos = std::nullopt;
-  long long penalty_bytes_index = 0;
-  get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, bzip2_precomp_hdr_data.penalty_bytes);
 
   /* compress until end of file */
   std::vector<unsigned char> in_buf{};
@@ -439,12 +418,6 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, BZip2FormatHeaderData
         have = bzip2_precomp_hdr_data.original_size - pos_out;
       }
 
-      while (next_penalty_byte_pos.has_value() && next_penalty_byte_pos.value() < pos_out + static_cast<signed int>(have)) {
-        uint32_t next_penalty_byte_pos_in_buffer = next_penalty_byte_pos.value() - pos_out;
-        tmp_out[next_penalty_byte_pos_in_buffer] = next_penalty_byte.value();
-        get_next_penalty_byte_and_pos(penalty_bytes_index, next_penalty_byte, next_penalty_byte_pos, bzip2_precomp_hdr_data.penalty_bytes);
-      }
-
       pos_out += have;
 
       dest.write(reinterpret_cast<char*>(tmp_out.data()), have);
@@ -471,8 +444,18 @@ std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(
   // read penalty bytes
   if (penalty_bytes_stored) {
     auto penalty_bytes_len = fin_fget_vlint(*context.fin);
-    fmt_hdr->penalty_bytes.resize(penalty_bytes_len);
-    context.fin->read(reinterpret_cast<char*>(fmt_hdr->penalty_bytes.data()), penalty_bytes_len);
+    while (penalty_bytes_len > 0) {
+      unsigned char pb_data[5];
+      context.fin->read(reinterpret_cast<char*>(pb_data), 5);
+      penalty_bytes_len -= 5;
+
+      uint32_t next_pb_pos = pb_data[0] << 24;
+      next_pb_pos += pb_data[1] << 16;
+      next_pb_pos += pb_data[2] << 8;
+      next_pb_pos += pb_data[3];
+
+      fmt_hdr->penalty_bytes.emplace(next_pb_pos, pb_data[4]);
+    }
   }
 
   fmt_hdr->original_size = fin_fget_vlint(*context.fin);
