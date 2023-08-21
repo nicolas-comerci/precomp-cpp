@@ -384,7 +384,8 @@ memiostream::membuf::membuf(std::vector<unsigned char>&& memvector_) : memvector
   this->setg(data_ptr, data_ptr, data_ptr + memvector_unsigned.size());
   this->setp(data_ptr, data_ptr + memvector_unsigned.size());
 }
-memiostream::membuf::membuf(char* begin, char* end, bool owns_ptr_): data_ptr(begin), owns_ptr(owns_ptr_) {
+memiostream::membuf::membuf(char* begin, char* end, bool owns_ptr_): owns_ptr(owns_ptr_), data_ptr(begin)
+{
   this->setg(begin, begin, end);
   this->setp(begin, end);
 }
@@ -523,23 +524,27 @@ void PasstroughStream::unlock_everything() {
     data_available_cv.notify_all();
 }
 
-PasstroughStream::PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size) : buffer_size(_buffer_size), owner_thread_id(std::this_thread::get_id()) {
+PasstroughStream::PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size):
+  buffer_size(_buffer_size), passthrough_func(func), owner_thread_id(std::this_thread::get_id())
+{
     buffer.reserve(buffer_size);
-
-    thread = std::thread([this, func] {
-        try {
-            func(*this);
-        }
-        catch (std::exception& e) {
-            thread_error = e;
-        }
-        unlock_everything();
-    });
 }
 
 PasstroughStream::~PasstroughStream() {
     unlock_everything();
     if (thread.joinable()) thread.join();
+}
+
+void PasstroughStream::start_thread() {
+  thread = std::thread([this] {
+    try {
+      passthrough_func(*this);
+    }
+    catch (std::exception& e) {
+      thread_error = e;
+    }
+    unlock_everything();
+  });
 }
 
 void PasstroughStream::wait_thread_completed() {

@@ -1018,11 +1018,12 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 
 
 RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_)
-    : ctx(std::move(ctx_)),
-    PasstroughStream([&] (OStreamLike& passthrough){
+    : PasstroughStream([this](OStreamLike& passthrough)
+      {
         ctx->fout = std::make_unique<ObservableOStreamWrapper>(&passthrough, false);
         recompression_code = decompress_file(*ctx);
-    }) {}
+      }),
+      ctx(std::move(ctx_)) {}
 
 int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) {
     wait_thread_completed();
@@ -1048,6 +1049,7 @@ std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext
   new_ctx->fin = std::move(fin_view);
 
   std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(std::move(new_ctx));
+  passthrough->start_thread();
 
   //print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
 

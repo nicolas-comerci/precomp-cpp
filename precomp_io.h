@@ -469,7 +469,7 @@ public:
 * the stopped thread is allowed to resume execution now that there is more space in the buffer to store new result data.
 * This essentially allows us to pipe data around and consume it as its needed, instead of having to produce it first in its entirety and consuming it later, which could entail
 * large amounts of memory usage or even having to rely on temporary files.
-* Note that this only works for sequential generation and consumption of the data, that is seekg nor seekp is allowed.
+* Note that this only works for sequential generation and consumption of the data, that is, seekg nor seekp is allowed.
 */
 class PasstroughStream : public IStreamLike, public OStreamLike {
     // boost::circular_buffer would be a good idea here
@@ -477,6 +477,9 @@ class PasstroughStream : public IStreamLike, public OStreamLike {
     unsigned int buffer_size;
     unsigned int buffer_already_read_count = 0;
     unsigned int accumulated_already_read_count = 0;
+
+    // The function that will be executed on a thread and generates the data
+    std::function<void(OStreamLike&)> passthrough_func;
 
     // With this we will be able to check for some error conditions when reading or writing from the spawned thread and throw exceptions to force it to end if needed.
     // Some of the places we throw might be overkill for general usage, like if trying to read/write past eof, but works for our purposes, at least for now.
@@ -501,6 +504,9 @@ public:
 
     PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size = CHUNK);
     virtual ~PasstroughStream() override;
+    // Kicks off the execution of passthrough_func on a thread. We don't start execution immediately on construction to avoid pesky errors with construction/initialization
+    // order with derived subclasses and it's members, especially problematic when passthrough_func references such members from derived classes/instances
+    void start_thread();
     void wait_thread_completed();
 
     PasstroughStream& read(char* buff, std::streamsize count) override;
