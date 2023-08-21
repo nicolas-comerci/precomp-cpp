@@ -114,7 +114,7 @@ public:
     bool success;
     char format;
     std::byte flags{ 0 };
-    std::vector<char> penalty_bytes;
+    std::vector<std::tuple<uint32_t, char>> penalty_bytes;
     long long original_size = -1;
     // The original_size field only refers to the actual data subject to precompression/recompression which usually
     // does not include the size of headers for example, this field allows us to track the complete size of the data

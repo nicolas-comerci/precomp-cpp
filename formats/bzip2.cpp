@@ -221,7 +221,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
 
   frecomp.open(tempfile2, std::ios_base::in | std::ios_base::binary);
   precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
-  const auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, compressed_stream_size);
+  auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, compressed_stream_size);
 
   if (
     identical_bytes < precomp_mgr.switches.min_ident_size ||  // reject: too small to matter
@@ -252,14 +252,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   result->flags = header_byte;
 
   // store penalty bytes, if any
-  for (const auto& [pos, patch_byte] : penalty_bytes) {
-    result->penalty_bytes.push_back((pos >> 24) % 256);
-    result->penalty_bytes.push_back((pos >> 16) % 256);
-    result->penalty_bytes.push_back((pos >> 8) % 256);
-    result->penalty_bytes.push_back(pos % 256);
-    result->penalty_bytes.push_back(patch_byte);
-  }
-  //result->penalty_bytes = std::move(penalty_bytes);
+  result->penalty_bytes = std::move(penalty_bytes);
 
   result->original_size = compressed_stream_size;
   result->precompressed_size = decompressed_stream_size;

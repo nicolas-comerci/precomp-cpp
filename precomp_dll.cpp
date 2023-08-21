@@ -115,11 +115,16 @@ void precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
 
 void precompression_result::dump_penaltybytes_to_outfile(OStreamLike& outfile) const {
   if (penalty_bytes.empty()) return;
-  print_to_log(PRECOMP_DEBUG_LOG, "Penalty bytes were used: %i bytes\n", penalty_bytes.size());
-  fout_fput_vlint(outfile, penalty_bytes.size());
+  auto pb_total_bytes = penalty_bytes.size() * 5; // 4bytes=uint32 pos, 1bytes=patch byte
+  print_to_log(PRECOMP_DEBUG_LOG, "Penalty bytes were used: %i bytes\n", pb_total_bytes);
+  fout_fput_vlint(outfile, pb_total_bytes);
 
-  for (auto& chr: penalty_bytes) {
-      outfile.put(chr);
+  for (const auto& [pos, patch_byte] : penalty_bytes) {
+    outfile.put((pos >> 24) % 256);
+    outfile.put((pos >> 16) % 256);
+    outfile.put((pos >> 8) % 256);
+    outfile.put(pos % 256);
+    outfile.put(patch_byte);
   }
 }
 

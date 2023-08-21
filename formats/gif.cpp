@@ -502,7 +502,7 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
     WrappedFStream frecomp2;
     frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
     precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
-    const auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx->fin, frecomp2, gif_length);
+    auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx->fin, frecomp2, gif_length);
     frecomp2.close();
     result->original_size = identical_bytes;
     result->precompressed_size = decomp_length;
@@ -529,15 +529,7 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
         result->flags = std::byte{0b1} | add_bits;
 
         result->gif_diff = std::vector(gDiff.GIFDiff, gDiff.GIFDiff + gDiff.GIFDiffIndex);
-
-        for (const auto& [pos, patch_byte]: penalty_bytes) {
-          result->penalty_bytes.push_back((pos >> 24) % 256);
-          result->penalty_bytes.push_back((pos >> 16) % 256);
-          result->penalty_bytes.push_back((pos >> 8) % 256);
-          result->penalty_bytes.push_back(pos % 256);
-          result->penalty_bytes.push_back(patch_byte);
-        }
-        //result->penalty_bytes = std::move(penalty_bytes);
+        result->penalty_bytes = std::move(penalty_bytes);
 
         tmpfile->reopen();
         result->precompressed_stream = std::move(tmpfile);
