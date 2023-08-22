@@ -216,6 +216,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
 
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
+  tmpfile->close();
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
     precomp_mgr.statistics.decompressed_streams_count++;
@@ -252,7 +253,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
           result->precompressed_stream = std::move(memstream);
       }
       else {
-          tmpfile->reopen();
+          tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::binary);
           result->precompressed_stream = std::move(tmpfile);
       }
 
