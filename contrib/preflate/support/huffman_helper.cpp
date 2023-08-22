@@ -69,6 +69,7 @@ bool HuffmanHelper::countSymbols(
     return true;
   }
 
-  // Check that we don't have holes
-  return nextCode[maxLength] + blCount[maxLength] == (unsigned)(1 << (maxLength - 1));
+  // Check that we don't have holes (allowing for degenerate single-code Huffman codings, sometimes produced by ZLIB)
+  unsigned codeCheck = nextCode[maxLength] + blCount[maxLength];
+  return codeCheck == (unsigned)(1 << (maxLength - 1)) || codeCheck == 1 && maxLength == 2;
 }
