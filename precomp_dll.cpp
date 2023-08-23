@@ -594,7 +594,9 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         std::unique_ptr<precompression_result> result{};
         try {
-          result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+          std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
+          tmpfile->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+          result = formatHandler->attempt_precompression(precomp_mgr, std::move(tmpfile), checkbuf, input_file_pos);
         }
         catch (...) {}  // TODO: print/record/report handler failed
         if (!result || !result->success) continue;
@@ -603,7 +605,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // Note that this is done before recursion for 2 reasons:
         //  1) why bother recursing a stream we might reject
         //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
-        if (precomp_mgr.switches.verify_precompressed) {
+        if (precomp_mgr.switches.verify_precompressed && false) {
           bool verification_success = false;
           try {
             verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
@@ -620,7 +622,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         end_uncompressed_data(precomp_mgr);
 
         // If the format allows for it, recurse inside the most likely newly decompressed data
-        if (formatHandler->recursion_allowed) {
+        if (formatHandler->recursion_allowed && false) {
           auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
           recursion_result r{};
           try {
@@ -641,8 +643,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
         }
 
         result->dump_to_outfile(*precomp_mgr.ctx->fout);
-
-        // start new uncompressed data
+        auto remaining_precompressed_data = result->precompressed_size;
+        while (remaining_precompressed_data > 0) {
+          auto chunk_size = std::min(remaining_precompressed_data, static_cast<long long>(1 * 1024 * 1024));
+          remaining_precompressed_data -= chunk_size;
+          precomp_mgr.ctx->fout->put(static_cast<char>(remaining_precompressed_data == 0 ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
+          fout_fput_vlint(*precomp_mgr.ctx->fout, chunk_size);
+          fast_copy(*result->precompressed_stream, *precomp_mgr.ctx->fout, chunk_size);
+        }
 
         // set input file pointer after recompressed data
         input_file_pos += result->complete_original_size() - 1;

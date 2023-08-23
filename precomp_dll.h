@@ -240,7 +240,7 @@ public:
   // The main precompression entrypoint, you are given full access to Precomp instance which in turn gives you access to the current context and input/output streams.
   // You should however if possible not output anything to the output stream directly or otherwise mess with the Precomp instance or current context unless strictly necessary,
   // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
-  virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
+  virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::unique_ptr<PrecompTmpFile>&& precompressed, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
 
   virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
   // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
