@@ -103,9 +103,10 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
-REGISTER_PRECOMP_FORMAT_HANDLER(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_RAW, ZlibFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BRUTE, DeflateFormatHandler::create);
+std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
 
 void precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
@@ -423,7 +424,7 @@ void Precomp::init_format_handlers(bool is_recompressing) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BASE64]()));
     }
     if (is_recompressing || switches.use_bzip2) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BZIP2]()));
+        format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_BZIP2]()));
     }
     if (is_recompressing || switches.intense_mode) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_RAW]()));
@@ -442,6 +443,10 @@ void Precomp::init_format_handlers(bool is_recompressing) {
 
 const std::vector<std::unique_ptr<PrecompFormatHandler>>& Precomp::get_format_handlers() const {
     return format_handlers;
+}
+
+const std::vector<std::unique_ptr<PrecompFormatHandler2>>& Precomp::get_format_handlers2() const {
+  return format_handlers2;
 }
 
 bool Precomp::is_format_handler_active(SupportedFormats format_id) const {
@@ -523,6 +528,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
   }
 
   const auto& format_handlers = precomp_mgr.get_format_handlers();
+  const auto& format_handlers2 = precomp_mgr.get_format_handlers2();
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
 
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
@@ -551,7 +557,100 @@ int compress_file_impl(Precomp& precomp_mgr) {
     ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
 
     if (!ignore_this_pos) {
+      for (const auto& formatHandler : format_handlers2) {
+        // Recursion depth check
+        if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
+
+        // Position blacklist check
+        bool ignore_this_position = false;
+        const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
+        auto ignoreListIt = precomp_mgr.ctx->ignore_offsets.find(formatTag);
+        if (ignoreListIt != precomp_mgr.ctx->ignore_offsets.cend()) {
+          auto& ignore_offsets_set = (*ignoreListIt).second;
+          if (!ignore_offsets_set.empty()) {
+            auto first = ignore_offsets_set.begin();
+            while (*first < input_file_pos) {
+              ignore_offsets_set.erase(first);
+              if (ignore_offsets_set.empty()) break;
+              first = ignore_offsets_set.begin();
+            }
+
+            if (!ignore_offsets_set.empty()) {
+              if (*first == input_file_pos) {
+                ignore_this_position = true;
+                ignore_offsets_set.erase(first);
+              }
+            }
+          }
+          if (ignore_this_position) continue;
+        }
+
+        bool quick_check_result = false;
+        try {
+          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
+        }
+        catch (...) {}  // TODO: print/record/report handler failed
+        if (!quick_check_result) continue;
+
+        std::unique_ptr<precompression_result> result{};
+        try {
+          result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+        }
+        catch (...) {}  // TODO: print/record/report handler failed
+        if (!result || !result->success) continue;
+
+        // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
+        // Note that this is done before recursion for 2 reasons:
+        //  1) why bother recursing a stream we might reject
+        //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
+        if (precomp_mgr.switches.verify_precompressed) {
+          bool verification_success = false;
+          try {
+            verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
+          }
+          catch (...) {}  // TODO: print/record/report handler failed
+          if (!verification_success) continue;
+          // ensure that the precompressed stream is ready to read from the start, as if verification never happened
+          result->precompressed_stream->seekg(0, std::ios_base::beg);
+        }
+
+        // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
+        // going to write this stream, which means we can as well write any pending uncompressed data now
+        // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
+        end_uncompressed_data(precomp_mgr);
+
+        // If the format allows for it, recurse inside the most likely newly decompressed data
+        if (formatHandler->recursion_allowed) {
+          auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
+          recursion_result r{};
+          try {
+            r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+          }
+          catch (...) {}  // TODO: print/record/report handler failed
+          if (r.success) {
+            auto rec_tmpfile = new PrecompTmpFile();
+            rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
+            result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
+            result->recursion_filesize = r.file_length;
+            result->recursion_used = true;
+          }
+          else {
+            // ensure that the precompressed stream is ready to read from the start, as if recursion attempt never happened
+            result->precompressed_stream->seekg(0, std::ios_base::beg);
+          }
+        }
+
+        result->dump_to_outfile(*precomp_mgr.ctx->fout);
+
+        // start new uncompressed data
+
+        // set input file pointer after recompressed data
+        input_file_pos += result->complete_original_size() - 1;
+        compressed_data_found = result->success;
+        break;
+      }
       for (const auto& formatHandler : format_handlers) {
+        if (compressed_data_found) break;
         // Recursion depth check
         if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
 
@@ -761,6 +860,11 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
     [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
     [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
   );
+  const auto& format_handlers2 = precomp_ctx.precomp.get_format_handlers2();
+  const auto handler_tools2 = PrecompFormatHandler2::Tools(
+    [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
+    [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
+  );
 
   long long fin_pos = precomp_ctx.fin->tellg();
 
@@ -782,7 +886,36 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
       const unsigned char headertype = precomp_ctx.fin->get();
   
       bool handlerFound = false;
+      for (const auto& formatHandler : format_handlers2) {
+        for (const auto& formatHandlerHeaderByte : formatHandler->get_header_bytes()) {
+          if (headertype == formatHandlerHeaderByte) {
+            auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
+            formatHandler->write_pre_recursion_data(precomp_ctx, *format_hdr_data);
+
+            OStreamLike* output = precomp_ctx.fout.get();
+            // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
+            std::unique_ptr<PenaltyBytesPatchedOStream> patched_ostream{};
+            if (!format_hdr_data->penalty_bytes.empty()) {
+              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(precomp_ctx.fout.get(), &format_hdr_data->penalty_bytes);
+              output = patched_ostream.get();
+            }
+
+            if (format_hdr_data->recursion_data_size > 0) {
+              auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
+              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools2);
+              recurse_passthrough_input->get_recursion_return_code();
+            }
+            else {
+              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools2);
+            }
+            handlerFound = true;
+            break;
+          }
+        }
+        if (handlerFound) break;
+      }
       for (const auto& formatHandler : format_handlers) {
+        if (handlerFound) break;
         for (const auto& formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
             auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);

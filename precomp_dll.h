@@ -205,12 +205,74 @@ public:
 #define REGISTER_PRECOMP_FORMAT_HANDLER(format_tag, factory_func) \
     bool format_tag ## _entry = PrecompFormatHandler::registerFormatHandler(format_tag, (factory_func))
 
+class PrecompFormatHandler2;
+extern std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2;
+
+class PrecompFormatHandler2 {
+protected:
+  std::vector<SupportedFormats> header_bytes;
+public:
+  // This class serves to provide a PrecompFormatHandler with some tools to facilitate their functioning and communication with the Precomp, without giving it
+  // access to its internals
+  class Tools {
+  public:
+    std::function<void()> progress_callback;
+    std::function<std::string(const std::string& name, bool append_tag)> get_tempfile_name;
+
+    Tools(std::function<void()>&& _progress_callback, std::function<std::string(const std::string& name, bool append_tag)>&& _get_tempfile_name) :
+      progress_callback(std::move(_progress_callback)), get_tempfile_name(std::move(_get_tempfile_name)) {}
+  };
+
+  std::optional<unsigned int> depth_limit;
+  bool recursion_allowed;
+
+  PrecompFormatHandler2(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt, bool _recursion_allowed = false)
+    : header_bytes(_header_bytes), depth_limit(_depth_limit), recursion_allowed(_recursion_allowed) {}
+  virtual ~PrecompFormatHandler2() = default;
+
+  // The quick check should attempt to detect applicable format data by inspecting File Signatures/Magic Bytes or via any other easy/quick check that could
+  // be done by using the small buffered chunk provided.
+  // If quick detection is impossible, just return true so Precomp will move on and attempt precompression.
+  // The current_input_id and original_input_pos parameters are provided so that format handlers can apply certain optimizations by confirming that they
+  // might have already seen part of the data on the buffer_chunk, like insane/brute deflate handlers that use an histogram to detect false positives.
+  virtual bool quick_check(const std::span<unsigned char> buffer_chunk, uintptr_t current_input_id, const long long original_input_pos) = 0;
+
+  // The main precompression entrypoint, you are given full access to Precomp instance which in turn gives you access to the current context and input/output streams.
+  // You should however if possible not output anything to the output stream directly or otherwise mess with the Precomp instance or current context unless strictly necessary,
+  // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
+  virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
+
+  virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
+  // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
+  // with your extra format header data, provided you are using and returned such an instance from read_format_header()
+  virtual void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const PrecompFormatHandler2::Tools& tools) = 0;
+  // Any data that must be written before the actual stream's data, where recursion can occur, must be written here as this is executed before recompress()
+  // Such data should be things like Zip/ZLib or any other compression/container headers.
+  virtual void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {}
+
+  // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
+  // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector
+  const std::vector<SupportedFormats>& get_header_bytes() { return header_bytes; }
+
+  // Subclasses should register themselves here, as the available PrecompFormatHandlers will be queried and the instances created when we create Precomp instances.
+  // If you fail to register the PrecompFormatHandler here then it won't be available and any attempt to set it up for precompression, or of recompressing any file that uses your
+  // format handler, will fail.
+  static bool registerFormatHandler(SupportedFormats format_tag, std::function<PrecompFormatHandler2* ()> factory_func) {
+    registeredHandlerFactoryFunctions2[format_tag] = factory_func;
+    return true;
+  }
+};
+
+#define REGISTER_PRECOMP_FORMAT_HANDLER2(format_tag, factory_func) \
+    bool format_tag ## _entry = PrecompFormatHandler2::registerFormatHandler(format_tag, (factory_func))
+
 class Precomp {
   std::function<void(float)> progress_callback;
   void set_input_stdin();
   void set_output_stdout();
   void register_output_observer_callbacks();
   std::vector<std::unique_ptr<PrecompFormatHandler>> format_handlers {};
+  std::vector<std::unique_ptr<PrecompFormatHandler2>> format_handlers2 {};
 
 public:
   explicit Precomp();
@@ -238,6 +300,7 @@ public:
   // as they might be needed to handle the already precompressed PCF file
   void init_format_handlers(bool is_recompressing = false);
   const std::vector<std::unique_ptr<PrecompFormatHandler>>& get_format_handlers() const;
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& get_format_handlers2() const;
   bool is_format_handler_active(SupportedFormats format_id) const;
 
   int recursion_depth = 0;
