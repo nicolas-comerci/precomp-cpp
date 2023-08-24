@@ -512,6 +512,7 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
+bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, const std::unique_ptr<PrecompTmpFile>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
 struct recursion_result {
   bool success;
   std::string file_name;
@@ -601,19 +602,33 @@ int compress_file_impl(Precomp& precomp_mgr) {
         catch (...) {}  // TODO: print/record/report handler failed
         if (!result || !result->success) continue;
 
+        // For now just dump the result, divided in chunks, even if its generated all at once
+        std::unique_ptr<PrecompTmpFile> chunked_tmp = std::make_unique<PrecompTmpFile>();
+        chunked_tmp->open(precomp_mgr.get_tempfile_name("precompressed_bzip2_chunked"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+        result->dump_to_outfile(*chunked_tmp);
+        auto remaining_precompressed_data = result->precompressed_size;
+        while (remaining_precompressed_data > 0) {
+          auto chunk_size = std::min(remaining_precompressed_data, static_cast<long long>(1 * 1024 * 1024));
+          remaining_precompressed_data -= chunk_size;
+          chunked_tmp->put(static_cast<char>(remaining_precompressed_data == 0 ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
+          fout_fput_vlint(*chunked_tmp, chunk_size);
+          fast_copy(*result->precompressed_stream, *chunked_tmp, chunk_size);
+        }
+        auto chunked_tmp_size = chunked_tmp->tellp();
+
         // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
         // Note that this is done before recursion for 2 reasons:
         //  1) why bother recursing a stream we might reject
         //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
-        if (precomp_mgr.switches.verify_precompressed && false) {
+        if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
           try {
-            verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
+            verification_success = verify_precompressed_result2(precomp_mgr, result, chunked_tmp, chunked_tmp_size, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (!verification_success) continue;
           // ensure that the precompressed stream is ready to read from the start, as if verification never happened
-          result->precompressed_stream->seekg(0, std::ios_base::beg);
+          chunked_tmp->seekg(0, std::ios_base::beg);
         }
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
@@ -642,15 +657,8 @@ int compress_file_impl(Precomp& precomp_mgr) {
           }
         }
 
-        result->dump_to_outfile(*precomp_mgr.ctx->fout);
-        auto remaining_precompressed_data = result->precompressed_size;
-        while (remaining_precompressed_data > 0) {
-          auto chunk_size = std::min(remaining_precompressed_data, static_cast<long long>(1 * 1024 * 1024));
-          remaining_precompressed_data -= chunk_size;
-          precomp_mgr.ctx->fout->put(static_cast<char>(remaining_precompressed_data == 0 ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
-          fout_fput_vlint(*precomp_mgr.ctx->fout, chunk_size);
-          fast_copy(*result->precompressed_stream, *precomp_mgr.ctx->fout, chunk_size);
-        }
+        chunked_tmp->reopen();
+        fast_copy(*chunked_tmp, *precomp_mgr.ctx->fout, chunked_tmp_size);
 
         // set input file pointer after recompressed data
         input_file_pos += result->complete_original_size() - 1;
@@ -1094,6 +1102,40 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
 
     if (original_data_sha1 != recompressed_data_sha1) return false;
     return true;
+}
+
+bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, const std::unique_ptr<PrecompTmpFile>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
+  // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
+  recursion_push(*precomp_mgr.ctx, 0);
+  auto new_ctx = std::move(precomp_mgr.ctx);
+  recursion_pop(precomp_mgr);
+
+  // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
+  // a PCf file without the PCF header, if that makes sense));
+  new_ctx->fin_length = precompressed_size;
+  tmp_file->reopen();
+  new_ctx->fin = std::make_unique<IStreamLikeView>(tmp_file.get(), precompressed_size);
+
+  // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
+  auto sha1_ostream = Sha1Ostream();
+  new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
+
+  int verify_result = decompress_file(*new_ctx);
+  if (verify_result != RETURN_SUCCESS) return false;
+
+  // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
+  auto recompressed_size = sha1_ostream.tellp();
+  auto recompressed_data_sha1 = sha1_ostream.get_digest();
+
+  // Validate that the recompressed_size is what we expect
+  if (recompressed_size != result->complete_original_size()) return false;
+
+  precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
+  auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);
+  auto original_data_sha1 = calculate_sha1(original_data_view, 0);
+
+  if (original_data_sha1 != recompressed_data_sha1) return false;
+  return true;
 }
 
 recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {

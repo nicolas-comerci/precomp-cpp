@@ -26,88 +26,53 @@ bool BZip2FormatHandler::quick_check(const std::span<unsigned char> buffer, uint
   return (*checkbuf == 'B') && (*(checkbuf + 1) == 'Z') && (*(checkbuf + 2) == 'h');
 }
 
-int inf_bzip2(Precomp& precomp_mgr, IStreamLike& source, OStreamLike& dest, long long& compressed_stream_size, long long& decompressed_stream_size, std::span<unsigned char> tmp_out) {
-  int ret;
-  unsigned have;
+class Bzip2Decompressor {
   bz_stream strm;
+  std::function<void()> progress_callback;
 
-  strm.bzalloc = nullptr;
-  strm.bzfree = nullptr;
-  strm.opaque = nullptr;
-  strm.avail_in = 0;
-  strm.next_in = nullptr;
-  ret = BZ2_bzDecompressInit(&strm, 0, 0);
-  if (ret != BZ_OK)
-    return ret;
+public:
+  uint32_t avail_in = 0;
+  std::array<std::byte, CHUNK> in_buf{};
+  uint32_t avail_out = 0;
+  std::array<std::byte, CHUNK> out_buf{};
+  bool stream_failed = false;
 
-  compressed_stream_size = 0;
-  decompressed_stream_size = 0;
-  unsigned int avail_in_before;
-  std::vector<unsigned char> in_buf{};
-  in_buf.resize(CHUNK);
+  Bzip2Decompressor(const std::function<void()>& _progress_callback): progress_callback(_progress_callback) {
+    strm.bzalloc = nullptr;
+    strm.bzfree = nullptr;
+    strm.opaque = nullptr;
+    strm.avail_in = 0;
+    strm.next_in = nullptr;
+    auto ret = BZ2_bzDecompressInit(&strm, 0, 0);
+    if (ret != BZ_OK)
+      throw PrecompError(ERR_GENERIC_OR_UNKNOWN);
+  }
 
-  do {
-    precomp_mgr.call_progress_callback();
+  ~Bzip2Decompressor() {
+    BZ2_bzDecompressEnd(&strm);
+  }
 
-    source.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
-    strm.avail_in = source.gcount();
-    avail_in_before = strm.avail_in;
+  int process() {
+    if (stream_failed) return BZ_DATA_ERROR;
+    progress_callback();
 
-    if (source.bad()) {
-      (void)BZ2_bzDecompressEnd(&strm);
-      return BZ_PARAM_ERROR;
-    }
-    if (strm.avail_in == 0)
-      break;
+    strm.avail_in = avail_in;
+    if (strm.avail_in == 0) return BZ_DATA_ERROR;
     strm.next_in = reinterpret_cast<char*>(in_buf.data());
 
-    do {
-      strm.avail_out = CHUNK;
-      strm.next_out = reinterpret_cast<char*>(tmp_out.data());
+    strm.avail_out = CHUNK;
+    strm.next_out = reinterpret_cast<char*>(out_buf.data());
 
-      ret = BZ2_bzDecompress(&strm);
-      if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
-        (void)BZ2_bzDecompressEnd(&strm);
-        return ret;
-      }
+    int ret = BZ2_bzDecompress(&strm);
+    if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
+      stream_failed = true;
+    }
 
-      compressed_stream_size += (avail_in_before - strm.avail_in);
-      avail_in_before = strm.avail_in;
-
-      have = CHUNK - strm.avail_out;
-      dest.write(reinterpret_cast<char*>(tmp_out.data()), have);
-      if (dest.bad()) {
-        (void)BZ2_bzDecompressEnd(&strm);
-        return BZ_DATA_ERROR;
-      }
-      decompressed_stream_size += have;
-
-    } while (strm.avail_out == 0);
-
-    /* done when inflate() says it's done */
-  } while (ret != BZ_STREAM_END);
-
-  /* clean up and return */
-
-  (void)BZ2_bzDecompressEnd(&strm);
-  return ret == BZ_STREAM_END ? BZ_OK : BZ_DATA_ERROR;
-
-}
-
-long long try_to_decompress_bzip2(Precomp& precomp_mgr, IStreamLike& bzip2_stream, long long original_input_pos, long long& compressed_stream_size, PrecompTmpFile& decompressed_stream, std::span<unsigned char> tmp_out) {
-  long long r, decompressed_stream_size;
-
-  precomp_mgr.call_progress_callback();
-
-  decompressed_stream.reopen();
-
-  bzip2_stream.seekg(&bzip2_stream == precomp_mgr.ctx->fin.get() ? original_input_pos : 0, std::ios_base::beg);
-
-  r = inf_bzip2(precomp_mgr, bzip2_stream, decompressed_stream, compressed_stream_size, decompressed_stream_size, tmp_out);
-  if (r == BZ_OK) return decompressed_stream_size;
-
-  return r;
-}
+    avail_in = strm.avail_in;
+    avail_out = CHUNK - strm.avail_out;
+    return ret;
+  }
+};
 
 class BZip2FormatHeaderData : public PrecompFormatHeaderData {
 public:
@@ -115,63 +80,12 @@ public:
 };
 
 class BZip2Compressor {
-public:
   bz_stream strm;
   std::array<unsigned char, CHUNK> in_buf{};
   std::array<unsigned char, CHUNK> out_buf{};
   const std::function<void()>& progress_callback;
 
-  BZip2Compressor(const int level, const std::function<void()>& _progress_callback): progress_callback(_progress_callback) {
-    /* allocate deflate state */
-    strm.bzalloc = nullptr;
-    strm.bzfree = nullptr;
-    strm.opaque = nullptr;
-    int ret = BZ2_bzCompressInit(&strm, level, 0, 0);
-    if (ret != BZ_OK)
-      throw PrecompError(ERR_DURING_RECOMPRESSION);
-  }
-  ~BZip2Compressor() {
-    BZ2_bzCompressEnd(&strm);
-  }
-
-  int compress(IStreamLike& input, unsigned long long count, OStreamLike& output) {
-    progress_callback();
-
-    auto remaining_in = count;
-    while (remaining_in > 0) {
-      auto in_chunk_size = remaining_in > CHUNK ? CHUNK : remaining_in;
-      remaining_in -= in_chunk_size;
-      int flush = BZ_RUN;
-      input.read(reinterpret_cast<char*>(in_buf.data()), in_chunk_size);
-      strm.avail_in = input.gcount();      
-      if (input.bad()) {
-        (void)BZ2_bzCompressEnd(&strm);
-        return BZ_PARAM_ERROR;
-      }
-      strm.next_in = reinterpret_cast<char*>(in_buf.data());
-
-      // Compress all that available data for that input chunk
-      do {
-        strm.avail_out = CHUNK;
-        strm.next_out = reinterpret_cast<char*>(out_buf.data());
-
-        BZ2_bzCompress(&strm, flush);
-
-        unsigned int compressed_chunk_size = CHUNK - strm.avail_out;
-        if (compressed_chunk_size > 0) {
-          output.write(reinterpret_cast<char*>(out_buf.data()), compressed_chunk_size);
-          if (output.bad()) {
-            (void)BZ2_bzCompressEnd(&strm);
-            return BZ_DATA_ERROR;
-          }
-        }
-      } while (strm.avail_out == 0);
-    }
-    return BZ_OK;
-  }
-
-  int compress_final_block(IStreamLike& input, unsigned long long count, OStreamLike& output) {
-    int flush = BZ_FINISH;
+  int _compress_block(IStreamLike& input, unsigned long long count, OStreamLike& output, int flush = BZ_RUN) {
     input.read(reinterpret_cast<char*>(in_buf.data()), count);
     strm.avail_in = input.gcount();
     if (input.bad()) {
@@ -197,6 +111,37 @@ public:
       }
     } while (strm.avail_out == 0);
     return BZ_OK;
+  }
+
+public:
+  BZip2Compressor(const int level, const std::function<void()>& _progress_callback): progress_callback(_progress_callback) {
+    /* allocate deflate state */
+    strm.bzalloc = nullptr;
+    strm.bzfree = nullptr;
+    strm.opaque = nullptr;
+    int ret = BZ2_bzCompressInit(&strm, level, 0, 0);
+    if (ret != BZ_OK)
+      throw PrecompError(ERR_DURING_RECOMPRESSION);
+  }
+  ~BZip2Compressor() {
+    BZ2_bzCompressEnd(&strm);
+  }
+
+  int compress(IStreamLike& input, unsigned long long count, OStreamLike& output) {
+    progress_callback();
+
+    auto remaining_in = count;
+    while (remaining_in > 0) {
+      auto in_chunk_size = remaining_in > CHUNK ? CHUNK : remaining_in;
+      remaining_in -= in_chunk_size;
+      auto ret = _compress_block(input, count, output, BZ_RUN);
+      if (ret != BZ_OK) return ret;
+    }
+    return BZ_OK;
+  }
+
+  int compress_final_block(IStreamLike& input, unsigned long long count, OStreamLike& output) {
+    return _compress_block(input, count, output, BZ_FINISH);
   }
 };
 
@@ -272,9 +217,33 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   if ((compression_level < 1) || (compression_level > 9)) return result;
 
   // try to decompress at current position
-  long long compressed_stream_size = -1;
-  const auto decompressed_stream_size = try_to_decompress_bzip2(precomp_mgr, *precomp_mgr.ctx->fin, original_input_pos, compressed_stream_size, *precompressed, tmp_out);
-  if (decompressed_stream_size <= 0) return result;
+  precomp_mgr.call_progress_callback();
+
+  precompressed->reopen();
+  precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
+
+  long long compressed_stream_size = 0;
+  long long decompressed_stream_size = 0;
+  auto decompressor = Bzip2Decompressor([&precomp_mgr]() {precomp_mgr.call_progress_callback(); });
+  while (true) {
+    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(decompressor.in_buf.data()), CHUNK);
+    decompressor.avail_in = precomp_mgr.ctx->fin->gcount();
+    const auto avail_in_before = decompressor.avail_in;
+    if (precomp_mgr.ctx->fin->bad()) return result;
+
+    auto ret = decompressor.process();
+    if (ret != BZ_OK && ret != BZ_STREAM_END) return result;
+
+    // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
+    // and shouldn't be counted towards the stream's size
+    compressed_stream_size += (avail_in_before - decompressor.avail_in);
+
+    const auto decompressed_chunk_size = decompressor.avail_out;
+    decompressed_stream_size += decompressed_chunk_size;
+    precompressed->write(reinterpret_cast<char*>(decompressor.out_buf.data()), decompressed_chunk_size);
+    if (precompressed->bad()) return result;
+    if (ret == BZ_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+  }
 
   precomp_mgr.statistics.decompressed_streams_count++;
   precomp_mgr.statistics.decompressed_bzip2_count++;
