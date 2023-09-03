@@ -205,6 +205,44 @@ public:
 #define REGISTER_PRECOMP_FORMAT_HANDLER(format_tag, factory_func) \
     bool format_tag ## _entry = PrecompFormatHandler::registerFormatHandler(format_tag, (factory_func))
 
+enum PrecompProcessorReturnCode {
+  PP_OK = 0,
+  PP_STREAM_END = 1,
+  PP_ERROR = 2,
+};
+
+class PrecompFormatPrecompressor {
+protected:
+  std::function<void()> progress_callback;
+
+public:
+  uint32_t avail_in = 0;
+  std::array<std::byte, CHUNK> in_buf{};
+  uint32_t avail_out = 0;
+  std::array<std::byte, CHUNK> out_buf{};
+
+  PrecompFormatPrecompressor(const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
+
+  virtual ~PrecompFormatPrecompressor() = default;
+
+  virtual PrecompProcessorReturnCode process() = 0;
+};
+
+class PrecompFormatRecompressor {
+protected:
+  std::function<void()> progress_callback;
+
+public:
+  std::array<unsigned char, CHUNK> in_buf{};
+  std::array<unsigned char, CHUNK> out_buf{};
+
+  PrecompFormatRecompressor(const PrecompFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
+  virtual ~PrecompFormatRecompressor() = default;
+
+  virtual PrecompProcessorReturnCode recompress(IStreamLike& input, unsigned long long count, OStreamLike& output) = 0;
+  virtual PrecompProcessorReturnCode recompress_final_block(IStreamLike& input, unsigned long long count, OStreamLike& output) = 0;
+};
+
 class PrecompFormatHandler2;
 extern std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2;
 
@@ -243,9 +281,9 @@ public:
   virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::unique_ptr<PrecompTmpFile>&& precompressed, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
 
   virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
-  // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
+  // make_recompressor method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
   // with your extra format header data, provided you are using and returned such an instance from read_format_header()
-  virtual void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const PrecompFormatHandler2::Tools& tools) = 0;
+  virtual std::unique_ptr<PrecompFormatRecompressor> make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const PrecompFormatHandler2::Tools& tools) = 0;
   // Any data that must be written before the actual stream's data, where recursion can occur, must be written here as this is executed before recompress()
   // Such data should be things like Zip/ZLib or any other compression/container headers.
   virtual void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {}

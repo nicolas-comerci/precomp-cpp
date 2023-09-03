@@ -916,13 +916,39 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
               output = patched_ostream.get();
             }
 
+            IStreamLike* precompressed_input = precomp_ctx.fin.get();
+            std::unique_ptr<RecursionPasstroughStream> recurse_passthrough_input;
             if (format_hdr_data->recursion_data_size > 0) {
-              auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
-              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools2);
-              recurse_passthrough_input->get_recursion_return_code();
+              recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
+              precompressed_input = recurse_passthrough_input.get();
             }
-            else {
-              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools2);
+            auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, handler_tools2);
+
+            while (true) {
+              std::byte data_hdr = static_cast<std::byte>(precompressed_input->get());
+              auto data_block_size = fin_fget_vlint(*precompressed_input);
+
+              bool last_block = (data_hdr & std::byte{ 0b1000000 }) == std::byte{ 0b1000000 };
+              bool finish_bzip_stream = (data_hdr & std::byte{ 0b0000001 }) == std::byte{ 0b0000001 };
+              int retval;
+              if (last_block && finish_bzip_stream) {
+                retval = recompressor->recompress_final_block(*precompressed_input, data_block_size, *output);
+              }
+              else if (finish_bzip_stream && !last_block) {
+                throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
+              }
+              else {
+                retval = recompressor->recompress(*precompressed_input, data_block_size, *output);
+              }
+              if (retval != PP_OK) {
+                throw PrecompError(ERR_DURING_RECOMPRESSION);
+              }
+
+              if (last_block) break;
+            }
+
+            if (format_hdr_data->recursion_data_size > 0) {
+              recurse_passthrough_input->get_recursion_return_code();
             }
             handlerFound = true;
             break;
