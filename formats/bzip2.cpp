@@ -5,21 +5,6 @@
 #include <cstddef>
 #include <memory>
 
-class bzip2_precompression_result : public precompression_result {
-public:
-    int compression_level;
-
-    explicit bzip2_precompression_result(int compression_level) : precompression_result(D_BZIP2), compression_level(compression_level) {}
-
-    void dump_to_outfile(OStreamLike& outfile) const override {
-        dump_header_to_outfile(outfile);
-        outfile.put(compression_level);
-        //dump_penaltybytes_to_outfile(outfile);
-        //dump_stream_sizes_to_outfile(outfile);
-        //dump_precompressed_data_to_outfile(outfile);
-    }
-};
-
 bool BZip2FormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   auto checkbuf = buffer.data();
   // BZhx = header, x = compression level/blocksize (1-9)
@@ -209,7 +194,12 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, int level, unsigned l
   return BZ_OK;
 }
 
-std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompression(Precomp& precomp_mgr, std::unique_ptr<PrecompTmpFile>&& precompressed, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
+std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Precomp& precomp_mgr) {
+  return std::make_unique<Bzip2Decompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+}
+
+/*
+std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_mgr, std::unique_ptr<PrecompTmpFile>&& precompressed, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
   const int compression_level = *(checkbuf_span.data() + 3) - '0';
   std::unique_ptr<bzip2_precompression_result> result = std::make_unique<bzip2_precompression_result>(compression_level);
 
@@ -221,7 +211,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
 
   long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
-  auto decompressor = Bzip2Decompressor([&precomp_mgr]() {precomp_mgr.call_progress_callback(); });
+  auto decompressor = Bzip2Decompressor([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
   while (true) {
     precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(decompressor.in_buf.data()), CHUNK);
     decompressor.avail_in = precomp_mgr.ctx->fin->gcount();
@@ -259,7 +249,6 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
     throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
   }
 
-  /*
   std::string tempfile2 = precompressed->file_path + "_rec_";
   PrecompTmpFile frecomp;
   frecomp.open(tempfile2, std::ios_base::out | std::ios_base::binary);
@@ -283,7 +272,6 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
   }
   
   print_to_log(PRECOMP_DEBUG_LOG, "Best match: %lli bytes, decompressed to %lli bytes\n", identical_bytes, decompressed_stream_size);
-  */
 
   std::vector<std::tuple<uint32_t, char>> penalty_bytes{};
   precomp_mgr.statistics.recompressed_streams_count++;
@@ -316,6 +304,7 @@ std::unique_ptr<precompression_result> BZip2FormatHandler::attempt_precompressio
 
   return result;
 }
+*/
 
 std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<BZip2FormatHeaderData>();

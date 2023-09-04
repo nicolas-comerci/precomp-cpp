@@ -12,7 +12,7 @@ public:
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
 
-	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::unique_ptr<PrecompTmpFile>&& precompressed, std::span<unsigned char> buffer, long long input_stream_pos) override;
+	std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Precomp& precomp_mgr) override;
 
 	std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
