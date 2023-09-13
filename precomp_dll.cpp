@@ -594,11 +594,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (!quick_check_result) continue;
 
         std::unique_ptr<precompression_result> result{};
-        const int compression_level = *(checkbuf.data() + 3) - '0';
+        std::unique_ptr<PrecompFormatPrecompressor> precompressor{};
         try {
           std::unique_ptr<PrecompTmpFile> precompressed = std::make_unique<PrecompTmpFile>();
           precompressed->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-          auto precompressor = formatHandler->make_precompressor(precomp_mgr);
+          precompressor = formatHandler->make_precompressor(precomp_mgr, checkbuf);
 
           precomp_mgr.call_progress_callback();
 
@@ -633,7 +633,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
             precomp_mgr.statistics.decompressed_streams_count++;
             precomp_mgr.statistics.decompressed_bzip2_count++;
 
-            print_to_log(PRECOMP_DEBUG_LOG, "Possible bZip2-Stream found at position %lli, compression level = %i\n", input_file_pos, compression_level);
             print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", compressed_stream_size);
 
             if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
@@ -686,7 +685,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         chunked_tmp->put(static_cast<char>(result->flags | (result->recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
         chunked_tmp->put(result->format);
         // BZip2 format additional header byte
-        chunked_tmp->put(compression_level);
+        precompressor->dump_extra_header_data(*chunked_tmp);
 
         auto remaining_precompressed_data = result->precompressed_size;
         while (remaining_precompressed_data > 0) {

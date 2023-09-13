@@ -221,11 +221,12 @@ public:
   uint32_t avail_out = 0;
   std::array<std::byte, CHUNK> out_buf{};
 
-  PrecompFormatPrecompressor(const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
-
+  PrecompFormatPrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatPrecompressor() = default;
 
   virtual PrecompProcessorReturnCode process() = 0;
+
+  virtual void dump_extra_header_data(OStreamLike& output) {}
 };
 
 class PrecompFormatRecompressor {
@@ -275,7 +276,7 @@ public:
   // might have already seen part of the data on the buffer_chunk, like insane/brute deflate handlers that use an histogram to detect false positives.
   virtual bool quick_check(const std::span<unsigned char> buffer_chunk, uintptr_t current_input_id, const long long original_input_pos) = 0;
 
-  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Precomp& precomp_mgr) = 0;
+  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) = 0;
 
   virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
   // make_recompressor method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
