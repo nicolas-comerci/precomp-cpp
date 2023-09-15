@@ -43,11 +43,12 @@ public:
     progress_callback();
 
     strm.avail_in = avail_in;
-    if (strm.avail_in == 0) return PrecompProcessorReturnCode::PP_ERROR;
-    strm.next_in = reinterpret_cast<char*>(in_buf.data());
+    if (strm.avail_in == 0) return PrecompProcessorReturnCode::PP_OK;
+    strm.next_in = reinterpret_cast<char*>(next_in);
 
-    strm.avail_out = CHUNK;
-    strm.next_out = reinterpret_cast<char*>(out_buf.data());
+    strm.avail_out = avail_out;
+    if (strm.avail_out == 0) return PrecompProcessorReturnCode::PP_OK;
+    strm.next_out = reinterpret_cast<char*>(next_out);
 
     int ret = BZ2_bzDecompress(&strm);
     if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
@@ -56,7 +57,9 @@ public:
     }
 
     avail_in = strm.avail_in;
-    avail_out = CHUNK - strm.avail_out;
+    next_in = reinterpret_cast<std::byte*>(strm.next_in);
+    avail_out = strm.avail_out;
+    next_out = reinterpret_cast<std::byte*>(strm.next_out);
     return ret == BZ_OK ? PrecompProcessorReturnCode::PP_OK : PrecompProcessorReturnCode::PP_STREAM_END;
   }
 

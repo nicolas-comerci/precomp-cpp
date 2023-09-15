@@ -532,6 +532,9 @@ int compress_file_impl(Precomp& precomp_mgr) {
   const auto& format_handlers2 = precomp_mgr.get_format_handlers2();
   precomp_mgr.ctx->uncompressed_bytes_total = 0;
 
+  std::vector<std::byte> in_buf{};
+  std::vector<std::byte> out_buf{};
+
   precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
   precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
@@ -609,9 +612,22 @@ int compress_file_impl(Precomp& precomp_mgr) {
           long long decompressed_stream_size = 0;
 
           PrecompProcessorReturnCode ret;
+          out_buf.resize(CHUNK);
+          precompressor->next_out = out_buf.data();
+          precompressor->avail_out = CHUNK;
+          in_buf.resize(CHUNK);
+          precompressor->next_in = in_buf.data();
+          precompressor->avail_in = 0;
           while (true) {
-            precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precompressor->in_buf.data()), CHUNK);
-            precompressor->avail_in = precomp_mgr.ctx->fin->gcount();
+            // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
+            if (precompressor->avail_in > 0) {
+              // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
+              std::memmove(in_buf.data(), precompressor->next_in, precompressor->avail_in);
+            }
+            const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + precompressor->avail_in);
+            precomp_mgr.ctx->fin->read(in_buf_ptr, CHUNK - precompressor->avail_in);
+            precompressor->avail_in += precomp_mgr.ctx->fin->gcount();
+            precompressor->next_in = in_buf.data();
             const auto avail_in_before = precompressor->avail_in;
             if (precomp_mgr.ctx->fin->bad()) break;
 
@@ -622,11 +638,15 @@ int compress_file_impl(Precomp& precomp_mgr) {
             // and shouldn't be counted towards the stream's size
             compressed_stream_size += (avail_in_before - precompressor->avail_in);
 
-            const auto decompressed_chunk_size = precompressor->avail_out;
+            const auto decompressed_chunk_size = CHUNK - precompressor->avail_out;
             decompressed_stream_size += decompressed_chunk_size;
-            precompressed->write(reinterpret_cast<char*>(precompressor->out_buf.data()), decompressed_chunk_size);
+            precompressed->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
+
             if (precompressed->bad()) break;
             if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+
+            precompressor->next_out = out_buf.data();
+            precompressor->avail_out = CHUNK;
           }
 
           if (ret == PP_STREAM_END) {

@@ -217,9 +217,9 @@ protected:
 
 public:
   uint32_t avail_in = 0;
-  std::array<std::byte, CHUNK> in_buf{};
+  std::byte* next_in = nullptr;
   uint32_t avail_out = 0;
-  std::array<std::byte, CHUNK> out_buf{};
+  std::byte* next_out = nullptr;
 
   PrecompFormatPrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatPrecompressor() = default;
