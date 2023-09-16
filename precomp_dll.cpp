@@ -618,6 +618,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           in_buf.resize(CHUNK);
           precompressor->next_in = in_buf.data();
           precompressor->avail_in = 0;
+          bool partial_stream = false;
           while (true) {
             // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
             if (precompressor->avail_in > 0) {
@@ -626,17 +627,22 @@ int compress_file_impl(Precomp& precomp_mgr) {
             }
             const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + precompressor->avail_in);
             precomp_mgr.ctx->fin->read(in_buf_ptr, CHUNK - precompressor->avail_in);
-            precompressor->avail_in += precomp_mgr.ctx->fin->gcount();
+            const auto read_amt = precomp_mgr.ctx->fin->gcount();
+            if (read_amt == 0) {
+              partial_stream = true;
+              break;
+            }
+            precompressor->avail_in += read_amt;
             precompressor->next_in = in_buf.data();
-            const auto avail_in_before = precompressor->avail_in;
             if (precomp_mgr.ctx->fin->bad()) break;
 
+            const auto avail_in_before_process = precompressor->avail_in;
             ret = precompressor->process();
             if (ret != PP_OK && ret != PP_STREAM_END) break;
 
             // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
             // and shouldn't be counted towards the stream's size
-            compressed_stream_size += (avail_in_before - precompressor->avail_in);
+            compressed_stream_size += (avail_in_before_process - precompressor->avail_in);
 
             const auto decompressed_chunk_size = CHUNK - precompressor->avail_out;
             decompressed_stream_size += decompressed_chunk_size;
@@ -649,7 +655,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
             precompressor->avail_out = CHUNK;
           }
 
-          if (ret == PP_STREAM_END) {
+          if ((ret == PP_STREAM_END || partial_stream) && decompressed_stream_size > 0) {  // TODO: set reasonable lower limit for decompressed_stream_size
             precomp_mgr.statistics.decompressed_streams_count++;
             precomp_mgr.statistics.decompressed_bzip2_count++;
 
