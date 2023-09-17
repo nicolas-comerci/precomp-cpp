@@ -46,14 +46,14 @@ public:
                       const uint32_t paddingBits);
 
   bool analyze();
-  bool encode();
+  bool encode(OutputStream& output);
   uint32_t id() {
     return metaBlockId;
   }
 
 private:
   Handler& handler;
-  uint32_t metaBlockId;
+  const uint32_t metaBlockId;
   std::vector<PreflateTokenBlock> tokenData;
   std::vector<uint8_t> uncompressedData;
   size_t uncompressedOffset;

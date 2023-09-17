@@ -92,7 +92,7 @@ bool PreflateDecoderTask::analyze() {
   return true;
 }
 
-bool PreflateDecoderTask::encode() {
+bool PreflateDecoderTask::encode(OutputStream& output) {
   PreflatePredictionEncoder pcodec;
   unsigned modelId = handler.setModel(counter, params);
   if (!handler.beginEncoding(metaBlockId, pcodec, modelId)) {
@@ -118,7 +118,16 @@ bool PreflateDecoderTask::encode() {
       }
     }
   }
-  return handler.endEncoding(metaBlockId, pcodec, uncompressedData.size() - uncompressedOffset);
+  bool endEncodingSuccess =  handler.endEncoding(metaBlockId, pcodec, uncompressedData.size() - uncompressedOffset);
+  // Only output uncompressed data if everything worked okay, to ensure client code doesn't end up with useless decompressed data
+  if (endEncodingSuccess) {
+    // If and only if the first metablock is also the last one, the uncompressedData vector's full data should be outputted,
+    // in any other case an extra 1 << 15 bytes have been appended at the end and should be omitted
+    const auto uncompressedDataSize = lastMetaBlock ? uncompressedData.size() : uncompressedData.size() - (1 << 15);
+    output.write(uncompressedData.data(), uncompressedDataSize);
+  }
+
+  return endEncodingSuccess;
 }
 
 bool preflate_decode(OutputStream& unpacked_output,
@@ -132,7 +141,8 @@ bool preflate_decode(OutputStream& unpacked_output,
   uint64_t deflate_bits = 0;
   size_t prevBitPos = 0;
   BitInputStream decInBits(deflate_raw);
-  OutputCacheStream decOutCache(unpacked_output);
+  MemStream decUnc;
+  OutputCacheStream decOutCache(decUnc);
   PreflateBlockDecoder bdec(decInBits, decOutCache);
   if (bdec.status() != PreflateBlockDecoder::OK) {
     return false;
@@ -150,7 +160,7 @@ bool preflate_decode(OutputStream& unpacked_output,
   size_t MBcount = 0;
 
   std::queue<std::future<std::shared_ptr<PreflateDecoderTask>>> futureQueue;
-  size_t queueLimit = std::min(2 * globalTaskPool.extraThreadCount(), (1 << 26) / MBThreshold);
+  const size_t queueLimit = std::min(2 * globalTaskPool.extraThreadCount(), (1 << 26) / MBThreshold);
   bool fail = false;
 
   do {
@@ -179,90 +189,95 @@ bool preflate_decode(OutputStream& unpacked_output,
     prevBitPos = decInBits.bitPos();
 
     sumBlockSizes += blockSize;
-    if (last || sumBlockSizes >= MBThreshold) {
-      size_t blockCount, blockSizeSum;
-      if (last) {
-        blockCount = blockSizes.size();
-        blockSizeSum = sumBlockSizes;
-      } else {
-        blockCount = 0;
-        blockSizeSum = 0;
-        for (const auto bs : blockSizes) {
-          blockSizeSum += bs;
-          ++blockCount;
-          if (blockSizeSum >= MBSize) {
-            break;
-          }
+
+    // If there is still more data and we still have space to fill the metablock just go to next iteration and continue decompressing the stream
+    if (!last && sumBlockSizes < MBThreshold) continue;
+
+    // At this point we must finalize a metablock, which means we need to feed both the original compress blocks and the decompressed data to a PreflateDecoderTask,
+    // which will figure out the exact/closest ZLIB parameters + reconstruction data needed to recover the original compressed blocks losslessly
+    size_t blockCount, blockSizeSum;
+    if (last) {
+      blockCount = blockSizes.size();
+      blockSizeSum = sumBlockSizes;
+    } else {
+      blockCount = 0;
+      blockSizeSum = 0;
+      for (const auto bs : blockSizes) {
+        blockSizeSum += bs;
+        ++blockCount;
+        if (blockSizeSum >= MBSize) {
+          break;
         }
       }
-      std::vector<PreflateTokenBlock> blocksForMeta;
-      for (size_t j = 0; j < blockCount; ++j) {
-        blocksForMeta.push_back(std::move(blocks[j]));
+    }
+    std::vector<PreflateTokenBlock> blocksForMeta;
+    for (size_t j = 0; j < blockCount; ++j) {
+      blocksForMeta.push_back(std::move(blocks[j]));
+    }
+    blocks.erase(blocks.begin(), blocks.begin() + blockCount);
+    blockSizes.erase(blockSizes.begin(), blockSizes.begin() + blockCount);
+    sumBlockSizes -= blockSizeSum;
+
+    // WTF is this magic number 1 << 15? I assume it's some overhead/metadata size each meta block adds, confirm and properly document
+    size_t uncompressedOffset = MBcount == 0 ? 0 : 1 << 15;
+
+    std::vector<uint8_t> uncompressedDataForMeta(
+      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset),
+      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset) + blockSizeSum + uncompressedOffset);
+    uncompressedMetaStart += blockSizeSum;
+
+    size_t paddingBits = 0;
+    if (last) {
+      uint8_t remaining_bit_count = (8 - deflate_bits) & 7;
+      paddingBits = decInBits.get(remaining_bit_count);
+
+      deflate_bits += decInBits.bitPos() - prevBitPos;
+      prevBitPos = decInBits.bitPos();
+    }
+    if (futureQueue.empty() && (queueLimit == 0 || last)) {
+      PreflateDecoderTask task(encoder, MBcount,
+                                std::move(blocksForMeta),
+                                std::move(uncompressedDataForMeta),
+                                uncompressedOffset,
+                                last, paddingBits);
+      if (!task.analyze() || !task.encode(unpacked_output)) {
+        fail = true;
+        break;
       }
-      blocks.erase(blocks.begin(), blocks.begin() + blockCount);
-      blockSizes.erase(blockSizes.begin(), blockSizes.begin() + blockCount);
-      sumBlockSizes -= blockSizeSum;
-
-      size_t uncompressedOffset = MBcount == 0 ? 0 : 1 << 15;
-
-      std::vector<uint8_t> uncompressedDataForMeta(
-        decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset),
-        decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset) + blockSizeSum + uncompressedOffset);
-      uncompressedMetaStart += blockSizeSum;
-
-      size_t paddingBits = 0;
-      if (last) {
-        uint8_t remaining_bit_count = (8 - deflate_bits) & 7;
-        paddingBits = decInBits.get(remaining_bit_count);
-
-        deflate_bits += decInBits.bitPos() - prevBitPos;
-        prevBitPos = decInBits.bitPos();
-      }
-      if (futureQueue.empty() && (queueLimit == 0 || last)) {
-        PreflateDecoderTask task(encoder, MBcount,
-                                 std::move(blocksForMeta),
-                                 std::move(uncompressedDataForMeta),
-                                 uncompressedOffset,
-                                 last, paddingBits);
-        if (!task.analyze() || !task.encode()) {
+    } else {
+      if (futureQueue.size() >= queueLimit) {
+        std::future<std::shared_ptr<PreflateDecoderTask>> first = std::move(futureQueue.front());
+        futureQueue.pop();
+        std::shared_ptr<PreflateDecoderTask> data = first.get();
+        if (!data || !data->encode(unpacked_output)) {
           fail = true;
           break;
         }
-      } else {
-        if (futureQueue.size() >= queueLimit) {
-          std::future<std::shared_ptr<PreflateDecoderTask>> first = std::move(futureQueue.front());
-          futureQueue.pop();
-          std::shared_ptr<PreflateDecoderTask> data = first.get();
-          if (!data || !data->encode()) {
-            fail = true;
-            break;
-          }
+      }
+      std::shared_ptr<PreflateDecoderTask> ptask;
+      ptask.reset(new PreflateDecoderTask(encoder, MBcount,
+                                          std::move(blocksForMeta),
+                                          std::move(uncompressedDataForMeta),
+                                          uncompressedOffset,
+                                          last, paddingBits));
+      futureQueue.push(globalTaskPool.addTask([ptask,&fail]() {
+        if (!fail && ptask->analyze()) {
+          return ptask;
+        } else {
+          return std::shared_ptr<PreflateDecoderTask>();
         }
-        std::shared_ptr<PreflateDecoderTask> ptask;
-        ptask.reset(new PreflateDecoderTask(encoder, MBcount,
-                                            std::move(blocksForMeta),
-                                            std::move(uncompressedDataForMeta),
-                                            uncompressedOffset,
-                                            last, paddingBits));
-        futureQueue.push(globalTaskPool.addTask([ptask,&fail]() {
-          if (!fail && ptask->analyze()) {
-            return ptask;
-          } else {
-            return std::shared_ptr<PreflateDecoderTask>();
-          }
-        }));
-      }
-      if (!last) {
-        decOutCache.flushUpTo(uncompressedMetaStart - (1 << 15));
-      }
-      MBcount++;
+      }));
     }
+    if (!last) {
+      decOutCache.flushUpTo(uncompressedMetaStart - (1 << 15));
+    }
+    MBcount++;
   } while (!fail && !last);
   while (!futureQueue.empty()) {
     std::future<std::shared_ptr<PreflateDecoderTask>> first = std::move(futureQueue.front());
     futureQueue.pop();
     std::shared_ptr<PreflateDecoderTask> data = first.get();
-    if (fail || !data || !data->encode()) {
+    if (fail || !data || !data->encode(unpacked_output)) {
       fail = true;
     }
   }

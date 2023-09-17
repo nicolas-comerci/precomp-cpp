@@ -218,11 +218,11 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor {
   std::unique_ptr<PrecompressorOutStream> output_stream;
   std::condition_variable data_flush_needed_cv;
 public:
-  recompress_deflate_result* result;
+  recompress_deflate_result result{};
   uint64_t compressed_stream_size = 0;
 
-  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback, recompress_deflate_result* _result) :
-    PrecompFormatPrecompressor(buffer, _progress_callback), result(_result) {
+  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) :
+    PrecompFormatPrecompressor(buffer, _progress_callback) {
     input_stream = std::make_unique<PrecompressorInputStream>(&mtx, &data_flush_needed_cv, &avail_in, &next_in);
     output_stream = std::make_unique<PrecompressorOutStream>(&mtx, &data_flush_needed_cv, &avail_out, &next_out);
   }
@@ -242,11 +242,11 @@ public:
     if (!started) {
       preflate_thread = std::thread([&]() {
         try {
-          result->accepted = preflate_decode(*output_stream, result->recon_data,
+          result.accepted = preflate_decode(*output_stream, result.recon_data,
           compressed_stream_size, *input_stream, []() {},
           0,
           1 << 21); // you can set a minimum deflate stream size here
-          success = result->accepted;
+          success = result.accepted;
         }
         catch (...) {
           success = false;
@@ -276,9 +276,8 @@ public:
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
   file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
-  recompress_deflate_result result;
   std::vector<unsigned char> fake_checkbuf{};
-  auto precompressor = std::make_unique<DeflatePrecompressor>(fake_checkbuf, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); }, &result);
+  auto precompressor = std::make_unique<DeflatePrecompressor>(fake_checkbuf, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 
   long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
@@ -338,6 +337,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
     precompressor->avail_out = CHUNK;
   }
 
+  recompress_deflate_result result = std::move(precompressor->result);
   result.compressed_stream_size = precompressor->compressed_stream_size;
   result.uncompressed_stream_size = decompressed_stream_size;
 
