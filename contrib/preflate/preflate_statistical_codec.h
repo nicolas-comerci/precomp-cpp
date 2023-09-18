@@ -481,8 +481,7 @@ private:
 
 struct PreflatePredictionDecoder : public PreflatePredictionModel {
   PreflatePredictionDecoder();
-  void start(const PreflatePredictionModel&, const PreflateParameters&, 
-             const std::vector<uint8_t>&, size_t off0, size_t size);
+  void start(const PreflatePredictionModel&, const PreflateParameters&, const std::vector<uint8_t>&);
   void end();
 
   unsigned decodeValue(const unsigned maxBits) {
@@ -548,7 +547,7 @@ private:
 };
 
 struct PreflateMetaEncoder {
-  PreflateMetaEncoder();
+  PreflateMetaEncoder(std::vector<unsigned char>* _reconData);
   ~PreflateMetaEncoder();
 
   bool error() const {
@@ -557,8 +556,7 @@ struct PreflateMetaEncoder {
   unsigned addModel(const PreflateStatisticsCounter&, const PreflateParameters&);
 
   bool beginMetaBlockWithModel(PreflatePredictionEncoder&, const unsigned modelId);
-  bool endMetaBlock(PreflatePredictionEncoder&, const size_t uncompressed);
-  std::vector<unsigned char> finish();
+  bool endMetaBlock(PreflatePredictionEncoder&, const size_t uncompressed, const bool lastMetaBlock);
 
 private:
   struct modelType {
@@ -570,14 +568,14 @@ private:
   };
   struct metaBlockInfo {
     unsigned modelId;
-    size_t reconSize;
     size_t uncompressedSize;
+    std::vector<unsigned char> reconData;
   };
 
   bool inError;
+  bool firstBlock = true;
   std::vector<modelType> modelList;
-  std::vector<metaBlockInfo> blockList;
-  std::vector<uint8_t> reconData;
+  std::vector<unsigned char>* reconData;
 };
 
 struct PreflateMetaDecoder {
@@ -609,8 +607,7 @@ private:
   };
   struct metaBlockInfo {
     unsigned modelId;
-    size_t reconStartOfs;
-    size_t reconSize;
+    std::vector<unsigned char> reconData;
     uint64_t uncompressedStartOfs;
     uint64_t uncompressedSize;
   };

@@ -26,13 +26,9 @@
 
 class PreflateDecoderHandler : public PreflateDecoderTask::Handler {
 public:
-  PreflateDecoderHandler(std::function<void(void)> progressCallback_)
-    : progressCallback(progressCallback_) {}
+  PreflateDecoderHandler(std::function<void(void)> progressCallback_, std::vector<unsigned char>* _reconData)
+    : progressCallback(progressCallback_), encoder(_reconData) {}
 
-  bool finish(std::vector<uint8_t>& reconstructionData) {
-    reconstructionData = encoder.finish();
-    return !encoder.error();
-  }
   bool error() const {
     return encoder.error();
   }
@@ -43,8 +39,8 @@ public:
   virtual bool beginEncoding(const uint32_t metaBlockId, PreflatePredictionEncoder& codec, const uint32_t modelId) {
     return encoder.beginMetaBlockWithModel(codec, modelId);
   }
-  virtual bool endEncoding(const uint32_t metaBlockId, PreflatePredictionEncoder& codec, const size_t uncompressedSize) {
-    return encoder.endMetaBlock(codec, uncompressedSize);
+  virtual bool endEncoding(const uint32_t metaBlockId, PreflatePredictionEncoder& codec, const size_t uncompressedSize, const bool lastMetaBlock) {
+    return encoder.endMetaBlock(codec, uncompressedSize, lastMetaBlock);
   }
   virtual void markProgress() {
     std::unique_lock<std::mutex> lock(this->_mutex);
@@ -118,7 +114,7 @@ bool PreflateDecoderTask::encode(OutputStream& output) {
       }
     }
   }
-  bool endEncodingSuccess =  handler.endEncoding(metaBlockId, pcodec, uncompressedData.size() - uncompressedOffset);
+  bool endEncodingSuccess =  handler.endEncoding(metaBlockId, pcodec, uncompressedData.size() - uncompressedOffset, lastMetaBlock);
   // Only output uncompressed data if everything worked okay, to ensure client code doesn't end up with useless decompressed data
   if (endEncodingSuccess) {
     // If and only if the first metablock is also the last one, the uncompressedData vector's full data should be outputted,
@@ -156,7 +152,7 @@ bool preflate_decode(OutputStream& unpacked_output,
   uint64_t uncompressedMetaStart = 0;
   size_t MBSize = std::min<size_t>(std::max<size_t>(metaBlockSize, 1u << 18), (1u << 31) - 1);
   size_t MBThreshold = (MBSize * 3) >> 1;
-  PreflateDecoderHandler encoder(block_callback);
+  PreflateDecoderHandler encoder(block_callback, &preflate_diff);
   size_t MBcount = 0;
 
   std::queue<std::future<std::shared_ptr<PreflateDecoderTask>>> futureQueue;
@@ -286,7 +282,7 @@ bool preflate_decode(OutputStream& unpacked_output,
   if (deflate_size < min_deflate_size) {
     return false;
   }
-  return !fail && encoder.finish(preflate_diff);
+  return !fail;
 }
 
 bool preflate_decode(std::vector<unsigned char>& unpacked_output,
