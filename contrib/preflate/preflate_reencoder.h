@@ -25,9 +25,8 @@ public:
   class Handler {
   public:
     virtual ~Handler() {}
-    virtual bool beginDecoding(const uint32_t metaBlockId, 
-                               PreflatePredictionDecoder&, PreflateParameters&) = 0;
-    virtual bool endDecoding(const uint32_t metaBlockId, PreflatePredictionDecoder&,
+    virtual bool beginDecoding(const PreflateMetaDecoder::metaBlockInfo& mb, PreflatePredictionDecoder&, PreflateParameters&) = 0;
+    virtual bool endDecoding(const PreflateMetaDecoder::metaBlockInfo& mb, PreflatePredictionDecoder&,
                              std::vector<PreflateTokenBlock>&& tokenData,
                              std::vector<uint8_t>&& uncompressedData, 
                              const size_t uncompressedOffset,
@@ -37,24 +36,18 @@ public:
   };
 
   PreflateReencoderTask(Handler& handler,
-                        const uint32_t metaBlockId,
+                        PreflateMetaDecoder::metaBlockInfo&& mb,
                         std::vector<uint8_t>&& uncompressedData,
-                        const size_t uncompressedOffset,
-                        const bool lastMetaBlock);
+                        const size_t uncompressedOffset);
 
   bool decodeAndRepredict();
   bool reencode();
 
-  uint32_t id() {
-    return metaBlockId;
-  }
-
 private:
   Handler& handler;
-  uint32_t metaBlockId;
+  PreflateMetaDecoder::metaBlockInfo mb;
   std::vector<uint8_t> uncompressedData;
   size_t uncompressedOffset;
-  bool lastMetaBlock;
   std::vector<PreflateTokenBlock> tokenData;
   PreflatePredictionDecoder pcodec;
   size_t paddingBitCount;

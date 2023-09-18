@@ -31,12 +31,7 @@ public:
     , progressCallback(progressCallback_)
     , bos(bos_) {}
 
-  size_t metaBlockCount() const {
-    return decoder.metaBlockCount();
-  }
-  size_t metaBlockUncompressedSize(const size_t metaBlockId) const {
-    return decoder.metaBlockUncompressedSize(metaBlockId);
-  }
+  std::optional<PreflateMetaDecoder::metaBlockInfo> readMetaBlock() { return decoder.readMetaBlock(); }
   bool error() const {
     return decoder.error();
   }
@@ -46,11 +41,10 @@ public:
     return !decoder.error();
   }
 
-  virtual bool beginDecoding(const uint32_t metaBlockId, 
-                             PreflatePredictionDecoder& codec, PreflateParameters& params) {
-    return decoder.beginMetaBlock(codec, params, metaBlockId);
+  virtual bool beginDecoding(const PreflateMetaDecoder::metaBlockInfo& mb, PreflatePredictionDecoder& codec, PreflateParameters& params) {
+    return decoder.beginMetaBlock(codec, params, mb);
   }
-  virtual bool endDecoding(const uint32_t metaBlockId, PreflatePredictionDecoder& codec,
+  virtual bool endDecoding(const PreflateMetaDecoder::metaBlockInfo& mb, PreflatePredictionDecoder& codec,
                            std::vector<PreflateTokenBlock>&& tokenData,
                            std::vector<uint8_t>&& uncompressedData,
                            const size_t uncompressedOffset,
@@ -62,8 +56,7 @@ public:
 
     PreflateBlockReencoder deflater(bos, uncompressedData, uncompressedOffset);
     for (size_t j = 0, n = tokenData.size(); j < n; ++j) {
-      deflater.writeBlock(tokenData[j],
-                          metaBlockId + 1 == decoder.metaBlockCount() && j + 1 == n);
+      deflater.writeBlock(tokenData[j], mb.isLastMetaBlock && j + 1 == n);
       markProgress();
     }
     bos.put(paddingValue, paddingBitCount);
@@ -83,19 +76,17 @@ private:
 };
 
 PreflateReencoderTask::PreflateReencoderTask(PreflateReencoderHandler::Handler& handler_,
-                                             const uint32_t metaBlockId_,
+                                             PreflateMetaDecoder::metaBlockInfo&& mb_,
                                              std::vector<uint8_t>&& uncompressedData_,
-                                             const size_t uncompressedOffset_,
-                                             const bool lastMetaBlock_)
+                                             const size_t uncompressedOffset_)
   : handler(handler_)
-  , metaBlockId(metaBlockId_)
+  , mb(mb_)
   , uncompressedData(uncompressedData_)
-  , uncompressedOffset(uncompressedOffset_)
-  , lastMetaBlock(lastMetaBlock_) {}
+  , uncompressedOffset(uncompressedOffset_) {}
 
 bool PreflateReencoderTask::decodeAndRepredict() {
   PreflateParameters params;
-  if (!handler.beginDecoding(metaBlockId, pcodec, params)) {
+  if (!handler.beginDecoding(mb, pcodec, params)) {
     return false;
   }
   PreflateTokenPredictor tokenPredictor(params, uncompressedData, uncompressedOffset);
@@ -111,7 +102,7 @@ bool PreflateReencoderTask::decodeAndRepredict() {
       return false;
     }
     tokenData.push_back(std::move(block));
-    if (!lastMetaBlock) {
+    if (!mb.isLastMetaBlock) {
       eof = tokenPredictor.inputEOF();
     } else {
       eof = tokenPredictor.decodeEOF(&pcodec);
@@ -120,7 +111,7 @@ bool PreflateReencoderTask::decodeAndRepredict() {
   } while (!eof);
   paddingBitCount = 0;
   paddingBits = 0;
-  if (lastMetaBlock) {
+  if (mb.isLastMetaBlock) {
     bool non_zero_bits = pcodec.decodeNonZeroPadding();
     if (non_zero_bits) {
       paddingBitCount = pcodec.decodeValue(3);
@@ -132,7 +123,7 @@ bool PreflateReencoderTask::decodeAndRepredict() {
   return true;
 }
 bool PreflateReencoderTask::reencode() {
-  return handler.endDecoding(metaBlockId, pcodec, std::move(tokenData),
+  return handler.endDecoding(mb, pcodec, std::move(tokenData),
                              std::move(uncompressedData), uncompressedOffset,
                              paddingBitCount, paddingBits);
 }
@@ -149,22 +140,21 @@ bool preflate_reencode(OutputStream& os,
   }
   std::vector<uint8_t> uncompressedData;
   std::queue<std::future<std::shared_ptr<PreflateReencoderTask>>> futureQueue;
-  size_t maxMetaBlockSize = 1;
-  for (size_t j = 0, n = decoder.metaBlockCount(); j < n; ++j) {
-    maxMetaBlockSize = std::max(maxMetaBlockSize, decoder.metaBlockUncompressedSize(j));
-  }
-  size_t queueLimit = std::min(2 * globalTaskPool.extraThreadCount(), (1 << 26) / maxMetaBlockSize);
+  size_t queueLimit = 2 * globalTaskPool.extraThreadCount();
   bool fail = false;
-  for (size_t j = 0, n = decoder.metaBlockCount(); j < n; ++j) {
+  size_t j = 0;
+  while (auto mb_optional = decoder.readMetaBlock()) {
+    auto& mb = *mb_optional;
     size_t curUncSize = uncompressedData.size();
-    size_t newSize = decoder.metaBlockUncompressedSize(j);
+    size_t newSize = mb.uncompressedSize;
     uncompressedData.resize(curUncSize + newSize);
     if (is.read(uncompressedData.data() + curUncSize, newSize) != newSize) {
       return false;
     }
 
-    if (futureQueue.empty() && (queueLimit == 0 || j + 1 == n)) {
-      PreflateReencoderTask task(decoder, j, std::vector<uint8_t>(uncompressedData), curUncSize, j + 1 == n);
+    bool isLastMetaBlock = mb.isLastMetaBlock;
+    if (futureQueue.empty() && (queueLimit == 0 || isLastMetaBlock)) {
+      PreflateReencoderTask task(decoder, std::move(mb), std::vector<uint8_t>(uncompressedData), curUncSize);
       if (!task.decodeAndRepredict() || !task.reencode()) {
         return false;
       }
@@ -178,8 +168,7 @@ bool preflate_reencode(OutputStream& os,
         }
       }
       std::shared_ptr<PreflateReencoderTask> ptask;
-      ptask.reset(new PreflateReencoderTask(decoder, j, std::vector<uint8_t>(uncompressedData),
-                                            curUncSize, j + 1 == n));
+      ptask.reset(new PreflateReencoderTask(decoder, std::move(mb), std::vector<uint8_t>(uncompressedData), curUncSize));
       futureQueue.push(globalTaskPool.addTask([ptask, &fail]() {
         if (!fail && ptask->decodeAndRepredict()) {
           return ptask;
@@ -189,10 +178,11 @@ bool preflate_reencode(OutputStream& os,
       }));
     }
 
-    if (j + 1 < n) {
+    if (!isLastMetaBlock) {
       uncompressedData.erase(uncompressedData.begin(),
                              uncompressedData.begin() + std::max<size_t>(uncompressedData.size(), 1 << 15) - (1 << 15));
     }
+    j++;
   }
   while (!futureQueue.empty()) {
     std::future<std::shared_ptr<PreflateReencoderTask>> first = std::move(futureQueue.front());

@@ -676,119 +676,110 @@ bool PreflateMetaEncoder::endMetaBlock(PreflatePredictionEncoder& encoder, const
   return true;
 }
 
-PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData_, const uint64_t uncompressedSize_)
+PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize_)
   : inError(false)
-  , reconData(reconData_)
+  , reconDataMem(reconData)
+  , reconDataBIS(reconDataMem)
   , uncompressedSize(uncompressedSize_) {
   if (reconData.size() == 0) {
     inError = true;
     return;
   }
-  MemStream mem(reconData);
-  BitInputStream bis(mem);
-  bool extension = bis.get(1);
-  if (extension) {
-    inError = true;
-    return;
-  }
-  enum Mode {
-    CREATE_NEW_MODEL /*, REUSE_LAST_MODEL, REUSE_PREVIOUS_MODEL*/
-  };
-  bool firstBlock = true;
-  while (!bis.eof()) {
-    metaBlockInfo mb;
-    Mode mode = CREATE_NEW_MODEL;
-
-    if (!firstBlock) {
-      mode = static_cast<Mode>(bis.get(2));
-      if (mode != CREATE_NEW_MODEL) { // must create new model for the moment
-        inError = true;
-        return;
-      }
-    }
-    firstBlock = false;
-
-    switch (mode) {
-    case CREATE_NEW_MODEL:
-    {
-      modelType mt;
-      memset(&mt, 0, sizeof(mt));
-      bool perfectZLIB = bis.get(1) == 0;
-      mt.params.compLevel = bis.get(4);
-      mt.params.memLevel = bis.get(4);
-      mt.params.windowBits = bis.get(3) + 8;
-      if (perfectZLIB) {
-        mt.params.zlibCompatible = true;
-        mt.mcodec.blockFullDefault = true;
-        mt.mcodec.treecodeFullDefault = true;
-        mt.mcodec.tokenFullDefault = true;
-        mt.model.readFromStream(mt.mcodec); // initialize with default model
-      } else {
-        mt.params.zlibCompatible = bis.get(1);
-        if (!mt.params.zlibCompatible) {
-          mt.params.veryFarMatchesDetected = bis.get(1);
-          mt.params.matchesToStartDetected = bis.get(1);
-        }
-        mt.params.log2OfMaxChainDepthM1 = bis.get(4);
-        // read length (vli) and model data
-        size_t res_size = bis.getVLI();
-        // interpret model data
-        {
-          MemStream tmp_mem;
-          bis.copyBytesTo(tmp_mem, res_size);
-          tmp_mem.seek(0);
-          BitInputStream tmp_bis(tmp_mem);
-          ArithmeticDecoder tmp_codec(tmp_bis);
-          mt.mcodec.readFromStream(tmp_codec);
-          mt.model.setDecoderStream(&tmp_codec);
-          mt.model.readFromStream(mt.mcodec);
-          mt.model.setDecoderStream(nullptr);
-        }
-      }
-      mb.modelId = modelList.size();
-      modelList.push_back(mt);
-      break;
-    }
-    }
-    const auto reconSize = bis.getVLI();
-    mb.uncompressedSize = bis.getVLI();
-    if (reconSize > 0) {
-      MemStream tmp_recon_mem;
-      bis.copyBytesTo(tmp_recon_mem, reconSize);
-      mb.reconData = tmp_recon_mem.extractData();
-    }
-    blockList.push_back(mb);
-  }
-  bis.skipToByte();
-
-  size_t reconStart = bis.bitPos() >> 3;
-  uint64_t uncStart = 0;
-  for (auto& mb : blockList) {
-    mb.uncompressedStartOfs = uncStart;
-    reconStart += mb.reconData.size();
-    uncStart += mb.uncompressedSize;
-    if (uncStart > uncompressedSize) {
-      inError = true;
-      return;
-    }
-    if (mb.uncompressedSize == 0) {  // this should only happen for the last block
-      mb.uncompressedSize = uncompressedSize - mb.uncompressedStartOfs;
-    }
-  }
 }
 PreflateMetaDecoder::~PreflateMetaDecoder() {}
 
-bool PreflateMetaDecoder::beginMetaBlock(PreflatePredictionDecoder& decoder, PreflateParameters& params, const size_t index) {
-  if (index >= blockList.size()) {
-    return false;
+std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaBlock() {
+  if (reconDataBIS.eof()) return std::nullopt;
+
+  enum Mode {
+    CREATE_NEW_MODEL /*, REUSE_LAST_MODEL, REUSE_PREVIOUS_MODEL*/
+  };
+  Mode mode = CREATE_NEW_MODEL;
+
+  if (firstBlock) {
+    firstBlock = false;
+    bool extension = reconDataBIS.get(1);
+    if (extension) {
+      inError = true;
+      return std::nullopt;
+    }
   }
-  const auto& mb = blockList[index];
-  if (mb.modelId >= modelList.size()) {
-    return false;
+  else {
+    mode = static_cast<Mode>(reconDataBIS.get(2));
+    if (mode != CREATE_NEW_MODEL) { // must create new model for the moment
+      inError = true;
+      return std::nullopt;
+    }
   }
-  const auto& model = modelList[mb.modelId];
-  params = model.params;
-  decoder.start(model.model, model.params, mb.reconData);
+
+  metaBlockInfo mb;
+  modelType& mt = mb.mt;
+  memset(&mb.mt, 0, sizeof(mb.mt));
+
+  switch (mode) {
+  case CREATE_NEW_MODEL:
+  {
+    bool perfectZLIB = reconDataBIS.get(1) == 0;
+    mt.params.compLevel = reconDataBIS.get(4);
+    mt.params.memLevel = reconDataBIS.get(4);
+    mt.params.windowBits = reconDataBIS.get(3) + 8;
+    if (perfectZLIB) {
+      mt.params.zlibCompatible = true;
+      mt.mcodec.blockFullDefault = true;
+      mt.mcodec.treecodeFullDefault = true;
+      mt.mcodec.tokenFullDefault = true;
+      mt.model.readFromStream(mt.mcodec); // initialize with default model
+    }
+    else {
+      mt.params.zlibCompatible = reconDataBIS.get(1);
+      if (!mt.params.zlibCompatible) {
+        mt.params.veryFarMatchesDetected = reconDataBIS.get(1);
+        mt.params.matchesToStartDetected = reconDataBIS.get(1);
+      }
+      mt.params.log2OfMaxChainDepthM1 = reconDataBIS.get(4);
+      // read length (vli) and model data
+      size_t res_size = reconDataBIS.getVLI();
+      // interpret model data
+      {
+        MemStream tmp_mem;
+        reconDataBIS.copyBytesTo(tmp_mem, res_size);
+        tmp_mem.seek(0);
+        BitInputStream tmp_bis(tmp_mem);
+        ArithmeticDecoder tmp_codec(tmp_bis);
+        mt.mcodec.readFromStream(tmp_codec);
+        mt.model.setDecoderStream(&tmp_codec);
+        mt.model.readFromStream(mt.mcodec);
+        mt.model.setDecoderStream(nullptr);
+      }
+    }
+    break;
+  }
+  }
+  const auto reconSize = reconDataBIS.getVLI();
+  mb.uncompressedSize = reconDataBIS.getVLI();
+  if (reconSize > 0) {
+    MemStream tmp_recon_mem;
+    reconDataBIS.copyBytesTo(tmp_recon_mem, reconSize);
+    mb.reconData = tmp_recon_mem.extractData();
+  }
+  mb.uncompressedStartOfs = uncompressedDataPos;
+  uncompressedDataPos += mb.uncompressedSize;
+  mb.isLastMetaBlock = false;
+  if (uncompressedDataPos > uncompressedSize) {
+    inError = true;
+    return std::nullopt;
+  }
+  if (mb.uncompressedSize == 0) {  // this should only happen for the last block
+    mb.uncompressedSize = uncompressedSize - mb.uncompressedStartOfs;
+    mb.isLastMetaBlock = true;
+  }
+
+  return mb;
+};
+
+bool PreflateMetaDecoder::beginMetaBlock(PreflatePredictionDecoder& decoder, PreflateParameters& params, const PreflateMetaDecoder::metaBlockInfo& mb) {
+  params = mb.mt.params;
+  decoder.start(mb.mt.model, mb.mt.params, mb.reconData);
   return true;
 }
 bool PreflateMetaDecoder::endMetaBlock(PreflatePredictionDecoder& decoder) {

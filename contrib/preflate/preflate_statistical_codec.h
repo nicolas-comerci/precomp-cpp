@@ -16,6 +16,7 @@
 #define PREFLATE_STATISTICAL_CODEC_H
 
 #include <vector>
+#include <optional>
 #include "support/arithmetic_coder.h"
 #include "support/bit_helper.h"
 #include "support/bitstream.h"
@@ -578,46 +579,42 @@ private:
   std::vector<unsigned char>* reconData;
 };
 
-struct PreflateMetaDecoder {
-  PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize);
-  ~PreflateMetaDecoder();
-
-  bool error() const {
-    return inError;
-  }
-  size_t metaBlockCount() const {
-    return blockList.size();
-  }
-  uint64_t metaBlockUncompressedStartOfs(const size_t metaBlockId) const {
-    return blockList[metaBlockId].uncompressedStartOfs;
-  }
-  size_t metaBlockUncompressedSize(const size_t metaBlockId) const {
-    return blockList[metaBlockId].uncompressedSize;
-  }
-
-  bool beginMetaBlock(PreflatePredictionDecoder&, PreflateParameters&, const size_t index);
-  bool endMetaBlock(PreflatePredictionDecoder&);
-  void finish();
-
-private:
+class PreflateMetaDecoder {
+public:
   struct modelType {
     PreflatePredictionModel model;
     PreflateParameters params;
     PreflateModelCodec mcodec;
   };
   struct metaBlockInfo {
-    unsigned modelId;
+    modelType mt;
     std::vector<unsigned char> reconData;
+    bool isLastMetaBlock;
     uint64_t uncompressedStartOfs;
     uint64_t uncompressedSize;
   };
 
+private:
   bool inError;
+  bool firstBlock = true;
 
-  const std::vector<uint8_t>& reconData;
+  MemStream reconDataMem;
+  BitInputStream reconDataBIS;
   const uint64_t uncompressedSize;
-  std::vector<modelType> modelList;
-  std::vector<metaBlockInfo> blockList;
+  uint64_t uncompressedDataPos = 0;
+
+public:
+  PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize);
+  ~PreflateMetaDecoder();
+
+  bool error() const {
+    return inError;
+  }
+
+  std::optional<metaBlockInfo> readMetaBlock();
+  bool beginMetaBlock(PreflatePredictionDecoder&, PreflateParameters&, const PreflateMetaDecoder::metaBlockInfo& mb);
+  bool endMetaBlock(PreflatePredictionDecoder&);
+  void finish();  
 };
 
 bool isEqual(const PreflatePredictionModel&, const PreflatePredictionModel&);
