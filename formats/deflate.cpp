@@ -242,10 +242,14 @@ public:
     if (!started) {
       preflate_thread = std::thread([&]() {
         try {
-          result.accepted = preflate_decode(*output_stream, result.recon_data,
-          compressed_stream_size, *input_stream, []() {},
-          0,
-          1 << 21); // you can set a minimum deflate stream size here
+          result.accepted = preflate_decode(
+            *output_stream,
+            result.recon_data,
+            compressed_stream_size,
+            *input_stream,
+            []() {},
+            1 << 21
+          );
           success = result.accepted;
         }
         catch (...) {

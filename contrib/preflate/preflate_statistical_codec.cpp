@@ -678,7 +678,7 @@ bool PreflateMetaEncoder::endMetaBlock(PreflatePredictionEncoder& encoder, const
 
 PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize_)
   : inError(false)
-  , reconDataMem(reconData)
+  , reconDataMem(&reconData)
   , reconDataBIS(reconDataMem)
   , uncompressedSize(uncompressedSize_) {
   if (reconData.size() == 0) {

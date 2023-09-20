@@ -598,7 +598,7 @@ private:
   bool inError;
   bool firstBlock = true;
 
-  MemStream reconDataMem;
+  BorrowedMemStreamReadOnly<uint8_t> reconDataMem;
   BitInputStream reconDataBIS;
   const uint64_t uncompressedSize;
   uint64_t uncompressedDataPos = 0;

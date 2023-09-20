@@ -16,41 +16,13 @@
 #include <string.h>
 #include "memstream.h"
 
-MemStream::MemStream() : _pos(0) {}
-MemStream::MemStream(const std::vector<uint8_t>& content)
-  : _data(content)
-  , _pos(0) {}
+MemStream::MemStream(): BorrowedMemStream(nullptr) {
+  _pos = 0;
+  _data = &_owned_data;
+}
 MemStream::MemStream(const std::vector<uint8_t>& content, const size_t off, const size_t sz)
-  : _data(std::max(std::min(content.size(), off + sz), off) - off)
-  , _pos(0) {
-  memcpy(_data.data(), content.data() + off, _data.size());
-}
-
-bool MemStream::eof() const {
-  return _pos == _data.size();
-}
-size_t MemStream::read(unsigned char* buffer, const size_t size) {
-  size_t toCopy = std::min(size, _data.size() - _pos);
-  memcpy(buffer, _data.data() + _pos, toCopy);
-  _pos += toCopy;
-  return toCopy;
-}
-
-size_t MemStream::write(const unsigned char* buffer, const size_t size) {
-  size_t remaining = _data.size() - _pos;
-  if (size > remaining) {
-    _data.resize(_pos + size);
-  }
-  memcpy(_data.data() + _pos, buffer, size);
-  _pos += size;
-  return size;
-}
-
-uint64_t MemStream::tell() const {
-  return _pos;
-}
-uint64_t MemStream::seek(const uint64_t newPos) {
-  size_t oldPos = _pos;
-  _pos = std::min(newPos, (uint64_t)_data.size());
-  return oldPos;
+  : BorrowedMemStream(nullptr), _owned_data(std::max(std::min(content.size(), off + sz), off) - off) {
+  _pos = 0;
+  memcpy(_owned_data.data(), content.data() + off, _owned_data.size());
+  _data = &_owned_data;
 }

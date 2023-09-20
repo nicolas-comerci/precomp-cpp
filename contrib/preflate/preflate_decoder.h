@@ -71,7 +71,6 @@ bool preflate_decode(OutputStream& unpacked_output,
                      uint64_t& deflate_size,
                      InputStream& deflate_raw,
                      std::function<void(void)> block_callback,
-                     const size_t min_deflate_size,
                      const size_t metaBlockSize = INT32_MAX);
 
 bool preflate_decode(std::vector<unsigned char>& unpacked_output,
@@ -84,7 +83,6 @@ bool preflate_decode(std::vector<unsigned char>& unpacked_output,
                      uint64_t& deflate_size,
                      InputStream& deflate_raw,
                      std::function<void (void)> block_callback,
-                     const size_t min_deflate_size,
                      const size_t metaBlockSize = INT32_MAX);
 
 #endif /* PREFLATE_DECODER_H */

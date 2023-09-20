@@ -131,7 +131,6 @@ bool preflate_decode(OutputStream& unpacked_output,
                      uint64_t& deflate_size,
                      InputStream& deflate_raw,
                      std::function<void(void)> block_callback,
-                     const size_t min_deflate_size,
                      const size_t metaBlockSize) {
   deflate_size = 0;
   uint64_t deflate_bits = 0;
@@ -145,9 +144,8 @@ bool preflate_decode(OutputStream& unpacked_output,
   }
   bool last;
   unsigned i = 0;
-  std::vector<PreflateTokenBlock> blocks;
-  std::vector<uint32_t> blockSizes;
-  uint64_t sumBlockSizes = 0;
+  std::vector<std::tuple<PreflateTokenBlock, uint32_t, uint64_t>> blocks; // (PreflateTokenBlock, blockDecSize, original byte count that can be restored up to with that block)
+  uint64_t sumBlockDecSizes = 0;
   uint64_t lastEndPos = 0;
   uint64_t uncompressedMetaStart = 0;
   size_t MBSize = std::min<size_t>(std::max<size_t>(metaBlockSize, 1u << 18), (1u << 31) - 1);
@@ -155,7 +153,7 @@ bool preflate_decode(OutputStream& unpacked_output,
   PreflateDecoderHandler encoder(block_callback, &preflate_diff);
   size_t MBcount = 0;
 
-  std::queue<std::future<std::shared_ptr<PreflateDecoderTask>>> futureQueue;
+  std::queue<std::future<std::tuple<std::shared_ptr<PreflateDecoderTask>, uint64_t>>> futureQueue;
   const size_t queueLimit = std::min(2 * globalTaskPool.extraThreadCount(), (1 << 26) / MBThreshold);
   bool fail = false;
 
@@ -168,59 +166,16 @@ bool preflate_decode(OutputStream& unpacked_output,
       break;
     }
 
-    uint64_t blockSize = decOutCache.cacheEndPos() - lastEndPos;
+    uint64_t blockDecSize = decOutCache.cacheEndPos() - lastEndPos;
     lastEndPos = decOutCache.cacheEndPos();
-    if (blockSize >= (1 << 31)) {
+    if (blockDecSize >= (1 << 31)) {
       // No mega blocks
       fail = true;
       break;
     }
 
-    blocks.push_back(newBlock);
-    blockSizes.push_back(blockSize);
-    ++i;
-    block_callback();
-
     deflate_bits += decInBits.bitPos() - prevBitPos;
     prevBitPos = decInBits.bitPos();
-
-    sumBlockSizes += blockSize;
-
-    // If there is still more data and we still have space to fill the metablock just go to next iteration and continue decompressing the stream
-    if (!last && sumBlockSizes < MBThreshold) continue;
-
-    // At this point we must finalize a metablock, which means we need to feed both the original compress blocks and the decompressed data to a PreflateDecoderTask,
-    // which will figure out the exact/closest ZLIB parameters + reconstruction data needed to recover the original compressed blocks losslessly
-    size_t blockCount, blockSizeSum;
-    if (last) {
-      blockCount = blockSizes.size();
-      blockSizeSum = sumBlockSizes;
-    } else {
-      blockCount = 0;
-      blockSizeSum = 0;
-      for (const auto bs : blockSizes) {
-        blockSizeSum += bs;
-        ++blockCount;
-        if (blockSizeSum >= MBSize) {
-          break;
-        }
-      }
-    }
-    std::vector<PreflateTokenBlock> blocksForMeta;
-    for (size_t j = 0; j < blockCount; ++j) {
-      blocksForMeta.push_back(std::move(blocks[j]));
-    }
-    blocks.erase(blocks.begin(), blocks.begin() + blockCount);
-    blockSizes.erase(blockSizes.begin(), blockSizes.begin() + blockCount);
-    sumBlockSizes -= blockSizeSum;
-
-    // WTF is this magic number 1 << 15? I assume it's some overhead/metadata size each meta block adds, confirm and properly document
-    size_t uncompressedOffset = MBcount == 0 ? 0 : 1 << 15;
-
-    std::vector<uint8_t> uncompressedDataForMeta(
-      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset),
-      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset) + blockSizeSum + uncompressedOffset);
-    uncompressedMetaStart += blockSizeSum;
 
     size_t paddingBits = 0;
     if (last) {
@@ -230,6 +185,51 @@ bool preflate_decode(OutputStream& unpacked_output,
       deflate_bits += decInBits.bitPos() - prevBitPos;
       prevBitPos = decInBits.bitPos();
     }
+
+    blocks.push_back({ newBlock, blockDecSize, deflate_bits  >> 3 });
+    ++i;
+    block_callback();
+
+    sumBlockDecSizes += blockDecSize;
+
+    // If there is still more data and we still have space to fill the metablock just go to next iteration and continue decompressing the stream
+    if (!last && sumBlockDecSizes < MBThreshold) continue;
+
+    // At this point we must finalize a metablock, which means we need to feed both the original compress blocks and the decompressed data to a PreflateDecoderTask,
+    // which will figure out the exact/closest ZLIB parameters + reconstruction data needed to recover the original compressed blocks losslessly
+    size_t blockCount, blockDecSizeSum, deflateSizeSum;
+    if (last) {
+      blockCount = blocks.size();
+      blockDecSizeSum = sumBlockDecSizes;
+      deflateSizeSum = std::get<2>(blocks.back());
+    } else {
+      blockCount = 0;
+      blockDecSizeSum = 0;
+      deflateSizeSum = 0;
+      for (const auto& block : blocks) {
+        blockDecSizeSum += std::get<1>(block);
+        deflateSizeSum = std::get<2>(block);
+        ++blockCount;
+        if (blockDecSizeSum >= MBSize) {
+          break;
+        }
+      }
+    }
+    std::vector<PreflateTokenBlock> blocksForMeta;
+    for (size_t j = 0; j < blockCount; ++j) {
+      blocksForMeta.push_back(std::move(std::get<0>(blocks[j])));
+    }
+    blocks.erase(blocks.begin(), blocks.begin() + blockCount);
+    sumBlockDecSizes -= blockDecSizeSum;
+
+    // WTF is this magic number 1 << 15? I assume it's some overhead/metadata size each meta block adds, confirm and properly document
+    size_t uncompressedOffset = MBcount == 0 ? 0 : 1 << 15;
+
+    std::vector<uint8_t> uncompressedDataForMeta(
+      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset),
+      decOutCache.cacheData(uncompressedMetaStart - uncompressedOffset) + blockDecSizeSum + uncompressedOffset);
+    uncompressedMetaStart += blockDecSizeSum;
+    
     if (futureQueue.empty() && (queueLimit == 0 || last)) {
       PreflateDecoderTask task(encoder, MBcount,
                                 std::move(blocksForMeta),
@@ -240,15 +240,17 @@ bool preflate_decode(OutputStream& unpacked_output,
         fail = true;
         break;
       }
+      deflate_size = deflateSizeSum;
     } else {
       if (futureQueue.size() >= queueLimit) {
-        std::future<std::shared_ptr<PreflateDecoderTask>> first = std::move(futureQueue.front());
+        auto first = std::move(futureQueue.front());
         futureQueue.pop();
-        std::shared_ptr<PreflateDecoderTask> data = first.get();
+        auto [data, deflate_size_sum] = first.get();
         if (!data || !data->encode(unpacked_output)) {
           fail = true;
           break;
         }
+        deflate_size = deflate_size_sum;
       }
       std::shared_ptr<PreflateDecoderTask> ptask;
       ptask.reset(new PreflateDecoderTask(encoder, MBcount,
@@ -256,11 +258,11 @@ bool preflate_decode(OutputStream& unpacked_output,
                                           std::move(uncompressedDataForMeta),
                                           uncompressedOffset,
                                           last, paddingBits));
-      futureQueue.push(globalTaskPool.addTask([ptask,&fail]() {
+      futureQueue.push(globalTaskPool.addTask([ptask,&fail,deflateSizeSum]() -> std::tuple<std::shared_ptr<PreflateDecoderTask>, uint64_t> {
         if (!fail && ptask->analyze()) {
-          return ptask;
+          return { ptask, deflateSizeSum };
         } else {
-          return std::shared_ptr<PreflateDecoderTask>();
+          return { std::shared_ptr<PreflateDecoderTask>(), 0 };
         }
       }));
     }
@@ -270,18 +272,17 @@ bool preflate_decode(OutputStream& unpacked_output,
     MBcount++;
   } while (!fail && !last);
   while (!futureQueue.empty()) {
-    std::future<std::shared_ptr<PreflateDecoderTask>> first = std::move(futureQueue.front());
+    auto first = std::move(futureQueue.front());
     futureQueue.pop();
-    std::shared_ptr<PreflateDecoderTask> data = first.get();
+    auto [data, deflate_size_sum] = first.get();
     if (fail || !data || !data->encode(unpacked_output)) {
       fail = true;
+      break;
     }
+    deflate_size = deflate_size_sum;
   }
   decOutCache.flush();
-  deflate_size = (deflate_bits + 7) >> 3;
-  if (deflate_size < min_deflate_size) {
-    return false;
-  }
+  if (!fail) deflate_size = (deflate_bits + 7) >> 3; // Complete any missing bits to get a whole size in bytes
   return !fail;
 }
 
@@ -290,11 +291,9 @@ bool preflate_decode(std::vector<unsigned char>& unpacked_output,
                      uint64_t& deflate_size,
                      InputStream& deflate_raw,
                      std::function<void(void)> block_callback,
-                     const size_t min_deflate_size,
                      const size_t metaBlockSize) {
   MemStream uncompressedOutput;
-  bool result = preflate_decode(uncompressedOutput, preflate_diff, deflate_size, deflate_raw,
-                                block_callback, min_deflate_size, metaBlockSize);
+  bool result = preflate_decode(uncompressedOutput, preflate_diff, deflate_size, deflate_raw, block_callback, metaBlockSize);
   unpacked_output = uncompressedOutput.extractData();
   return result;
 }
@@ -305,7 +304,6 @@ bool preflate_decode(std::vector<unsigned char>& unpacked_output,
                      const size_t metaBlockSize) {
   MemStream mem(deflate_raw);
   uint64_t raw_size;
-  return preflate_decode(unpacked_output, preflate_diff,
-                         raw_size, mem, [] {}, 0, metaBlockSize) 
+  return preflate_decode(unpacked_output, preflate_diff, raw_size, mem, [] {}, metaBlockSize) 
           && raw_size == deflate_raw.size();
 }
