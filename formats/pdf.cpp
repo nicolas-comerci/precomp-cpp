@@ -212,8 +212,8 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
       result->rdres = std::move(rdres);
     }
     else {
-      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_pos - 2);
-      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].insert(deflate_stream_pos);
+      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_pos - 2);
+      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }

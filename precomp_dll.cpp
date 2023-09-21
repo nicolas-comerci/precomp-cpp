@@ -558,9 +558,10 @@ int compress_file_impl(Precomp& precomp_mgr) {
     auto cb_pos = input_file_pos - in_buf_pos;
     checkbuf = std::span(&precomp_mgr.ctx->in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
 
-    ignore_this_pos = precomp_mgr.switches.ignore_set.find(input_file_pos) != precomp_mgr.switches.ignore_set.end();
+    ignore_this_pos = !precomp_mgr.switches.ignore_pos_queue.empty() && input_file_pos == precomp_mgr.switches.ignore_pos_queue.front();
 
-    if (!ignore_this_pos) {
+    if (ignore_this_pos) { precomp_mgr.switches.ignore_pos_queue.pop(); }
+    else {
       for (const auto& formatHandler : format_handlers2) {
         // Recursion depth check
         if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
@@ -568,22 +569,19 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // Position blacklist check
         bool ignore_this_position = false;
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        auto ignoreListIt = precomp_mgr.ctx->ignore_offsets.find(formatTag);
-        if (ignoreListIt != precomp_mgr.ctx->ignore_offsets.cend()) {
-          auto& ignore_offsets_set = (*ignoreListIt).second;
-          if (!ignore_offsets_set.empty()) {
-            auto first = ignore_offsets_set.begin();
-            while (*first < input_file_pos) {
-              ignore_offsets_set.erase(first);
-              if (ignore_offsets_set.empty()) break;
-              first = ignore_offsets_set.begin();
-            }
+        std::queue<long long>& ignoreList = precomp_mgr.ctx->ignore_offsets[formatTag];
+        if (!ignoreList.empty()) {
+          auto& first = ignoreList.front();
+          while (first < input_file_pos) {
+            ignoreList.pop();
+            if (ignoreList.empty()) break;
+            first = ignoreList.front();
+          }
 
-            if (!ignore_offsets_set.empty()) {
-              if (*first == input_file_pos) {
-                ignore_this_position = true;
-                ignore_offsets_set.erase(first);
-              }
+          if (!ignoreList.empty()) {
+            if (first == input_file_pos) {
+              ignore_this_position = true;
+              ignoreList.pop();
             }
           }
           if (ignore_this_position) continue;
@@ -783,22 +781,19 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // Position blacklist check
         bool ignore_this_position = false;
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        auto ignoreListIt = precomp_mgr.ctx->ignore_offsets.find(formatTag);
-        if (ignoreListIt != precomp_mgr.ctx->ignore_offsets.cend()) {
-          auto& ignore_offsets_set = (*ignoreListIt).second;
-          if (!ignore_offsets_set.empty()) {
-            auto first = ignore_offsets_set.begin();
-            while (*first < input_file_pos) {
-              ignore_offsets_set.erase(first);
-              if (ignore_offsets_set.empty()) break;
-              first = ignore_offsets_set.begin();
-            }
+        std::queue<long long>& ignoreList = precomp_mgr.ctx->ignore_offsets[formatTag];
+        if (!ignoreList.empty()) {
+          auto& first = ignoreList.front();
+          while (first < input_file_pos) {
+            ignoreList.pop();
+            if (ignoreList.empty()) break;
+            first = ignoreList.front();
+          }
 
-            if (!ignore_offsets_set.empty()) {
-              if (*first == input_file_pos) {
-                ignore_this_position = true;
-                ignore_offsets_set.erase(first);
-              }
+          if (!ignoreList.empty()) {
+            if (first == input_file_pos) {
+              ignore_this_position = true;
+              ignoreList.pop();
             }
           }
           if (ignore_this_position) continue;
@@ -991,6 +986,9 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
     [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
     [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
   );
+  
+  std::array<unsigned char, CHUNK> in_buf{};
+  std::array<unsigned char, CHUNK> out_buf{};
 
   long long fin_pos = precomp_ctx.fin->tellg();
 
@@ -1040,20 +1038,49 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
 
               bool last_block = (data_hdr & std::byte{ 0b1000000 }) == std::byte{ 0b1000000 };
               bool finish_stream = (data_hdr & std::byte{ 0b0000001 }) == std::byte{ 0b0000001 };
-              int retval;
-              if (last_block && finish_stream) {
-                retval = recompressor->recompress_final_block(*precompressed_input, data_block_size, *output);
-              }
-              else if (finish_stream && !last_block) {
+              PrecompProcessorReturnCode retval;
+              if (finish_stream && !last_block) {
                 throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
               }
-              else {
-                retval = recompressor->recompress(*precompressed_input, data_block_size, *output);
-              }
-              if (retval != PP_OK) {
-                throw PrecompError(ERR_DURING_RECOMPRESSION);
-              }
 
+              recompressor->avail_in = 0;
+              auto remaining_block_bytes = data_block_size;
+
+              while (true) {
+                if (recompressor->avail_in == 0 && remaining_block_bytes > 0) {
+                  auto amt_to_read = std::min<long long>(remaining_block_bytes, CHUNK);
+                  precompressed_input->read(reinterpret_cast<char*>(in_buf.data()), amt_to_read);
+                  recompressor->avail_in = precompressed_input->gcount();
+                  recompressor->next_in = reinterpret_cast<std::byte*>(in_buf.data());
+                  if (recompressor->avail_in != amt_to_read) throw PrecompError(ERR_DURING_RECOMPRESSION);
+                  remaining_block_bytes -= recompressor->avail_in;
+                }
+
+                recompressor->avail_out = CHUNK;
+                recompressor->next_out = reinterpret_cast<std::byte*>(out_buf.data());
+
+                if (finish_stream && remaining_block_bytes == 0) {
+                  retval = recompressor->recompress_final_block();
+                }
+                else {
+                  retval = recompressor->process();
+                }
+                if (retval == PP_ERROR) {
+                  throw PrecompError(ERR_DURING_RECOMPRESSION);
+                }
+
+                // If we read all the block and exhausted all data that could be inputted or outputted, go to the next block
+                if (remaining_block_bytes == 0 && recompressor->avail_in == 0 && recompressor->avail_out == CHUNK) {
+                  break;
+                }
+
+                if (recompressor->avail_out != CHUNK) {
+                  output->write(reinterpret_cast<char*>(out_buf.data()), CHUNK - recompressor->avail_out);
+                }
+
+                if (retval == PP_STREAM_END) break;
+              }
+              
               if (last_block) break;
             }
 
@@ -1475,7 +1502,10 @@ void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*callback)(float)) { 
 void PrecompDestroy(Precomp* precomp_mgr) { delete precomp_mgr; }
 CSwitches* PrecompGetSwitches(Precomp* precomp_mgr) { return &precomp_mgr->switches; }
 void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count) {
-  reinterpret_cast<Switches*>(precomp_switches)->ignore_set = std::set(ignore_pos_list, ignore_pos_list + ignore_post_list_count);
+  auto& ignore_pos_queue = reinterpret_cast<Switches*>(precomp_switches)->ignore_pos_queue;
+  for (auto ignore_pos : std::span<const long long>(ignore_pos_list, ignore_pos_list + ignore_post_list_count)) {
+    ignore_pos_queue.emplace(ignore_pos);
+  }
 }
 CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
 CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) { return &precomp_mgr->statistics; }

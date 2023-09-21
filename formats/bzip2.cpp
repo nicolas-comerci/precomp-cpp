@@ -76,32 +76,32 @@ public:
 class BZip2Compressor : public PrecompFormatRecompressor {
   bz_stream strm;
 
-  int _compress_block(IStreamLike& input, unsigned long long count, OStreamLike& output, int flush = BZ_RUN) {
-    input.read(reinterpret_cast<char*>(in_buf.data()), count);
-    strm.avail_in = input.gcount();
+  int _compress_block(int flush = BZ_RUN) {
+    progress_callback();
+    /*
+    input.read(reinterpret_cast<char*>(next_in), count);
+    avail_in = input.gcount();
     if (input.bad()) {
       (void)BZ2_bzCompressEnd(&strm);
       return BZ_PARAM_ERROR;
     }
-    strm.next_in = reinterpret_cast<char*>(in_buf.data());
-
+    */
+    int ret;
     // Compress all that available data for that input chunk
     do {
       strm.avail_out = CHUNK;
-      strm.next_out = reinterpret_cast<char*>(out_buf.data());
+      strm.next_out = reinterpret_cast<char*>(next_out);
 
-      BZ2_bzCompress(&strm, flush);
+      ret = BZ2_bzCompress(&strm, flush);
+      if (ret < 0) {
+        return ret;
+      }
 
       unsigned int compressed_chunk_size = CHUNK - strm.avail_out;
-      if (compressed_chunk_size > 0) {
-        output.write(reinterpret_cast<char*>(out_buf.data()), compressed_chunk_size);
-        if (output.bad()) {
-          (void)BZ2_bzCompressEnd(&strm);
-          return BZ_DATA_ERROR;
-        }
-      }
+      avail_out -= compressed_chunk_size;
+      next_out += compressed_chunk_size;
     } while (strm.avail_out == 0);
-    return BZ_OK;
+    return ret;
   }
 
 public:
@@ -120,21 +120,41 @@ public:
     BZ2_bzCompressEnd(&strm);
   }
 
-  PrecompProcessorReturnCode recompress(IStreamLike& input, unsigned long long count, OStreamLike& output) override {
-    progress_callback();
+  PrecompProcessorReturnCode process() override {
+    while (avail_in > 0 && avail_out != 0) {
+      auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
+      strm.avail_in = in_chunk_size;
+      strm.next_in = reinterpret_cast<char*>(next_in);
 
-    auto remaining_in = count;
-    while (remaining_in > 0) {
-      auto in_chunk_size = remaining_in > CHUNK ? CHUNK : remaining_in;
-      remaining_in -= in_chunk_size;
-      auto ret = _compress_block(input, count, output, BZ_RUN);
-      if (ret != BZ_OK) return PP_ERROR;
+      auto ret = _compress_block(BZ_RUN);
+
+      avail_in -= in_chunk_size;
+      next_in += in_chunk_size;
+
+      if (ret < 0) return PP_ERROR;
     }
     return PP_OK;
   }
 
-  PrecompProcessorReturnCode recompress_final_block(IStreamLike& input, unsigned long long count, OStreamLike& output) override {
-    return _compress_block(input, count, output, BZ_FINISH) == BZ_OK ? PP_OK : PP_ERROR;
+  PrecompProcessorReturnCode recompress_final_block() override {
+    //auto retval = _compress_block(BZ_FINISH);
+    int ret;
+    while (avail_in > 0 && avail_out != 0) {
+      auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
+      strm.avail_in = in_chunk_size;
+      strm.next_in = reinterpret_cast<char*>(next_in);
+
+      avail_in -= in_chunk_size;
+      next_in += in_chunk_size;
+
+      ret = _compress_block(avail_in == 0 ? BZ_FINISH : BZ_RUN);
+
+      if (ret < 0) return PP_ERROR;
+    }
+
+    // What if I did BZ_FINISH but there wasn't enough space on the output buffer? do I get BZ_OK? how should it be handled?
+    if (ret == BZ_STREAM_END) return PP_STREAM_END;
+    return PP_ERROR;
   }
 };
 

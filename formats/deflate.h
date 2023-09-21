@@ -10,10 +10,6 @@ struct recompress_deflate_result {
   std::vector<unsigned char> recon_data;
   bool accepted = false;
   std::vector<unsigned char> uncompressed_stream_mem;
-  bool zlib_perfect = false;
-  char zlib_comp_level = 0;
-  char zlib_mem_level = 0;
-  char zlib_window_bits = 0;
 };
 
 class deflate_precompression_result : public precompression_result {
@@ -88,7 +84,6 @@ public:
   }
 
   void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) override;
-  void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) override;
 
   static DeflateFormatHandler* create() {
     return new DeflateFormatHandler({ D_BRUTE });

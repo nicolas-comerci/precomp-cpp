@@ -49,7 +49,7 @@ void print_to_log(PrecompLoggingLevels log_level, const char* format, Args... ar
 
 class EXPORT Switches: public CSwitches {
   public:
-    std::set<long long> ignore_set;
+    std::queue<long long> ignore_pos_queue;
 
     Switches();
     ~Switches();
@@ -78,7 +78,7 @@ public:
 
   // Ignore offsets can be set for any Format handler, so that if for example, we failed to precompress a deflate stream inside a ZIP file, we don't attempt to precompress
   // it again, which is destined to fail, by using the intense mode (ZLIB) format handler.
-  std::unordered_map<SupportedFormats, std::set<long long>> ignore_offsets;
+  std::array<std::queue<long long>, 256> ignore_offsets;  // 256 is at least for now the maximum possible amount of format handlers, will most likely be enough for a while
 
   std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   void set_input_stream(std::istream* istream, bool take_ownership = true);
@@ -208,7 +208,7 @@ public:
 enum PrecompProcessorReturnCode {
   PP_OK = 0,
   PP_STREAM_END = 1,
-  PP_ERROR = 2,
+  PP_ERROR = -1,
 };
 
 class PrecompFormatPrecompressor {
@@ -234,14 +234,16 @@ protected:
   std::function<void()> progress_callback;
 
 public:
-  std::array<unsigned char, CHUNK> in_buf{};
-  std::array<unsigned char, CHUNK> out_buf{};
+  uint32_t avail_in = 0;
+  std::byte* next_in = nullptr;
+  uint32_t avail_out = 0;
+  std::byte* next_out = nullptr;
 
   PrecompFormatRecompressor(const PrecompFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatRecompressor() = default;
 
-  virtual PrecompProcessorReturnCode recompress(IStreamLike& input, unsigned long long count, OStreamLike& output) = 0;
-  virtual PrecompProcessorReturnCode recompress_final_block(IStreamLike& input, unsigned long long count, OStreamLike& output) = 0;
+  virtual PrecompProcessorReturnCode process() = 0;
+  virtual PrecompProcessorReturnCode recompress_final_block() = 0;
 };
 
 class PrecompFormatHandler2;

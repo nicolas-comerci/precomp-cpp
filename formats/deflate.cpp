@@ -8,23 +8,18 @@
 #include <sstream>
 
 std::byte make_deflate_pcf_hdr_flags(const recompress_deflate_result& rdres) {
-  return std::byte{ 0b1 } | (rdres.zlib_perfect ? static_cast<std::byte>(rdres.zlib_comp_level) << 2 : std::byte{ 0b10 });
+  return std::byte{ 0b1 } | std::byte{ 0b10 };
 }
 
 void deflate_precompression_result::dump_recon_data_to_outfile(OStreamLike& outfile) const {
-  if (!rdres.zlib_perfect) {
-    fout_fput_vlint(outfile, rdres.recon_data.size());
-    outfile.write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
-  }
+  fout_fput_vlint(outfile, rdres.recon_data.size());
+  outfile.write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
 }
 deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
 void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
   outfile.put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags | (recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
   outfile.put(format);
-  if (rdres.zlib_perfect) {
-    outfile.put(((rdres.zlib_window_bits - 8) << 4) + rdres.zlib_mem_level);
-  }
   fout_fput_vlint(outfile, zlib_header.size());
   if (!inc_last_hdr_byte) {
     outfile.write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size());
@@ -43,11 +38,9 @@ void deflate_precompression_result::dump_to_outfile(OStreamLike& outfile) const 
 }
 
 void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result& rdres) {
-  if (!rdres.zlib_perfect) {
-    size_t sz = fin_fget_vlint(input);
-    rdres.recon_data.resize(sz);
-    input.read(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
-  }
+  size_t sz = fin_fget_vlint(input);
+  rdres.recon_data.resize(sz);
+  input.read(reinterpret_cast<char*>(rdres.recon_data.data()), rdres.recon_data.size());
 
   rdres.compressed_stream_size = fin_fget_vlint(input);
   rdres.uncompressed_stream_size = fin_fget_vlint(input);
@@ -356,12 +349,7 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
   ss << "Can be decompressed to " << rdres.uncompressed_stream_size << " bytes" << std::endl;
 
   if (rdres.accepted) {
-    if (rdres.zlib_perfect) {
-      ss << "Detect ZLIB parameters: comp level " << rdres.zlib_comp_level << ", mem level " << rdres.zlib_mem_level << ", " << rdres.zlib_window_bits << "window bits" << std::endl;
-    }
-    else {
-      ss << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << std::endl;
-    }
+    ss << "Non-ZLIB reconstruction data size: " << rdres.recon_data.size() << " bytes" << std::endl;
   }
 
   print_to_log(PRECOMP_DEBUG_LOG, ss.str());
@@ -430,8 +418,8 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       result->rdres = std::move(rdres);
     }
     else {
-      if (type == D_SWF && precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_pos - 2);
-      if (type != D_BRUTE && precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].insert(deflate_stream_pos);
+      if (type == D_SWF && precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_pos - 2);
+      if (type != D_BRUTE && precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
@@ -616,13 +604,6 @@ bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const 
 void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags,
   unsigned char* hdr_data, unsigned& hdr_length,
   const bool inc_last_hdr_byte) {
-  rdres.zlib_perfect = (flags & std::byte{ 0b10 }) == std::byte{ 0 };
-  if (rdres.zlib_perfect) {
-    const auto zlib_params = static_cast<std::byte>(input.get());
-    rdres.zlib_comp_level = static_cast<char>((flags & std::byte{ 0b00111100 }) >> 2);
-    rdres.zlib_mem_level = static_cast<char>(zlib_params & std::byte{ 0b00001111 });
-    rdres.zlib_window_bits = static_cast<char>(static_cast<int>(zlib_params & std::byte{ 0b01110000 }) + 8);
-  }
   hdr_length = fin_fget_vlint(input);
   if (!inc_last_hdr_byte) {
     input.read(reinterpret_cast<char*>(hdr_data), hdr_length);
@@ -645,14 +626,7 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
   std::stringstream ss;
   ss << "Decompressed data - " << type << std::endl;
   ss << "Header length: " << hdr_length << std::endl;
-  if (rdres.zlib_perfect) {
-    ss << "ZLIB Parameters: compression level " << rdres.zlib_comp_level
-      << " memory level " << rdres.zlib_mem_level
-      << " window bits " << rdres.zlib_window_bits << std::endl;
-  }
-  else {
-    ss << "Reconstruction data size: " << rdres.recon_data.size() << std::endl;
-  }
+  ss << "Reconstruction data size: " << rdres.recon_data.size() << std::endl;
   if (rec_length > 0) {
     ss << "Recursion data length: " << rec_length << std::endl;
   }
@@ -681,18 +655,9 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
   // write decompressed data
   ok = try_reconstructing_deflate(precompressed_input, recompressed_stream, precomp_hdr_data.rdres, tools.progress_callback);
 
-  debug_deflate_reconstruct(precomp_hdr_data.rdres, type.c_str(), precomp_hdr_data.stream_hdr.size(), precomp_hdr_data.recursion_data_size);
-
   if (!ok) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
-}
-
-void DeflateFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
-  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
-  // Write zlib_header
-  // TODO: wait a second, this is brute mode, so there should never be a header here... confirm and delete if true
-  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 }
 
 void DeflateFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {

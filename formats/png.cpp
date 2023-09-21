@@ -141,8 +141,8 @@ std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mg
       result->inc_last_hdr_byte = true;
     }
     else {
-      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].insert(deflate_stream_original_pos - 2);
-      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].insert(deflate_stream_original_pos);
+      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_original_pos - 2);
+      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_original_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
