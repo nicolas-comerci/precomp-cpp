@@ -243,7 +243,11 @@ public:
   virtual ~PrecompFormatRecompressor() = default;
 
   virtual PrecompProcessorReturnCode process() = 0;
-  virtual PrecompProcessorReturnCode recompress_final_block() = 0;
+  virtual PrecompProcessorReturnCode recompress_final_block() {
+    // Some recompressors might not need to handle their final block in a special way, or might already have read metadata that allows them to know data is ending,
+    // thus this simple default implementation
+    return process();
+  };
 };
 
 class PrecompFormatHandler2;

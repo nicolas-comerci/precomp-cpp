@@ -996,7 +996,9 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
     const std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
     if (!precomp_ctx.fin->good()) break;
 
+    bool handlerFound = false;
     if (header1 == std::byte{ 0 }) { // uncompressed data
+      handlerFound = true;
       long long uncompressed_data_length;
       uncompressed_data_length = fin_fget_vlint(*precomp_ctx.fin);
   
@@ -1009,7 +1011,6 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
     else { // decompressed data, recompress
       const unsigned char headertype = precomp_ctx.fin->get();
   
-      bool handlerFound = false;
       for (const auto& formatHandler : format_handlers2) {
         for (const auto& formatHandlerHeaderByte : formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
@@ -1123,6 +1124,7 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
         if (handlerFound) break;
       }
     }
+    if (!handlerFound) throw PrecompError(ERR_DURING_RECOMPRESSION);
   
     fin_pos = precomp_ctx.fin->tellg();
   }

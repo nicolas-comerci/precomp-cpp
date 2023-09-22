@@ -118,8 +118,9 @@ public:
 
 };
 
-class DeflatePrecompressor : public PrecompFormatPrecompressor {
-  class PrecompressorInputStream : public InputStream {
+class PreflateProcessorBase {
+protected:
+  class ProcessorInputStream : public InputStream {
   private:
     std::mutex* mtx;
     std::condition_variable* data_needed_cv;
@@ -130,34 +131,50 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor {
     std::condition_variable data_available_cv;
     bool sleeping = false;
     bool _eof;
-    bool kill_preflate_thread = false;
+    bool force_eof = false;
 
-    explicit PrecompressorInputStream(std::mutex* _mtx, std::condition_variable* _data_needed_cv, uint32_t* _avail_in, std::byte** _next_in)
+    explicit ProcessorInputStream(std::mutex* _mtx, std::condition_variable* _data_needed_cv, uint32_t* _avail_in, std::byte** _next_in)
       : _eof(false), mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
 
     [[nodiscard]] bool eof() const override {
       return _eof;
     }
     size_t read(unsigned char* buffer, const size_t size) override {
-      if (kill_preflate_thread) return 0;
-      std::unique_lock lock(*mtx);
-      size_t copy_size = size;
-      while (*avail_in == 0) {
-        data_needed_cv->notify_one();
-        sleeping = true;
-        data_available_cv.wait(lock);
-        sleeping = false;
-        if (kill_preflate_thread) return 0;
+      if (force_eof) {
+        _eof = true;
+        return 0;
       }
-      copy_size = std::min<uint64_t>(*avail_in, size);
-      std::copy_n(reinterpret_cast<unsigned char*>(*next_in), copy_size, buffer);
-      *avail_in -= copy_size;
-      *next_in += copy_size;
-      return copy_size;
+      std::unique_lock lock(*mtx);
+      auto remainingSize = size;
+      auto currBufferPos = const_cast<unsigned char*>(buffer);
+      while (remainingSize > 0) {
+        const auto iterationSize = std::min<uint64_t>(*avail_in, remainingSize);
+        if (iterationSize > 0) {
+          std::copy_n(reinterpret_cast<unsigned char*>(*next_in), iterationSize, currBufferPos);
+          *next_in += iterationSize;
+          *avail_in -= iterationSize;
+          remainingSize -= iterationSize;
+          currBufferPos += iterationSize;
+        }
+
+        if (force_eof) {
+          _eof = true;
+          return size - remainingSize;
+        }
+        // If we couldn't read all the data from our input buffer we need to block the thread until the consumer gives us more memory in
+        if (remainingSize > 0) {
+          data_needed_cv->notify_one();
+          sleeping = true;
+          data_available_cv.wait(lock);
+          sleeping = false;
+        }
+      }
+
+      return size;
     }
   };
 
-  class PrecompressorOutStream : public OutputStream {
+  class ProcessorOutStream : public OutputStream {
     std::mutex* mtx;
     uint32_t* avail_out;
     std::byte** next_out;
@@ -166,14 +183,13 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor {
   public:
     std::condition_variable data_freed_cv;
     bool sleeping = false;
-    bool kill_preflate_thread = false;
+    bool force_eof = false;
 
-    PrecompressorOutStream(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
+    ProcessorOutStream(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
       : mtx(_mtx), data_full_cv(_data_full_cv), avail_out(_avail_out), next_out(_next_out) {}
-    ~PrecompressorOutStream() override = default;
 
     size_t write(const unsigned char* buffer, const size_t size) override {
-      if (kill_preflate_thread) return 0;
+      if (force_eof) return 0;
       std::unique_lock lock(*mtx);
       auto remainingSize = size;
       auto currBufferPos = const_cast<unsigned char*>(buffer);
@@ -187,47 +203,51 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor {
           currBufferPos += iterationSize;
         }
 
+        if (force_eof) {
+          return size - remainingSize;
+        }
         // If we couldn't write all the data to our output buffer we need to block the thread until the consumer takes that data and gives us more memory
         if (remainingSize > 0) {
           data_full_cv->notify_one();
           sleeping = true;
           data_freed_cv.wait(lock);
           sleeping = false;
-          if (kill_preflate_thread) return size - remainingSize;
         }
       }
-      
+
       return size;
     }
   };
 
+  std::function<bool()> process_func;
   std::thread preflate_thread;
   bool started = false;
   bool success = false;
   bool finished = false;
   std::mutex mtx;
 
-  std::unique_ptr<PrecompressorInputStream> input_stream;
-  std::unique_ptr<PrecompressorOutStream> output_stream;
+  std::unique_ptr<ProcessorInputStream> input_stream;
+  std::unique_ptr<ProcessorOutStream> output_stream;
   std::condition_variable data_flush_needed_cv;
 public:
-  recompress_deflate_result result{};
-  uint64_t compressed_stream_size = 0;
+  bool force_input_eof = false;
 
-  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) :
-    PrecompFormatPrecompressor(buffer, _progress_callback) {
-    input_stream = std::make_unique<PrecompressorInputStream>(&mtx, &data_flush_needed_cv, &avail_in, &next_in);
-    output_stream = std::make_unique<PrecompressorOutStream>(&mtx, &data_flush_needed_cv, &avail_out, &next_out);
+  PreflateProcessorBase(
+    uint32_t* avail_in, std::byte** next_in,
+    uint32_t* avail_out, std::byte** next_out
+  ) {
+    input_stream = std::make_unique<ProcessorInputStream>(&mtx, &data_flush_needed_cv, avail_in, next_in);
+    output_stream = std::make_unique<ProcessorOutStream>(&mtx, &data_flush_needed_cv, avail_out, next_out);
   }
-  ~DeflatePrecompressor() override {
-    input_stream->kill_preflate_thread = true;
-    output_stream->kill_preflate_thread = true;
+  ~PreflateProcessorBase() {
+    input_stream->force_eof = true;
+    output_stream->force_eof = true;
     input_stream->data_available_cv.notify_all();
     output_stream->data_freed_cv.notify_all();
     if (preflate_thread.joinable()) preflate_thread.join();
   }
 
-  PrecompProcessorReturnCode process() override {
+  PrecompProcessorReturnCode preflate_process() {
     if (finished) {
       return success ? PP_STREAM_END : PP_ERROR;
     }
@@ -235,15 +255,7 @@ public:
     if (!started) {
       preflate_thread = std::thread([&]() {
         try {
-          result.accepted = preflate_decode(
-            *output_stream,
-            result.recon_data,
-            compressed_stream_size,
-            *input_stream,
-            []() {},
-            1 << 21
-          );
-          success = result.accepted;
+          success = process_func();
         }
         catch (...) {
           success = false;
@@ -254,6 +266,7 @@ public:
       started = true;
     }
     else {  // The thread was already started on a previous run of process() and got locked because it ran out of space on the in or out buffers
+      if (force_input_eof) { input_stream->force_eof = true; }
       if (output_stream->sleeping) {
         output_stream->data_freed_cv.notify_one();
       }
@@ -270,6 +283,101 @@ public:
   }
 };
 
+class DeflatePrecompressor : public PrecompFormatPrecompressor, public PreflateProcessorBase {
+public:
+  recompress_deflate_result result{};
+  uint64_t compressed_stream_size = 0;
+
+  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback)
+    : PrecompFormatPrecompressor(buffer, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
+    process_func = [this]() -> bool {
+      result.accepted = preflate_decode(
+        *output_stream,
+        result.recon_data,
+        compressed_stream_size,
+        *input_stream,
+        []() {},
+        1 << 21
+      );
+      return result.accepted;
+      };
+  }
+
+  PrecompProcessorReturnCode process() override {
+    return preflate_process();
+  }
+};
+
+class DeflateRecompressor : public PrecompFormatRecompressor, public PreflateProcessorBase {
+public:
+  DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
+    : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
+    process_func = [this, &recon_data = precomp_hdr_data.rdres.recon_data, uncompressed_stream_size = precomp_hdr_data.rdres.uncompressed_stream_size]() -> bool {
+      return preflate_reencode(*output_stream, recon_data, *input_stream, uncompressed_stream_size, progress_callback);
+      };
+  }
+
+  PrecompProcessorReturnCode process() override {
+    return preflate_process();
+  }
+};
+
+template <class T>
+PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStreamLike& istream, OStreamLike& ostream, long long& input_stream_size, long long& processed_stream_size) {
+  PrecompProcessorReturnCode ret = PP_OK;
+  std::vector<std::byte> out_buf{};
+  out_buf.resize(CHUNK);
+  processor.next_out = out_buf.data();
+  processor.avail_out = CHUNK;
+  std::vector<std::byte> in_buf{};
+  in_buf.resize(CHUNK);
+  processor.next_in = in_buf.data();
+  processor.avail_in = 0;
+  while (true) {
+    // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
+    if (processor.avail_in > 0) {
+      // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
+      std::memmove(in_buf.data(), processor.next_in, processor.avail_in);
+    }
+    const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + processor.avail_in);
+    const auto read_amt = CHUNK - processor.avail_in;
+    std::streamsize gcount = 0;
+    if (read_amt > 0) {
+      istream.read(in_buf_ptr, read_amt);
+      gcount = istream.gcount();
+    }
+
+    processor.avail_in += gcount;
+    processor.next_in = in_buf.data();
+    if (istream.bad()) break;
+
+    const auto avail_in_before_process = processor.avail_in;
+    ret = processor.process();
+    if (ret != PP_OK && ret != PP_STREAM_END) break;
+
+    // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
+    // and shouldn't be counted towards the stream's size
+    input_stream_size += (avail_in_before_process - processor.avail_in);
+
+    const auto decompressed_chunk_size = CHUNK - processor.avail_out;
+    processed_stream_size += decompressed_chunk_size;
+    ostream.write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
+
+    if (ostream.bad()) break;
+    if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+
+    if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
+      // No more data will ever come and we already flushed all the output data processed, notify processor so it can finish
+      processor.force_input_eof = true;
+    }
+    // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
+
+    processor.next_out = out_buf.data();
+    processor.avail_out = CHUNK;
+  }
+  return ret;
+}
+
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
   file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
@@ -278,60 +386,15 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
 
   long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
-
-  PrecompProcessorReturnCode ret;
-  std::vector<std::byte> out_buf{};
-  out_buf.resize(CHUNK);
-  precompressor->next_out = out_buf.data();
-  precompressor->avail_out = CHUNK;
-  std::vector<std::byte> in_buf{};
-  in_buf.resize(CHUNK);
-  precompressor->next_in = in_buf.data();
-  precompressor->avail_in = 0;
   bool partial_stream = false;
-  while (true) {
-    // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
-    if (precompressor->avail_in > 0) {
-      // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
-      std::memmove(in_buf.data(), precompressor->next_in, precompressor->avail_in);
-    }
-    const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + precompressor->avail_in);
-    const auto read_amt = CHUNK - precompressor->avail_in;
-    std::streamsize gcount = 0;
-    if (read_amt > 0) {
-      file.read(in_buf_ptr, read_amt);
-      gcount = file.gcount();
-    }
-    
-    precompressor->avail_in += gcount;
-    precompressor->next_in = in_buf.data();
-    if (file.bad()) break;
 
-    const auto avail_in_before_process = precompressor->avail_in;
-    ret = precompressor->process();
-    if (ret != PP_OK && ret != PP_STREAM_END) break;
+  auto ret = preflate_processor_full_process(*precompressor, file, tmpfile, compressed_stream_size, decompressed_stream_size);
 
-    // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
-    // and shouldn't be counted towards the stream's size
-    compressed_stream_size += (avail_in_before_process - precompressor->avail_in);
-
-    const auto decompressed_chunk_size = CHUNK - precompressor->avail_out;
-    decompressed_stream_size += decompressed_chunk_size;
-    tmpfile.write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
-
-    if (tmpfile.bad()) break;
-    if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
-
-    if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
-      // If input stream is exhausted (as evidenced by read_amt > 0 && gcount == 0, I wanted to read more but couldn't) and the precompressor stopped outputting data,
-      // then we must quit because precompressor won't ever produce new data as the data in consumed is not enough and there is not any more data to feed to it
-      partial_stream = true;
-      break;
-    }
-    // TODO: What if I feed the precompressor a full CHUNK and it outputs nothing? Should we quit? Should precompressors be able to advertise a chunk size they need?
-
-    precompressor->next_out = out_buf.data();
-    precompressor->avail_out = CHUNK;
+  if (ret == PP_ERROR) {
+    // something here I guess?
+  }
+  else if (ret == PP_OK) {
+    partial_stream = true;
   }
 
   recompress_deflate_result result = std::move(precompressor->result);
@@ -550,11 +613,17 @@ std::unique_ptr<precompression_result> DeflateFormatHandler::attempt_precompress
     "(brute mode)", precomp_mgr.get_tempfile_name("decomp_brute"));
 }
 
-bool try_reconstructing_deflate(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const std::function<void()>& progress_callback) {
-  OwnOStream os(&fout);
-  OwnIStream is(&fin);
-  bool result = preflate_reencode(os, rdres.recon_data, is, rdres.uncompressed_stream_size, progress_callback);
-  return result;
+bool try_reconstructing_deflate(IStreamLike& fin, OStreamLike& fout, const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& progress_callback) {
+  long long precompressed_stream_size = 0;
+  long long recompressed_stream_size = 0;
+  auto recompressor = std::make_unique<DeflateRecompressor>(precomp_hdr_data, progress_callback);
+  
+  auto input_pos_before = fin.tellg();
+  // Limit the input stream to the streams known size
+  auto original_data_view = IStreamLikeView(&fin, input_pos_before + precomp_hdr_data.rdres.uncompressed_stream_size);
+  auto retval = preflate_processor_full_process(*recompressor, original_data_view, fout, precompressed_stream_size, recompressed_stream_size);
+
+  return retval == PP_STREAM_END;
 }
 
 size_t fread_skip(unsigned char* ptr, size_t size, size_t count, IStreamLike& stream, unsigned int frs_offset, unsigned int frs_line_len, unsigned int frs_skip_len) {
@@ -653,7 +722,7 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
   bool ok;
 
   // write decompressed data
-  ok = try_reconstructing_deflate(precompressed_input, recompressed_stream, precomp_hdr_data.rdres, tools.progress_callback);
+  ok = try_reconstructing_deflate(precompressed_input, recompressed_stream, precomp_hdr_data, tools.progress_callback);
 
   if (!ok) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
