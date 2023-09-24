@@ -557,6 +557,12 @@ PasstroughStream& PasstroughStream::read(char* buff, std::streamsize count) {
     if (read_eof) {
         if (std::this_thread::get_id() != owner_thread_id) throw std::runtime_error("PasstroughStream somehow exhausted by non owning thread");
         _gcount = 0;
+        const auto trailing_data_bytecount = data_available();
+        if (trailing_data_bytecount > 0) {
+          std::copy_n(buffer_current_pos(), trailing_data_bytecount, buff);
+          buffer_already_read_count += trailing_data_bytecount;
+          _gcount = trailing_data_bytecount;
+        }
         return *this;
     }
     //print_to_log(PRECOMP_NORMAL_LOG, "\n\n%p: TAKING LOCK FOR READ!\n\n", static_cast<void*>(this));
@@ -583,7 +589,7 @@ PasstroughStream& PasstroughStream::read(char* buff, std::streamsize count) {
             if (iteration_read_count == 0) { continue; }
         }
 
-        memcpy(buff + already_read_count, buffer_current_pos(), iteration_read_count);
+        std::copy_n(buffer_current_pos(), iteration_read_count, buff + already_read_count);
         already_read_count += iteration_read_count;
         buffer_already_read_count += iteration_read_count;
     }
