@@ -50,9 +50,9 @@ public:
     void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
         dump_penaltybytes_to_outfile(outfile);
-        dump_idat_to_outfile(outfile);
         dump_recon_data_to_outfile(outfile);
         dump_stream_sizes_to_outfile(outfile);
+        dump_idat_to_outfile(outfile);
         dump_precompressed_data_to_outfile(outfile);
     }
 
@@ -325,7 +325,7 @@ private:
 
 class MultiPngFormatHeaderData: public DeflateFormatHeaderData {
 public:
-  long long idat_count;
+  long long idat_count = 0;
   std::vector<unsigned int> idat_crcs;
   std::vector<unsigned int> idat_lengths;
 };
@@ -359,18 +359,17 @@ void recompress_multipng(IStreamLike& precompressed_input, OStreamLike& recompre
 std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   switch (precomp_hdr_format) {
   case D_PNG: {
-    return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, true);
+    auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
+    fmt_hdr->read_data(*context.fin, precomp_hdr_flags, true);
+    return fmt_hdr;
   }
   case D_MULTIPNG: {
     auto fmt_hdr = std::make_unique<MultiPngFormatHeaderData>();
-    unsigned hdr_length;
-    fmt_hdr->stream_hdr.resize(CHUNK);
-    fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, true);
-    fmt_hdr->stream_hdr.resize(hdr_length);
+    fmt_hdr->read_data(*context.fin, precomp_hdr_flags, true);
 
     // get IDAT count
     fmt_hdr->idat_count = fin_fget_vlint(*context.fin) + 1;
-        
+
     fmt_hdr->idat_crcs.resize(fmt_hdr->idat_count * sizeof(unsigned int));
     fmt_hdr->idat_lengths.resize(fmt_hdr->idat_count * sizeof(unsigned int));
 
@@ -383,7 +382,6 @@ std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(Re
       fmt_hdr->idat_lengths[i] = fin_fget_vlint(*context.fin);
     }
 
-    fin_fget_recon_data(*context.fin, fmt_hdr->rdres);
     return fmt_hdr;
   }
   default:

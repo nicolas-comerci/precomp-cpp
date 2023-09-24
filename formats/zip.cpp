@@ -41,7 +41,9 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
 }
 
 std::unique_ptr<PrecompFormatHeaderData> ZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
+  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
+  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  return fmt_hdr;
 }
 
 void ZipFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {

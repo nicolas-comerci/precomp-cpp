@@ -351,7 +351,9 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
 }
 
 std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
+  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
+  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  return fmt_hdr;
 }
 
 void PdfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {

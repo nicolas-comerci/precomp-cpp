@@ -38,8 +38,6 @@ struct DeflateHistogramFalsePositiveDetector {
 	int prev_i;
 };
 
-void fin_fget_recon_data(IStreamLike& input, recompress_deflate_result&);
-
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile);
 
 void debug_deflate_detected(RecursionContext& context, const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos);
@@ -53,21 +51,17 @@ bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDe
 
 bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const recompress_deflate_result& rdres, const size_t read_part, const size_t skip_part, const std::function<void()>& progress_callback);
 
-void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte);
-
-void fin_fget_deflate_rec(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last);
-
 void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const char* type, const unsigned hdr_length, const uint64_t rec_length);
 
 class DeflateFormatHeaderData: public PrecompFormatHeaderData {
 public:
   recompress_deflate_result rdres;  // not the cleanest for this to be here, but for now it simplifies the refactoring for simplified recursion/penalty_bytes support in Precomp
   std::vector<unsigned char> stream_hdr;
+
+  void read_data(IStreamLike& precompressed_input, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
 };
 
 void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools);
-
-std::unique_ptr<PrecompFormatHeaderData> read_deflate_format_header(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
 
 class DeflateFormatHandler : public PrecompFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
@@ -79,9 +73,7 @@ public:
 
 	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
 
-  std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override {
-    return read_deflate_format_header(*context.fin, *context.fout, precomp_hdr_flags, false);
-  }
+  std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
   void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) override;
 
