@@ -512,7 +512,7 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
-bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, const std::unique_ptr<PrecompTmpFile>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
+bool verify_precompressed_result2(Precomp& precomp_mgr, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
 struct recursion_result {
   bool success;
   std::string file_name;
@@ -594,29 +594,37 @@ int compress_file_impl(Precomp& precomp_mgr) {
         catch (...) {}  // TODO: print/record/report handler failed
         if (!quick_check_result) continue;
 
-        std::unique_ptr<precompression_result> result{};
         std::unique_ptr<PrecompFormatPrecompressor> precompressor{};
+        std::unique_ptr<IStreamLike> precompressed;
+        uint64_t original_stream_size = 0;
+        uint64_t precompressed_stream_size = 0;
+        // Precomp format header
+        std::byte header_byte{ 0b1 };
+        if (/*!penalty_bytes.empty()*/false) {
+          header_byte |= std::byte{ 0b10 };
+        }
+        //header_byte |= result->recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 };
+
+        const auto output_chunk_size = 1 * 1024 * 1024; // TODO: make this configurable
+
         try {
-          std::unique_ptr<PrecompTmpFile> precompressed = std::make_unique<PrecompTmpFile>();
-          precompressed->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
           precompressor = formatHandler->make_precompressor(precomp_mgr, checkbuf);
 
           precomp_mgr.call_progress_callback();
 
-          precompressed->reopen();
           precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
 
-          long long compressed_stream_size = 0;
-          long long decompressed_stream_size = 0;
+          std::unique_ptr<PrecompTmpFile> precompressed_tmp = std::make_unique<PrecompTmpFile>();
+          precompressed_tmp->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
           PrecompProcessorReturnCode ret;
-          out_buf.resize(CHUNK);
+          out_buf.resize(output_chunk_size);
           precompressor->next_out = out_buf.data();
-          precompressor->avail_out = CHUNK;
+          precompressor->avail_out = output_chunk_size;
           in_buf.resize(CHUNK);
           precompressor->next_in = in_buf.data();
           precompressor->avail_in = 0;
-          bool partial_stream = false;
+          uint64_t blockCount = 0;
           while (true) {
             // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
             if (precompressor->avail_in > 0) {
@@ -627,8 +635,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
             precomp_mgr.ctx->fin->read(in_buf_ptr, CHUNK - precompressor->avail_in);
             const auto read_amt = precomp_mgr.ctx->fin->gcount();
             if (read_amt == 0) {
-              partial_stream = true;
-              break;
+              break;  // This might be wrong, it's possible that there is still data being outputted
             }
             precompressor->avail_in += read_amt;
             precompressor->next_in = in_buf.data();
@@ -640,86 +647,55 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
             // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
             // and shouldn't be counted towards the stream's size
-            compressed_stream_size += (avail_in_before_process - precompressor->avail_in);
+            original_stream_size += (avail_in_before_process - precompressor->avail_in);
 
-            const auto decompressed_chunk_size = CHUNK - precompressor->avail_out;
-            decompressed_stream_size += decompressed_chunk_size;
-            precompressed->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
+            const auto decompressed_chunk_size = output_chunk_size - precompressor->avail_out;
+            if (ret == PP_STREAM_END || decompressed_chunk_size == output_chunk_size) {
+              precompressed_stream_size += decompressed_chunk_size;
 
-            if (precompressed->bad()) break;
+              if (blockCount == 0) {
+                // Output Precomp format header
+                precompressed_tmp->put(static_cast<char>(header_byte));
+                precompressed_tmp->put(formatTag);
+                // BZip2 format additional header byte
+                precompressor->dump_extra_header_data(*precompressed_tmp);
+              }
+              blockCount += 1;
+
+              // Block chunk header
+              precompressed_tmp->put(static_cast<char>(ret == PP_STREAM_END ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
+              fout_fput_vlint(*precompressed_tmp, decompressed_chunk_size);
+
+              precompressed_tmp->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
+
+              precompressor->next_out = out_buf.data();
+              precompressor->avail_out = output_chunk_size;
+            }
+
+            if (precompressed_tmp->bad()) break;
             if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
-
-            precompressor->next_out = out_buf.data();
-            precompressor->avail_out = CHUNK;
           }
 
-          if ((ret == PP_STREAM_END || partial_stream) && decompressed_stream_size > 0) {  // TODO: set reasonable lower limit for decompressed_stream_size
-            precomp_mgr.statistics.decompressed_streams_count++;
-            precomp_mgr.statistics.decompressed_bzip2_count++;
+          // TODO: set reasonable lower limit for precompressed_stream_size
+          if (ret == PP_ERROR || precompressed_stream_size <= 0) continue;
 
-            print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", compressed_stream_size);
+          precomp_mgr.statistics.decompressed_streams_count++;
+          precomp_mgr.statistics.decompressed_bzip2_count++;
+          precomp_mgr.ctx->non_zlib_was_used = true;
 
-            if (PRECOMP_VERBOSITY_LEVEL == PRECOMP_DEBUG_LOG) {
-              precompressed->reopen();
-              precompressed->seekg(0, std::ios_base::end);
-              print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", precompressed->tellg());
-            }
+          precompressed_stream_size = precompressed_tmp->tellp();
 
-            precompressed->reopen();
-            if (!precompressed->is_open()) {
-              throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
-            }
+          print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", original_stream_size);
+          print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", precompressed_stream_size);
 
-            std::vector<std::tuple<uint32_t, char>> penalty_bytes{};
-
-            precomp_mgr.ctx->non_zlib_was_used = true;
-            result = std::make_unique<precompression_result>(D_BZIP2);
-            result->success = true;
-
-            // check recursion
-            precompressed->close();
-            precompressed->open(precompressed->file_path, std::ios_base::in | std::ios_base::binary);
-            precompressed->close();
-
-            // write compressed data header (bZip2)
-            std::byte header_byte{ 0b1 };
-            if (!penalty_bytes.empty()) {
-              header_byte |= std::byte{ 0b10 };
-            }
-            result->flags = header_byte;
-
-            // store penalty bytes, if any
-            result->penalty_bytes = std::move(penalty_bytes);
-
-            result->original_size = compressed_stream_size;
-            result->precompressed_size = decompressed_stream_size;
-
-            // write decompressed data
-            precompressed->reopen();
-            result->precompressed_stream = std::move(precompressed);
+          // ensure precompressed is ready to be read from again
+          precompressed_tmp->reopen();
+          if (!precompressed_tmp->is_open()) {
+            throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
           }
+          precompressed = std::move(precompressed_tmp);
         }
-        catch (...) {}  // TODO: print/record/report handler failed
-        if (!result || !result->success) continue;
-
-        // For now just dump the result, divided in chunks, even if its generated all at once
-        std::unique_ptr<PrecompTmpFile> chunked_tmp = std::make_unique<PrecompTmpFile>();
-        chunked_tmp->open(precomp_mgr.get_tempfile_name("precompressed_bzip2_chunked"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-        // Output Precomp format header
-        chunked_tmp->put(static_cast<char>(result->flags | (result->recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
-        chunked_tmp->put(result->format);
-        // BZip2 format additional header byte
-        precompressor->dump_extra_header_data(*chunked_tmp);
-
-        auto remaining_precompressed_data = result->precompressed_size;
-        while (remaining_precompressed_data > 0) {
-          auto chunk_size = std::min(remaining_precompressed_data, static_cast<long long>(1 * 1024 * 1024));
-          remaining_precompressed_data -= chunk_size;
-          chunked_tmp->put(static_cast<char>(remaining_precompressed_data == 0 ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
-          fout_fput_vlint(*chunked_tmp, chunk_size);
-          fast_copy(*result->precompressed_stream, *chunked_tmp, chunk_size);
-        }
-        auto chunked_tmp_size = chunked_tmp->tellp();
+        catch (...) { continue; }  // TODO: print/record/report handler failed
 
         // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
         // Note that this is done before recursion for 2 reasons:
@@ -728,12 +704,12 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
           try {
-            verification_success = verify_precompressed_result2(precomp_mgr, result, chunked_tmp, chunked_tmp_size, input_file_pos);
+            verification_success = verify_precompressed_result2(precomp_mgr, original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (!verification_success) continue;
           // ensure that the precompressed stream is ready to read from the start, as if verification never happened
-          chunked_tmp->seekg(0, std::ios_base::beg);
+          precompressed->seekg(0, std::ios_base::beg);
         }
 
         precomp_mgr.statistics.recompressed_streams_count++;
@@ -749,28 +725,27 @@ int compress_file_impl(Precomp& precomp_mgr) {
           auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
           recursion_result r{};
           try {
-            r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+            r = recursion_compress(precomp_mgr, original_stream_size, precompressed_stream_size, *precompressed, recurse_tempfile_name);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (r.success) {
             auto rec_tmpfile = new PrecompTmpFile();
             rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-            result->precompressed_stream = std::unique_ptr<IStreamLike>(rec_tmpfile);
-            result->recursion_filesize = r.file_length;
-            result->recursion_used = true;
+            precompressed = std::unique_ptr<IStreamLike>(rec_tmpfile);
+            auto recursion_filesize = r.file_length;
+            auto recursion_used = true;
           }
           else {
             // ensure that the precompressed stream is ready to read from the start, as if recursion attempt never happened
-            result->precompressed_stream->seekg(0, std::ios_base::beg);
+            precompressed->seekg(0, std::ios_base::beg);
           }
         }
 
-        chunked_tmp->reopen();
-        fast_copy(*chunked_tmp, *precomp_mgr.ctx->fout, chunked_tmp_size);
+        fast_copy(*precompressed, *precomp_mgr.ctx->fout, precompressed_stream_size);
 
         // set input file pointer after recompressed data
-        input_file_pos += result->complete_original_size() - 1;
-        compressed_data_found = result->success;
+        input_file_pos += original_stream_size - 1;
+        compressed_data_found = true;
         break;
       }
       for (const auto& formatHandler : format_handlers) {
@@ -1269,7 +1244,7 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     return true;
 }
 
-bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, const std::unique_ptr<PrecompTmpFile>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
+bool verify_precompressed_result2(Precomp& precomp_mgr, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
   // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
   recursion_push(*precomp_mgr.ctx, 0);
   auto new_ctx = std::move(precomp_mgr.ctx);
@@ -1278,7 +1253,6 @@ bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<pr
   // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
   // a PCf file without the PCF header, if that makes sense));
   new_ctx->fin_length = precompressed_size;
-  tmp_file->reopen();
   new_ctx->fin = std::make_unique<IStreamLikeView>(tmp_file.get(), precompressed_size);
 
   // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
@@ -1293,7 +1267,7 @@ bool verify_precompressed_result2(Precomp& precomp_mgr, const std::unique_ptr<pr
   auto recompressed_data_sha1 = sha1_ostream.get_digest();
 
   // Validate that the recompressed_size is what we expect
-  if (recompressed_size != result->complete_original_size()) return false;
+  if (recompressed_size != original_stream_size) return false;
 
   precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
   auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);
