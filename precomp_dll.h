@@ -250,6 +250,208 @@ public:
   };
 };
 
+class ProcessorAdapter {
+protected:
+  class ProcessorIStreamLike : public IStreamLike {
+  private:
+    std::mutex* mtx;
+    std::condition_variable* data_needed_cv;
+    uint32_t* avail_in;
+    std::byte** next_in;
+    std::streamsize _gcount = 0;
+    bool _eof = false;
+    std::istream::pos_type _tellg = 0;
+
+  public:
+    std::condition_variable data_available_cv;
+    bool sleeping = false;
+    bool force_eof = false;
+
+    explicit ProcessorIStreamLike(std::mutex* _mtx, std::condition_variable* _data_needed_cv, uint32_t* _avail_in, std::byte** _next_in)
+      : _eof(false), mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
+
+    ProcessorIStreamLike& read(char* buff, std::streamsize count) override {
+      if (force_eof) {
+        _eof = true;
+        _gcount = 0;
+        return *this;
+      }
+      std::unique_lock lock(*mtx);
+      auto remainingSize = count;
+      auto currBufferPos = buff;
+      while (remainingSize > 0) {
+        const auto iterationSize = std::min<uint64_t>(*avail_in, remainingSize);
+        if (iterationSize > 0) {
+          std::copy_n(reinterpret_cast<unsigned char*>(*next_in), iterationSize, currBufferPos);
+          *next_in += iterationSize;
+          *avail_in -= iterationSize;
+          remainingSize -= iterationSize;
+          currBufferPos += iterationSize;
+        }
+
+        if (force_eof) {
+          _eof = true;
+          _gcount = count - remainingSize;
+          _tellg += _gcount;
+          return *this;
+        }
+        // If we couldn't read all the data from our input buffer we need to block the thread until the consumer gives us more memory in
+        if (remainingSize > 0) {
+          data_needed_cv->notify_one();
+          sleeping = true;
+          data_available_cv.wait(lock);
+          sleeping = false;
+        }
+      }
+
+      _gcount = count;
+      _tellg += _gcount;
+      return *this;
+    }
+
+    ProcessorIStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+      throw std::runtime_error("SEEK NOT ALLOWED ON ProcessorIStreamLike");
+    }
+
+    std::streamsize gcount() override { return _gcount; }
+    std::istream::pos_type tellg() override { return _tellg; }
+    bool eof() override { return _eof; };
+    bool good() override { return !eof(); };
+    bool bad() override { return false; }
+    void clear() override {};
+  };
+
+  class ProcessorOStreamLike : public OStreamLike {
+    std::mutex* mtx;
+    uint32_t* avail_out;
+    std::byte** next_out;
+    std::condition_variable* data_full_cv;
+    std::istream::pos_type _tellp = 0;
+    bool _eof = false;
+
+  public:
+    std::condition_variable data_freed_cv;
+    bool sleeping = false;
+    bool force_eof = false;
+
+    explicit ProcessorOStreamLike(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
+      : mtx(_mtx), data_full_cv(_data_full_cv), avail_out(_avail_out), next_out(_next_out) {}
+
+    ProcessorOStreamLike& write(const char* buf, std::streamsize count) override {
+      if (force_eof) {
+        _eof = true;
+        return *this;
+      }
+      std::unique_lock lock(*mtx);
+      auto remainingSize = count;
+      auto currBufferPos = buf;
+      while (remainingSize > 0) {
+        const auto iterationSize = std::min<uint64_t>(*avail_out, remainingSize);
+        if (iterationSize > 0) {
+          std::copy_n(currBufferPos, iterationSize, reinterpret_cast<unsigned char*>(*next_out));
+          *avail_out -= iterationSize;
+          *next_out += iterationSize;
+          remainingSize -= iterationSize;
+          currBufferPos += iterationSize;
+        }
+
+        if (force_eof) {
+          _eof = true;
+          _tellp += count - remainingSize;
+          return *this;
+        }
+        // If we couldn't write all the data to our output buffer we need to block the thread until the consumer takes that data and gives us more memory
+        if (remainingSize > 0) {
+          data_full_cv->notify_one();
+          sleeping = true;
+          data_freed_cv.wait(lock);
+          sleeping = false;
+        }
+      }
+
+      _tellp += count;
+      return *this;
+    }
+
+    std::ostream::pos_type tellp() override { return _tellp; }
+    ProcessorOStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) {
+      throw std::runtime_error("SEEK NOT ALLOWED ON ProcessorOStreamLike");
+    }
+
+    bool eof() override { return _eof; };
+    bool good() override { return !eof(); };
+    bool bad() override { return false; }
+    void clear() override {};
+  };
+
+  std::function<bool()> process_func;
+  std::thread execution_thread;
+  bool started = false;
+  bool success = false;
+  bool finished = false;
+  std::mutex mtx;
+
+  std::unique_ptr<ProcessorIStreamLike> input_stream;
+  std::unique_ptr<ProcessorOStreamLike> output_stream;
+  std::condition_variable data_flush_needed_cv;
+public:
+  bool force_input_eof = false;
+
+  ProcessorAdapter(
+    uint32_t* avail_in, std::byte** next_in,
+    uint32_t* avail_out, std::byte** next_out
+  ) {
+    input_stream = std::make_unique<ProcessorIStreamLike>(&mtx, &data_flush_needed_cv, avail_in, next_in);
+    output_stream = std::make_unique<ProcessorOStreamLike>(&mtx, &data_flush_needed_cv, avail_out, next_out);
+  }
+  ProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool()> process_func_)
+    : ProcessorAdapter(avail_in, next_in, avail_out, next_out) {
+    process_func = process_func_;
+  }
+  virtual ~ProcessorAdapter() {
+    input_stream->force_eof = true;
+    output_stream->force_eof = true;
+    input_stream->data_available_cv.notify_all();
+    output_stream->data_freed_cv.notify_all();
+    if (execution_thread.joinable()) execution_thread.join();
+  }
+
+  PrecompProcessorReturnCode process() {
+    if (finished) {
+      return success ? PP_STREAM_END : PP_ERROR;
+    }
+    std::unique_lock lock(mtx);
+    if (!started) {
+      execution_thread = std::thread([&]() {
+        try {
+          success = process_func();
+        }
+        catch (...) {
+          success = false;
+        }
+        finished = true;
+        data_flush_needed_cv.notify_one();
+        });
+      started = true;
+    }
+    else {  // The thread was already started on a previous run of process() and got locked because it ran out of space on the in or out buffers
+      if (force_input_eof) { input_stream->force_eof = true; }
+      if (output_stream->sleeping) {
+        output_stream->data_freed_cv.notify_one();
+      }
+      else {
+        input_stream->data_available_cv.notify_one();
+      }
+    }
+
+    data_flush_needed_cv.wait(lock);
+    if (finished) {
+      return success ? PP_STREAM_END : PP_ERROR;
+    }
+    return PP_OK;
+  }
+};
+
 class PrecompFormatHandler2;
 extern std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2;
 

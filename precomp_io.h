@@ -43,7 +43,11 @@ public:
 class IStreamLike: public StreamLikeCommon {
 public:
   virtual IStreamLike& read(char* buff, std::streamsize count) = 0;
-  virtual std::istream::int_type get() = 0;
+  virtual std::istream::int_type get() {
+    unsigned char chr[1];
+    read(reinterpret_cast<char*>(&chr[0]), 1);
+    return gcount() == 1 ? chr[0] : EOF;
+  };
   virtual std::streamsize gcount() = 0;
   virtual IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) = 0;
   virtual std::istream::pos_type tellg() = 0;
@@ -52,8 +56,11 @@ public:
 class OStreamLike: public StreamLikeCommon {
 public:
   virtual OStreamLike& write(const char* buf, std::streamsize count) = 0;
-  virtual OStreamLike& put(char chr) = 0;
-  virtual void flush() = 0;
+  virtual OStreamLike& put(char chr) {
+    write(&chr, 1);
+    return *this;
+  };
+  virtual void flush() {};
   virtual std::ostream::pos_type tellp() = 0;
   virtual OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) = 0;
 };

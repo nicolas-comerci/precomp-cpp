@@ -118,168 +118,42 @@ public:
 
 };
 
-class PreflateProcessorBase {
+class PreflateProcessorBase : public ProcessorAdapter {
 protected:
   class ProcessorInputStream : public InputStream {
   private:
-    std::mutex* mtx;
-    std::condition_variable* data_needed_cv;
-    uint32_t* avail_in;
-    std::byte** next_in;
+    IStreamLike* istream;
 
   public:
-    std::condition_variable data_available_cv;
-    bool sleeping = false;
-    bool _eof;
-    bool force_eof = false;
-
-    explicit ProcessorInputStream(std::mutex* _mtx, std::condition_variable* _data_needed_cv, uint32_t* _avail_in, std::byte** _next_in)
-      : _eof(false), mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
+    explicit ProcessorInputStream(IStreamLike* istream_) : istream(istream_) {}
 
     [[nodiscard]] bool eof() const override {
-      return _eof;
+      return istream->eof();
     }
     size_t read(unsigned char* buffer, const size_t size) override {
-      if (force_eof) {
-        _eof = true;
-        return 0;
-      }
-      std::unique_lock lock(*mtx);
-      auto remainingSize = size;
-      auto currBufferPos = const_cast<unsigned char*>(buffer);
-      while (remainingSize > 0) {
-        const auto iterationSize = std::min<uint64_t>(*avail_in, remainingSize);
-        if (iterationSize > 0) {
-          std::copy_n(reinterpret_cast<unsigned char*>(*next_in), iterationSize, currBufferPos);
-          *next_in += iterationSize;
-          *avail_in -= iterationSize;
-          remainingSize -= iterationSize;
-          currBufferPos += iterationSize;
-        }
-
-        if (force_eof) {
-          _eof = true;
-          return size - remainingSize;
-        }
-        // If we couldn't read all the data from our input buffer we need to block the thread until the consumer gives us more memory in
-        if (remainingSize > 0) {
-          data_needed_cv->notify_one();
-          sleeping = true;
-          data_available_cv.wait(lock);
-          sleeping = false;
-        }
-      }
-
-      return size;
+      istream->read(reinterpret_cast<char*>(buffer), size);
+      return istream->gcount();
     }
   };
 
   class ProcessorOutStream : public OutputStream {
-    std::mutex* mtx;
-    uint32_t* avail_out;
-    std::byte** next_out;
-    std::condition_variable* data_full_cv;
+    OStreamLike* ostream;
 
   public:
-    std::condition_variable data_freed_cv;
-    bool sleeping = false;
-    bool force_eof = false;
-
-    ProcessorOutStream(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
-      : mtx(_mtx), data_full_cv(_data_full_cv), avail_out(_avail_out), next_out(_next_out) {}
+    ProcessorOutStream(OStreamLike* ostream_) : ostream(ostream_) {}
 
     size_t write(const unsigned char* buffer, const size_t size) override {
-      if (force_eof) return 0;
-      std::unique_lock lock(*mtx);
-      auto remainingSize = size;
-      auto currBufferPos = const_cast<unsigned char*>(buffer);
-      while (remainingSize > 0) {
-        const auto iterationSize = std::min<uint64_t>(*avail_out, remainingSize);
-        if (iterationSize > 0) {
-          std::copy_n(currBufferPos, iterationSize, reinterpret_cast<unsigned char*>(*next_out));
-          *avail_out -= iterationSize;
-          *next_out += iterationSize;
-          remainingSize -= iterationSize;
-          currBufferPos += iterationSize;
-        }
-
-        if (force_eof) {
-          return size - remainingSize;
-        }
-        // If we couldn't write all the data to our output buffer we need to block the thread until the consumer takes that data and gives us more memory
-        if (remainingSize > 0) {
-          data_full_cv->notify_one();
-          sleeping = true;
-          data_freed_cv.wait(lock);
-          sleeping = false;
-        }
-      }
-
+      ostream->write(reinterpret_cast<const char*>(buffer), size);
       return size;
     }
   };
 
-  std::function<bool()> process_func;
-  std::thread preflate_thread;
-  bool started = false;
-  bool success = false;
-  bool finished = false;
-  std::mutex mtx;
-
-  std::unique_ptr<ProcessorInputStream> input_stream;
-  std::unique_ptr<ProcessorOutStream> output_stream;
-  std::condition_variable data_flush_needed_cv;
+  ProcessorInputStream preflate_input;
+  ProcessorOutStream preflate_output;
 public:
-  bool force_input_eof = false;
+  PreflateProcessorBase(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out)
+    : ProcessorAdapter(avail_in, next_in, avail_out, next_out), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {
 
-  PreflateProcessorBase(
-    uint32_t* avail_in, std::byte** next_in,
-    uint32_t* avail_out, std::byte** next_out
-  ) {
-    input_stream = std::make_unique<ProcessorInputStream>(&mtx, &data_flush_needed_cv, avail_in, next_in);
-    output_stream = std::make_unique<ProcessorOutStream>(&mtx, &data_flush_needed_cv, avail_out, next_out);
-  }
-  ~PreflateProcessorBase() {
-    input_stream->force_eof = true;
-    output_stream->force_eof = true;
-    input_stream->data_available_cv.notify_all();
-    output_stream->data_freed_cv.notify_all();
-    if (preflate_thread.joinable()) preflate_thread.join();
-  }
-
-  PrecompProcessorReturnCode preflate_process() {
-    if (finished) {
-      return success ? PP_STREAM_END : PP_ERROR;
-    }
-    std::unique_lock lock(mtx);
-    if (!started) {
-      preflate_thread = std::thread([&]() {
-        try {
-          success = process_func();
-        }
-        catch (...) {
-          success = false;
-        }
-        finished = true;
-        data_flush_needed_cv.notify_one();
-      });
-      started = true;
-    }
-    else {  // The thread was already started on a previous run of process() and got locked because it ran out of space on the in or out buffers
-      if (force_input_eof) { input_stream->force_eof = true; }
-      if (output_stream->sleeping) {
-        output_stream->data_freed_cv.notify_one();
-      }
-      else {
-        input_stream->data_available_cv.notify_one();
-      }
-    }
-
-    data_flush_needed_cv.wait(lock);
-    if (finished) {
-      return success ? PP_STREAM_END : PP_ERROR;
-    }
-    return PP_OK;
   }
 };
 
@@ -292,10 +166,10 @@ public:
     : PrecompFormatPrecompressor(buffer, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
     process_func = [this]() -> bool {
       result.accepted = preflate_decode(
-        *output_stream,
+        preflate_output,
         result.recon_data,
         compressed_stream_size,
-        *input_stream,
+        preflate_input,
         []() {},
         1 << 21
       );
@@ -304,7 +178,7 @@ public:
   }
 
   PrecompProcessorReturnCode process() override {
-    return preflate_process();
+    return PreflateProcessorBase::process();
   }
 };
 
@@ -313,12 +187,12 @@ public:
   DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
     : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
     process_func = [this, &recon_data = precomp_hdr_data.rdres.recon_data, uncompressed_stream_size = precomp_hdr_data.rdres.uncompressed_stream_size]() -> bool {
-      return preflate_reencode(*output_stream, recon_data, *input_stream, uncompressed_stream_size, progress_callback);
+      return preflate_reencode(preflate_output, recon_data, preflate_input, uncompressed_stream_size, progress_callback);
       };
   }
 
   PrecompProcessorReturnCode process() override {
-    return preflate_process();
+    return PreflateProcessorBase::process();
   }
 };
 
