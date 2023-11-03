@@ -719,7 +719,7 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
   switch (mode) {
   case CREATE_NEW_MODEL:
   {
-    bool perfectZLIB = reconDataBIS.get(1) == 0;
+    const bool perfectZLIB = reconDataBIS.get(1) == 0;
     mt.params.compLevel = reconDataBIS.get(4);
     mt.params.memLevel = reconDataBIS.get(4);
     mt.params.windowBits = reconDataBIS.get(3) + 8;
@@ -737,10 +737,10 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
         mt.params.matchesToStartDetected = reconDataBIS.get(1);
       }
       mt.params.log2OfMaxChainDepthM1 = reconDataBIS.get(4);
-      // read length (vli) and model data
-      size_t res_size = reconDataBIS.getVLI();
-      // interpret model data
       {
+        // read length (vli) and model data
+        const size_t res_size = reconDataBIS.getVLI();
+        // interpret model data
         MemStream tmp_mem;
         reconDataBIS.copyBytesTo(tmp_mem, res_size);
         tmp_mem.seek(0);

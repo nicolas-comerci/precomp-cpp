@@ -104,9 +104,9 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_RAW, ZlibFormatHandler::create);
-REGISTER_PRECOMP_FORMAT_HANDLER(D_BRUTE, DeflateFormatHandler::create);
 std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_BRUTE, DeflateFormatHandler2::create);
 
 void precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
@@ -434,9 +434,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
     }
     // Brute mode detects a bit less than intense mode to avoid false positives and slowdowns, so both can be active.
     if (is_recompressing || switches.brute_mode) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BRUTE]()));
+        format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_BRUTE]()));
         if (switches.brute_mode_depth_limit >= 0) {
-            format_handlers.back()->depth_limit = switches.brute_mode_depth_limit;
+            format_handlers2.back()->depth_limit = switches.brute_mode_depth_limit;
         }
     }
 }
@@ -625,6 +625,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           precompressor->next_in = in_buf.data();
           precompressor->avail_in = 0;
           uint64_t blockCount = 0;
+          bool reached_eof = false;
           while (true) {
             // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
             if (precompressor->avail_in > 0) {
@@ -632,17 +633,19 @@ int compress_file_impl(Precomp& precomp_mgr) {
               std::memmove(in_buf.data(), precompressor->next_in, precompressor->avail_in);
             }
             const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + precompressor->avail_in);
-            precomp_mgr.ctx->fin->read(in_buf_ptr, CHUNK - precompressor->avail_in);
-            const auto read_amt = precomp_mgr.ctx->fin->gcount();
-            if (read_amt == 0) {
-              break;  // This might be wrong, it's possible that there is still data being outputted
+            const auto read_amt = CHUNK - precompressor->avail_in;
+            std::streamsize gcount = 0;
+            if (read_amt > 0) {
+              precomp_mgr.ctx->fin->read(in_buf_ptr, read_amt);
+              gcount = precomp_mgr.ctx->fin->gcount();
             }
-            precompressor->avail_in += read_amt;
+
+            precompressor->avail_in += gcount;
             precompressor->next_in = in_buf.data();
             if (precomp_mgr.ctx->fin->bad()) break;
 
             const auto avail_in_before_process = precompressor->avail_in;
-            ret = precompressor->process();
+            ret = precompressor->process(reached_eof);
             if (ret != PP_OK && ret != PP_STREAM_END) break;
 
             // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
@@ -657,15 +660,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
                 // Output Precomp format header
                 precompressed_tmp->put(static_cast<char>(header_byte));
                 precompressed_tmp->put(formatTag);
-                // BZip2 format additional header byte
-                precompressor->dump_extra_header_data(*precompressed_tmp);
+                precompressor->dump_extra_stream_header_data(*precompressed_tmp);
               }
               blockCount += 1;
 
               // Block chunk header
               precompressed_tmp->put(static_cast<char>(ret == PP_STREAM_END ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
+              precompressor->dump_extra_block_header_data(*precompressed_tmp);
               fout_fput_vlint(*precompressed_tmp, decompressed_chunk_size);
-
               precompressed_tmp->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
 
               precompressor->next_out = out_buf.data();
@@ -674,6 +676,12 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
             if (precompressed_tmp->bad()) break;
             if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+
+            if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
+              // No more data will ever come and we already flushed all the output data processed, notify processor so it can finish
+              reached_eof = true;
+            }
+            // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
           }
 
           // TODO: set reasonable lower limit for precompressed_stream_size
@@ -1009,11 +1017,12 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
             auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, handler_tools2);
 
             while (true) {
-              std::byte data_hdr = static_cast<std::byte>(precompressed_input->get());
-              auto data_block_size = fin_fget_vlint(*precompressed_input);
+              const auto data_hdr = static_cast<std::byte>(precompressed_input->get());
+              recompressor->read_extra_block_header_data(*precompressed_input);
+              const auto data_block_size = fin_fget_vlint(*precompressed_input);
 
-              bool last_block = (data_hdr & std::byte{ 0b1000000 }) == std::byte{ 0b1000000 };
-              bool finish_stream = (data_hdr & std::byte{ 0b0000001 }) == std::byte{ 0b0000001 };
+              const bool last_block = (data_hdr & std::byte{ 0b1000000 }) == std::byte{ 0b1000000 };
+              const bool finish_stream = (data_hdr & std::byte{ 0b0000001 }) == std::byte{ 0b0000001 };
               PrecompProcessorReturnCode retval;
               if (finish_stream && !last_block) {
                 throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
@@ -1024,7 +1033,7 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
 
               while (true) {
                 if (recompressor->avail_in == 0 && remaining_block_bytes > 0) {
-                  auto amt_to_read = std::min<long long>(remaining_block_bytes, CHUNK);
+                  const auto amt_to_read = std::min<long long>(remaining_block_bytes, CHUNK);
                   precompressed_input->read(reinterpret_cast<char*>(in_buf.data()), amt_to_read);
                   recompressor->avail_in = precompressed_input->gcount();
                   recompressor->next_in = reinterpret_cast<std::byte*>(in_buf.data());
@@ -1036,10 +1045,10 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
                 recompressor->next_out = reinterpret_cast<std::byte*>(out_buf.data());
 
                 if (finish_stream && remaining_block_bytes == 0) {
-                  retval = recompressor->recompress_final_block();
+                  retval = recompressor->process(true);
                 }
                 else {
-                  retval = recompressor->process();
+                  retval = recompressor->process(false);
                 }
                 if (retval == PP_ERROR) {
                   throw PrecompError(ERR_DURING_RECOMPRESSION);

@@ -224,9 +224,10 @@ public:
   PrecompFormatPrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatPrecompressor() = default;
 
-  virtual PrecompProcessorReturnCode process() = 0;
+  virtual PrecompProcessorReturnCode process(bool input_eof) = 0;
 
-  virtual void dump_extra_header_data(OStreamLike& output) {}
+  virtual void dump_extra_stream_header_data(OStreamLike& output) {}
+  virtual void dump_extra_block_header_data(OStreamLike& output) {}
 };
 
 class PrecompFormatRecompressor {
@@ -242,12 +243,9 @@ public:
   PrecompFormatRecompressor(const PrecompFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatRecompressor() = default;
 
-  virtual PrecompProcessorReturnCode process() = 0;
-  virtual PrecompProcessorReturnCode recompress_final_block() {
-    // Some recompressors might not need to handle their final block in a special way, or might already have read metadata that allows them to know data is ending,
-    // thus this simple default implementation
-    return process();
-  };
+  virtual PrecompProcessorReturnCode process(bool input_eof) = 0;
+
+  virtual void read_extra_block_header_data(IStreamLike& input) {}
 };
 
 class ProcessorAdapter {
@@ -416,7 +414,8 @@ public:
     if (execution_thread.joinable()) execution_thread.join();
   }
 
-  PrecompProcessorReturnCode process() {
+  PrecompProcessorReturnCode process(bool input_eof) {
+    if (input_eof) force_input_eof = true;
     if (finished) {
       return success ? PP_STREAM_END : PP_ERROR;
     }

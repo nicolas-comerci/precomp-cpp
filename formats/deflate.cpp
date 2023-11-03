@@ -161,6 +161,7 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor, public PreflateP
 public:
   recompress_deflate_result result{};
   uint64_t compressed_stream_size = 0;
+  size_t recon_data_written = 0;
 
   DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback)
     : PrecompFormatPrecompressor(buffer, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
@@ -174,25 +175,44 @@ public:
         1 << 21
       );
       return result.accepted;
-      };
+    };
   }
 
-  PrecompProcessorReturnCode process() override {
-    return PreflateProcessorBase::process();
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    return PreflateProcessorBase::process(input_eof);
+  }
+
+  void dump_extra_stream_header_data(OStreamLike& output) override {
+    fout_fput_vlint(output, 0);  // No Zlib header
+  }
+  void dump_extra_block_header_data(OStreamLike& output) override {
+    const auto new_recon_data_size = result.recon_data.size() - recon_data_written;
+    fout_fput_vlint(output, new_recon_data_size);
+    output.write(reinterpret_cast<const char*>(result.recon_data.data() + recon_data_written), new_recon_data_size);
+    recon_data_written += new_recon_data_size;
   }
 };
 
 class DeflateRecompressor : public PrecompFormatRecompressor, public PreflateProcessorBase {
+  std::vector<unsigned char>* recon_data;
 public:
   DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
-    : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
-    process_func = [this, &recon_data = precomp_hdr_data.rdres.recon_data, uncompressed_stream_size = precomp_hdr_data.rdres.uncompressed_stream_size]() -> bool {
-      return preflate_reencode(preflate_output, recon_data, preflate_input, uncompressed_stream_size, progress_callback);
-      };
+    : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out),
+      recon_data(const_cast<std::vector<unsigned char>*>(&precomp_hdr_data.rdres.recon_data)) {
+    process_func = [this, uncompressed_stream_size = precomp_hdr_data.rdres.uncompressed_stream_size]() -> bool {
+      return preflate_reencode(preflate_output, *recon_data, preflate_input, uncompressed_stream_size, progress_callback);
+    };
   }
 
-  PrecompProcessorReturnCode process() override {
-    return PreflateProcessorBase::process();
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    return PreflateProcessorBase::process(input_eof);
+  }
+
+  void read_extra_block_header_data(IStreamLike& input) override {
+    const auto new_recon_data_len = fin_fget_vlint(input);
+    const auto recon_data_prev_size = recon_data->size();
+    recon_data->resize(recon_data_prev_size + new_recon_data_len);
+    input.read(reinterpret_cast<char*>(recon_data->data() + recon_data_prev_size), new_recon_data_len);
   }
 };
 
@@ -207,6 +227,7 @@ PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStream
   in_buf.resize(CHUNK);
   processor.next_in = in_buf.data();
   processor.avail_in = 0;
+  bool reached_eof = false;
   while (true) {
     // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
     if (processor.avail_in > 0) {
@@ -226,7 +247,7 @@ PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStream
     if (istream.bad()) break;
 
     const auto avail_in_before_process = processor.avail_in;
-    ret = processor.process();
+    ret = processor.process(reached_eof);
     if (ret != PP_OK && ret != PP_STREAM_END) break;
 
     // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
@@ -242,7 +263,7 @@ PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStream
 
     if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
       // No more data will ever come and we already flushed all the output data processed, notify processor so it can finish
-      processor.force_input_eof = true;
+      reached_eof = true;
     }
     // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
 
@@ -479,11 +500,8 @@ bool check_inflate_result(
 bool DeflateFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   return check_inflate_result(this->falsePositiveDetector, current_input_id, buffer, -15, original_input_pos, true);
 }
-
-std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
-  return fmt_hdr;
+bool DeflateFormatHandler2::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  return check_inflate_result(this->falsePositiveDetector, current_input_id, buffer, -15, original_input_pos, true);
 }
 
 std::unique_ptr<precompression_result> DeflateFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
@@ -550,9 +568,7 @@ bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const 
   return preflate_reencode(os, rdres.recon_data, unpacked_output, progress_callback);
 }
 
-void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags,
-  unsigned char* hdr_data, unsigned& hdr_length,
-  const bool inc_last_hdr_byte) {
+void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte) {
   hdr_length = fin_fget_vlint(input);
   if (!inc_last_hdr_byte) {
     input.read(reinterpret_cast<char*>(hdr_data), hdr_length);
@@ -611,3 +627,25 @@ void DeflateFormatHandler::recompress(IStreamLike& precompressed_input, OStreamL
   recompress_deflate(precompressed_input, recompressed_stream, deflate_hdr_data, tmpfile_name, "brute mode", tools);
 }
 
+std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler2::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
+  return std::make_unique<DeflatePrecompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+}
+
+std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler2::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  //print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
+  //print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", static_cast<BZip2FormatHeaderData&>(precomp_hdr_data).level);
+
+  return std::make_unique<DeflateRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
+}
+
+std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
+  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  return fmt_hdr;
+}
+std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler2::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
+  unsigned hdr_length;
+  fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, false);
+  return fmt_hdr;
+}

@@ -38,7 +38,7 @@ public:
     BZ2_bzDecompressEnd(&strm);
   }
 
-  PrecompProcessorReturnCode process() override {
+  PrecompProcessorReturnCode process(bool input_eof) override {
     if (stream_failed) return PrecompProcessorReturnCode::PP_ERROR;
     progress_callback();
 
@@ -63,7 +63,7 @@ public:
     return ret == BZ_OK ? PrecompProcessorReturnCode::PP_OK : PrecompProcessorReturnCode::PP_STREAM_END;
   }
 
-  void dump_extra_header_data(OStreamLike& output) override {
+  void dump_extra_stream_header_data(OStreamLike& output) override {
     output.put(compression_level);
   }
 };
@@ -120,41 +120,26 @@ public:
     BZ2_bzCompressEnd(&strm);
   }
 
-  PrecompProcessorReturnCode process() override {
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    int ret = BZ_OK;
     while (avail_in > 0 && avail_out != 0) {
-      auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
+      const auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
       strm.avail_in = in_chunk_size;
       strm.next_in = reinterpret_cast<char*>(next_in);
-
-      auto ret = _compress_block(BZ_RUN);
 
       avail_in -= in_chunk_size;
       next_in += in_chunk_size;
 
+      ret = _compress_block(avail_in == 0 && input_eof ? BZ_FINISH : BZ_RUN);
+
       if (ret < 0) return PP_ERROR;
+    }
+    if (input_eof) {
+      // What if I did BZ_FINISH but there wasn't enough space on the output buffer? do I get BZ_OK? how should it be handled?
+      if (ret == BZ_STREAM_END) return PP_STREAM_END;
+      return PP_ERROR; // TODO: partial streams support? return something like PP_STREAM_PARTIAL_END
     }
     return PP_OK;
-  }
-
-  PrecompProcessorReturnCode recompress_final_block() override {
-    //auto retval = _compress_block(BZ_FINISH);
-    int ret;
-    while (avail_in > 0 && avail_out != 0) {
-      auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
-      strm.avail_in = in_chunk_size;
-      strm.next_in = reinterpret_cast<char*>(next_in);
-
-      avail_in -= in_chunk_size;
-      next_in += in_chunk_size;
-
-      ret = _compress_block(avail_in == 0 ? BZ_FINISH : BZ_RUN);
-
-      if (ret < 0) return PP_ERROR;
-    }
-
-    // What if I did BZ_FINISH but there wasn't enough space on the output buffer? do I get BZ_OK? how should it be handled?
-    if (ret == BZ_STREAM_END) return PP_STREAM_END;
-    return PP_ERROR;
   }
 };
 

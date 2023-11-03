@@ -5,7 +5,7 @@
 #include <span>
 
 class BZip2FormatHandler : public PrecompFormatHandler2 {
-	std::array<unsigned char, CHUNK> tmp_out;
+	std::array<unsigned char, CHUNK> tmp_out{};
 public:
 	explicit BZip2FormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
 		: PrecompFormatHandler2(_header_bytes, _depth_limit, true) {}

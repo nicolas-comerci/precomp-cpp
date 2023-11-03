@@ -32,7 +32,7 @@ if (MSVC)
     if (WIN32 AND NOT MSVC_VERSION VERSION_LESS 142)
         # This should enable hot reload for VS2022
         add_link_options($<$<CONFIG:Debug>:/INCREMENTAL>)
-        add_compile_options($<$<CONFIG:Debug>:/ZI>)
+        add_compile_options($<$<CONFIG:Debug>:/Zi>)
     endif()
 endif()
 
