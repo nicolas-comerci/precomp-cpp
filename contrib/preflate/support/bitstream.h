@@ -19,70 +19,63 @@
 #include "bit_helper.h"
 #include "stream.h"
 
-// Huffman decoder for little endian 
+// Little endian, as we use it for the Huffman decoder
 class BitInputStream {
 public:
   BitInputStream(InputStream&);
 
-  bool eof() const {
-    return _eof && _bufPos == _bufSize && !_bitsRemaining;
+  bool eof() {
+    const auto noBitsRemaining = _bufPos == _bufSize && !_bitsRemaining;
+    // If we don't have any remaining bits but we don't have eof flag set yet, we need to attempt a peek to see if we are actually at eof
+    if (noBitsRemaining && !_eof) {
+      peek(1);
+    }
+    return _eof && noBitsRemaining;
   }
 
   size_t bitPos() const {
     return _totalBitPos;
   }
 
+  size_t peek(const unsigned n, unsigned& peekedAmount) {
+    _fill(n);
+    peekedAmount = std::min(n, _bitsRemaining);
+    return _bits & ((1 << peekedAmount) - 1);
+  }
   size_t peek(const unsigned n) {
-    if (_bitsRemaining < n) {
-      _fill();
-    }
-    return _bits & ((1 << n) - 1);
+    unsigned bitsToPeek;
+    return peek(n, bitsToPeek);
   }
   void skip(const unsigned n) {
-    _bitsRemaining -= std::min(n, _bitsRemaining);
-    _bits >>= n;
-    _totalBitPos += n;
+    const auto bitsToSkip = std::min(n, _bitsRemaining);
+    _bitsRemaining -= bitsToSkip;
+    _bits >>= bitsToSkip;
+    _totalBitPos += bitsToSkip;
+  }
+  size_t get(const unsigned n, unsigned& gottenAmount) {
+    size_t v = peek(n, gottenAmount);
+    skip(gottenAmount);
+    return v;
   }
   size_t get(const unsigned n) {
-    size_t v = peek(n);
-    skip(n);
-    return v;
+    unsigned gottenAmount;
+    return get(n, gottenAmount);
   }
   size_t getReverse(const unsigned n) {
     return bitReverse(get(n), n);
   }
-  void skipToByte() {
-    skip(_bitsRemaining & 7);
-  }
-  bool checkLastBitsOfByteAreZero() {
-    return peek(_bitsRemaining & 7) == 0;
-  }
-  void fastFill(const unsigned n) {
-    if (_bitsRemaining < n) {
-      _fill();
-    }
-  }
-  size_t fastPeek(const unsigned n) {
-    return _bits & ((1 << n) - 1);
-  }
-  size_t fastGet(const unsigned n) {
-    size_t v = fastPeek(n);
-    skip(n);
-    return v;
-  }
   size_t copyBytesTo(OutputStream& output, const size_t len);
-  size_t getBytes(uint8_t* data, const size_t size);
   uint64_t getVLI();
 
 private:
-  void _fillBytes();
-  void _fill();
+  void _fillBytes(const unsigned nBytes);
+  void _fill(const unsigned n);
 
-  enum { BUF_SIZE = 1024, PRE_BUF_EXTRA = 16, BITS = sizeof(size_t)*8 };
+  enum { BUF_SIZE = 1024, BITS = sizeof(size_t)*8 };
 
   InputStream& _input;
-  unsigned char _buffer[PRE_BUF_EXTRA + BUF_SIZE];
-  unsigned _bufPos, _bufSize, _bufFastLimit;
+  unsigned char _buffer[BUF_SIZE];
+  unsigned _bufPos, _bufSize;
   bool _eof;
   size_t _bits;
   unsigned _bitsRemaining;

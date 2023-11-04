@@ -48,12 +48,6 @@ private:
   unsigned _readBits(const unsigned bits) {
     return _input.get(bits);
   }
-  void _skipToByte() {
-    _input.skipToByte();
-  }
-  bool _checkLastBitsOfByte() {
-    return _input.checkLastBitsOfByteAreZero();
-  }
   void _writeLiteral(const unsigned char l) {
     _output.write(&l, 1);
   }
