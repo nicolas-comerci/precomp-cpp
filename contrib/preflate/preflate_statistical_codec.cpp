@@ -686,7 +686,6 @@ PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData, 
     return;
   }
 }
-PreflateMetaDecoder::~PreflateMetaDecoder() {}
 
 std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaBlock() {
   if (reconDataBIS.eof()) return std::nullopt;
@@ -698,8 +697,7 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
 
   if (firstBlock) {
     firstBlock = false;
-    bool extension = reconDataBIS.get(1);
-    if (extension) {
+    if (bool extension = reconDataBIS.get(1)) {
       inError = true;
       return std::nullopt;
     }

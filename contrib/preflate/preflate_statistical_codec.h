@@ -605,7 +605,7 @@ private:
 
 public:
   PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize);
-  ~PreflateMetaDecoder();
+  ~PreflateMetaDecoder() = default;
 
   bool error() const {
     return inError;

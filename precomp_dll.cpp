@@ -665,7 +665,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
               blockCount += 1;
 
               // Block chunk header
-              precompressed_tmp->put(static_cast<char>(ret == PP_STREAM_END ? std::byte{ 0b1000001 } : std::byte{ 0b0000000 }));
+              precompressed_tmp->put(static_cast<char>(ret == PP_STREAM_END ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
               precompressor->dump_extra_block_header_data(*precompressed_tmp);
               fout_fput_vlint(*precompressed_tmp, decompressed_chunk_size);
               precompressed_tmp->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
@@ -1021,8 +1021,8 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
               recompressor->read_extra_block_header_data(*precompressed_input);
               const auto data_block_size = fin_fget_vlint(*precompressed_input);
 
-              const bool last_block = (data_hdr & std::byte{ 0b1000000 }) == std::byte{ 0b1000000 };
-              const bool finish_stream = (data_hdr & std::byte{ 0b0000001 }) == std::byte{ 0b0000001 };
+              const bool last_block = (data_hdr & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
+              const bool finish_stream = (data_hdr & std::byte{ 0b00000001 }) == std::byte{ 0b00000001 };
               PrecompProcessorReturnCode retval;
               if (finish_stream && !last_block) {
                 throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
@@ -1050,7 +1050,8 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
                 else {
                   retval = recompressor->process(false);
                 }
-                if (retval == PP_ERROR) {
+                if (retval == PP_ERROR || (retval == PP_STREAM_END && !last_block)) {
+                  // Error or premature end!
                   throw PrecompError(ERR_DURING_RECOMPRESSION);
                 }
 
