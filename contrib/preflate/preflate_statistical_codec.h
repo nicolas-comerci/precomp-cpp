@@ -590,7 +590,6 @@ public:
     modelType mt;
     std::vector<unsigned char> reconData;
     bool isLastMetaBlock;
-    uint64_t uncompressedStartOfs;
     uint64_t uncompressedSize;
   };
 
@@ -600,11 +599,10 @@ private:
 
   BorrowedMemStreamReadOnly<uint8_t> reconDataMem;
   BitInputStream reconDataBIS;
-  const uint64_t uncompressedSize;
   uint64_t uncompressedDataPos = 0;
 
 public:
-  PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize);
+  PreflateMetaDecoder(const std::vector<uint8_t>& reconData);
   ~PreflateMetaDecoder() = default;
 
   bool error() const {
@@ -612,9 +610,8 @@ public:
   }
 
   std::optional<metaBlockInfo> readMetaBlock();
-  bool beginMetaBlock(PreflatePredictionDecoder&, PreflateParameters&, const PreflateMetaDecoder::metaBlockInfo& mb);
-  bool endMetaBlock(PreflatePredictionDecoder&);
-  void finish();  
+  static bool beginMetaBlock(PreflatePredictionDecoder&, PreflateParameters&, const PreflateMetaDecoder::metaBlockInfo& mb);
+  static bool endMetaBlock(PreflatePredictionDecoder&);
 };
 
 bool isEqual(const PreflatePredictionModel&, const PreflatePredictionModel&);

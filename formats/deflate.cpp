@@ -199,8 +199,8 @@ public:
   DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
     : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out),
       recon_data(const_cast<std::vector<unsigned char>*>(&precomp_hdr_data.rdres.recon_data)) {
-    process_func = [this, uncompressed_stream_size = precomp_hdr_data.rdres.uncompressed_stream_size]() -> bool {
-      return preflate_reencode(preflate_output, *recon_data, preflate_input, uncompressed_stream_size, progress_callback);
+    process_func = [this]() -> bool {
+      return preflate_reencode(preflate_output, *recon_data, preflate_input, progress_callback);
     };
   }
 

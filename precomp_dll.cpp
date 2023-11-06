@@ -688,7 +688,13 @@ int compress_file_impl(Precomp& precomp_mgr) {
           if (ret == PP_ERROR || precompressed_stream_size <= 0) continue;
 
           precomp_mgr.statistics.decompressed_streams_count++;
-          precomp_mgr.statistics.decompressed_bzip2_count++;
+          // TODO: do this in a non stupid way
+          if (formatTag == D_BZIP2) {
+            precomp_mgr.statistics.decompressed_bzip2_count++;
+          }
+          else {
+            precomp_mgr.statistics.decompressed_brute_count++;
+          }
           precomp_mgr.ctx->non_zlib_was_used = true;
 
           precompressed_stream_size = precompressed_tmp->tellp();
@@ -721,7 +727,12 @@ int compress_file_impl(Precomp& precomp_mgr) {
         }
 
         precomp_mgr.statistics.recompressed_streams_count++;
-        precomp_mgr.statistics.recompressed_bzip2_count++;
+        if (formatTag == D_BZIP2) {
+          precomp_mgr.statistics.recompressed_bzip2_count++;
+        }
+        else {
+          precomp_mgr.statistics.recompressed_brute_count++;
+        }
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now

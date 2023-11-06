@@ -675,12 +675,9 @@ bool PreflateMetaEncoder::endMetaBlock(PreflatePredictionEncoder& encoder, const
   return true;
 }
 
-PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData, const uint64_t uncompressedSize_)
-  : inError(false)
-  , reconDataMem(&reconData)
-  , reconDataBIS(reconDataMem)
-  , uncompressedSize(uncompressedSize_) {
-  if (reconData.size() == 0) {
+PreflateMetaDecoder::PreflateMetaDecoder(const std::vector<uint8_t>& reconData)
+  : inError(false), reconDataMem(&reconData), reconDataBIS(reconDataMem) {
+  if (reconData.empty()) {
     inError = true;
     return;
   }
@@ -760,13 +757,7 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
     reconDataBIS.copyBytesTo(tmp_recon_mem, reconSize);
     mb.reconData = tmp_recon_mem.extractData();
   }
-  mb.uncompressedStartOfs = uncompressedDataPos;
   uncompressedDataPos += mb.uncompressedSize;
-  if (uncompressedDataPos > uncompressedSize) {
-    inError = true;
-    return std::nullopt;
-  }
-
   return mb;
 };
 
@@ -779,4 +770,3 @@ bool PreflateMetaDecoder::endMetaBlock(PreflatePredictionDecoder& decoder) {
   decoder.end();
   return true;
 }
-void PreflateMetaDecoder::finish() {}

@@ -23,13 +23,8 @@
 
 class PreflateReencoderHandler : public PreflateReencoderTask::Handler {
 public:
-  PreflateReencoderHandler(BitOutputStream& bos_,
-                           const std::vector<uint8_t>& reconData,
-                           const size_t uncompressedSize,
-                           std::function<void(void)> progressCallback_)
-    : decoder(reconData, uncompressedSize)
-    , progressCallback(progressCallback_)
-    , bos(bos_) {}
+  PreflateReencoderHandler(BitOutputStream& bos_, const std::vector<uint8_t>& reconData, std::function<void(void)> progressCallback_)
+    : decoder(reconData), progressCallback(progressCallback_), bos(bos_) {}
 
   std::optional<PreflateMetaDecoder::metaBlockInfo> readMetaBlock() { return decoder.readMetaBlock(); }
   bool error() const {
@@ -37,7 +32,6 @@ public:
   }
 
   bool finish() {
-    decoder.finish();
     return !decoder.error();
   }
 
@@ -131,10 +125,9 @@ bool PreflateReencoderTask::reencode() {
 bool preflate_reencode(OutputStream& os,
                        const std::vector<unsigned char>& preflate_diff,
                        InputStream& is,
-                       const uint64_t unpacked_size,
                        std::function<void(void)> block_callback) {
   BitOutputStream bos(os);
-  PreflateReencoderHandler decoder(bos, preflate_diff, unpacked_size, block_callback);
+  PreflateReencoderHandler decoder(bos, preflate_diff, block_callback);
   if (decoder.error()) {
     return false;
   }
@@ -199,7 +192,7 @@ bool preflate_reencode(OutputStream& os,
                        const std::vector<unsigned char>& unpacked_input,
                        std::function<void(void)> block_callback) {
   MemStream is(unpacked_input);
-  return preflate_reencode(os, preflate_diff, is, unpacked_input.size(), block_callback);
+  return preflate_reencode(os, preflate_diff, is, block_callback);
 }
 bool preflate_reencode(std::vector<unsigned char>& deflate_raw,
                        const std::vector<unsigned char>& preflate_diff,

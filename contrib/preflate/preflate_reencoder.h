@@ -61,7 +61,6 @@ bool preflate_reencode(std::vector<unsigned char>& deflate_raw,
 bool preflate_reencode(OutputStream& os,
                        const std::vector<unsigned char>& preflate_diff,
                        InputStream& unpacked_input,
-                       const uint64_t unpacked_size,
                        std::function<void(void)> block_callback);
 
 bool preflate_reencode(OutputStream& os,
