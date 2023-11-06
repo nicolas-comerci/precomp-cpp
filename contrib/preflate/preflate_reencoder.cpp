@@ -142,7 +142,7 @@ bool preflate_reencode(OutputStream& os,
   std::queue<std::future<std::shared_ptr<PreflateReencoderTask>>> futureQueue;
   size_t queueLimit = 2 * globalTaskPool.extraThreadCount();
   bool fail = false;
-  size_t j = 0;
+  bool reachedLastMetaBlock = false;
   while (auto mb_optional = decoder.readMetaBlock()) {
     auto& mb = *mb_optional;
     size_t curUncSize = uncompressedData.size();
@@ -152,8 +152,8 @@ bool preflate_reencode(OutputStream& os,
       return false;
     }
 
-    bool isLastMetaBlock = mb.isLastMetaBlock;
-    if (futureQueue.empty() && (queueLimit == 0 || isLastMetaBlock)) {
+    reachedLastMetaBlock = mb.isLastMetaBlock;
+    if (futureQueue.empty() && (queueLimit == 0 || reachedLastMetaBlock)) {
       PreflateReencoderTask task(decoder, std::move(mb), std::vector<uint8_t>(uncompressedData), curUncSize);
       if (!task.decodeAndRepredict() || !task.reencode()) {
         return false;
@@ -178,11 +178,9 @@ bool preflate_reencode(OutputStream& os,
       }));
     }
 
-    if (!isLastMetaBlock) {
-      uncompressedData.erase(uncompressedData.begin(),
-                             uncompressedData.begin() + std::max<size_t>(uncompressedData.size(), 1 << 15) - (1 << 15));
-    }
-    j++;
+    if (reachedLastMetaBlock) break;
+    uncompressedData.erase(uncompressedData.begin(),
+                           uncompressedData.begin() + std::max<size_t>(uncompressedData.size(), 1 << 15) - (1 << 15));
   }
   while (!futureQueue.empty()) {
     std::future<std::shared_ptr<PreflateReencoderTask>> first = std::move(futureQueue.front());
@@ -193,7 +191,7 @@ bool preflate_reencode(OutputStream& os,
     }
   }
   bos.flush();
-  return !fail && !decoder.error();
+  return !fail && !decoder.error() && reachedLastMetaBlock;
 }
 
 bool preflate_reencode(OutputStream& os,
