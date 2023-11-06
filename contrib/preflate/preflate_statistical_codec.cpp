@@ -618,10 +618,17 @@ bool PreflateMetaEncoder::endMetaBlock(PreflatePredictionEncoder& encoder, const
     bos.put(mode, 2);
   }
 
+  // BEWARE: there are some issues with bit alignment with BitInputStream and BitOutputStream after you do putVLI and/or putBytes
+  // because they do some stuff to have the bits aligned to bytes.
+  // In particular this means that anything without variable length is probably better outputted first where you don't need to worry
+  // about byte alignment at all.
+  // Found this the hard way when adding the isLastMetaBlock bit after the reconData and had to spend 4 hours debugging why it didn't work.
+
   switch(mode) {
   case CREATE_NEW_MODEL:
   {
     modelType& mt = modelList[mb.modelId];
+    bos.put(lastMetaBlock, 1);
     bool perfectZLIB = mt.mcodec.blockFullDefault && mt.mcodec.treecodeFullDefault && mt.mcodec.tokenFullDefault
       && mt.params.zlibCompatible;
     bos.put(!perfectZLIB, 1); // perfect zlib model
@@ -654,16 +661,8 @@ bool PreflateMetaEncoder::endMetaBlock(PreflatePredictionEncoder& encoder, const
     break;
   }
   }
-  // for the last block, the size of the reconstruction data and processed uncompressed data
-  // is implicitly going to end of stream, output 0 size and let decoder figure it out
-  if (!lastMetaBlock) {
-    bos.putVLI(mb.reconData.size());
-    bos.putVLI(mb.uncompressedSize);
-  }
-  else {
-    bos.putVLI(mb.reconData.size());
-    bos.putVLI(0);
-  }
+  bos.putVLI(mb.reconData.size());
+  bos.putVLI(mb.uncompressedSize);
   if (!mb.reconData.empty()) {
     bos.putBytes(mb.reconData.data(), mb.reconData.size());
   }
@@ -717,6 +716,7 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
   switch (mode) {
   case CREATE_NEW_MODEL:
   {
+    mb.isLastMetaBlock = reconDataBIS.get(1) == 1;
     const bool perfectZLIB = reconDataBIS.get(1) == 0;
     mt.params.compLevel = reconDataBIS.get(4);
     mt.params.memLevel = reconDataBIS.get(4);
@@ -762,14 +762,9 @@ std::optional<PreflateMetaDecoder::metaBlockInfo> PreflateMetaDecoder::readMetaB
   }
   mb.uncompressedStartOfs = uncompressedDataPos;
   uncompressedDataPos += mb.uncompressedSize;
-  mb.isLastMetaBlock = false;
   if (uncompressedDataPos > uncompressedSize) {
     inError = true;
     return std::nullopt;
-  }
-  if (mb.uncompressedSize == 0) {  // this should only happen for the last block
-    mb.uncompressedSize = uncompressedSize - mb.uncompressedStartOfs;
-    mb.isLastMetaBlock = true;
   }
 
   return mb;
