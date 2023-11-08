@@ -86,18 +86,20 @@ class BZip2Compressor : public PrecompFormatRecompressor {
       return BZ_PARAM_ERROR;
     }
     */
-    int ret;
+    int ret = BZ_OK;
     // Compress all that available data for that input chunk
     do {
-      strm.avail_out = CHUNK;
+      const auto original_avail_out = avail_out;
+      strm.avail_out = avail_out;
       strm.next_out = reinterpret_cast<char*>(next_out);
+      if (strm.avail_out == 0) break;
 
       ret = BZ2_bzCompress(&strm, flush);
       if (ret < 0) {
         return ret;
       }
 
-      unsigned int compressed_chunk_size = CHUNK - strm.avail_out;
+      const unsigned int compressed_chunk_size = original_avail_out - strm.avail_out;
       avail_out -= compressed_chunk_size;
       next_out += compressed_chunk_size;
     } while (strm.avail_out == 0);
@@ -122,22 +124,19 @@ public:
 
   PrecompProcessorReturnCode process(bool input_eof) override {
     int ret = BZ_OK;
-    while (avail_in > 0 && avail_out != 0) {
-      const auto in_chunk_size = avail_in > CHUNK ? CHUNK : avail_in;
-      strm.avail_in = in_chunk_size;
+    if (avail_in > 0 && avail_out != 0 || avail_out > 0 && input_eof) {
+      strm.avail_in = avail_in;
       strm.next_in = reinterpret_cast<char*>(next_in);
 
-      avail_in -= in_chunk_size;
-      next_in += in_chunk_size;
+      ret = _compress_block(input_eof ? BZ_FINISH : BZ_RUN);
 
-      ret = _compress_block(avail_in == 0 && input_eof ? BZ_FINISH : BZ_RUN);
+      next_in = reinterpret_cast<std::byte*>(strm.next_in);
+      avail_in = strm.avail_in;
 
       if (ret < 0) return PP_ERROR;
     }
-    if (input_eof) {
-      // What if I did BZ_FINISH but there wasn't enough space on the output buffer? do I get BZ_OK? how should it be handled?
-      if (ret == BZ_STREAM_END) return PP_STREAM_END;
-      return PP_ERROR; // TODO: partial streams support? return something like PP_STREAM_PARTIAL_END
+    if (ret == BZ_STREAM_END) {
+      return input_eof ? PP_STREAM_END : PP_ERROR;
     }
     return PP_OK;
   }
