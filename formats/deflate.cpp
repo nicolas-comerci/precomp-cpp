@@ -549,18 +549,19 @@ bool try_reconstructing_deflate_skip(IStreamLike& fin, OStreamLike& fout, const 
   return preflate_reencode(os, rdres.recon_data, unpacked_output, progress_callback);
 }
 
-void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte) {
+void fin_fget_deflate_hdr(IStreamLike& input, recompress_deflate_result& rdres, const std::byte flags, std::vector<unsigned char>& hdr_data, unsigned& hdr_length, const bool inc_last_hdr_byte) {
   hdr_length = fin_fget_vlint(input);
+  hdr_data.resize(hdr_length);
   if (!inc_last_hdr_byte) {
-    input.read(reinterpret_cast<char*>(hdr_data), hdr_length);
+    input.read(reinterpret_cast<char*>(hdr_data.data()), hdr_length);
   }
   else {
-    input.read(reinterpret_cast<char*>(hdr_data), hdr_length - 1);
+    input.read(reinterpret_cast<char*>(hdr_data.data()), hdr_length - 1);
     hdr_data[hdr_length - 1] = input.get() - 1;
   }
 }
 
-void fin_fget_deflate_rec(IStreamLike& precompressed_input, recompress_deflate_result& rdres, const std::byte flags, unsigned char* hdr, unsigned& hdr_length, const bool inc_last) {
+void fin_fget_deflate_rec(IStreamLike& precompressed_input, recompress_deflate_result& rdres, const std::byte flags, std::vector<unsigned char>& hdr, unsigned& hdr_length, const bool inc_last) {
   fin_fget_deflate_hdr(precompressed_input, rdres, flags, hdr, hdr_length, inc_last);
   fin_fget_recon_data(precompressed_input, rdres);
 }
@@ -582,10 +583,8 @@ void debug_deflate_reconstruct(const recompress_deflate_result& rdres, const cha
 
 void DeflateFormatHeaderData::read_data(IStreamLike& precompressed_input, std::byte precomp_hdr_flags, bool inc_last_hdr_byte) {
   unsigned hdr_length;
-  stream_hdr.resize(CHUNK);
 
-  fin_fget_deflate_rec(precompressed_input, rdres, precomp_hdr_flags, stream_hdr.data(), hdr_length, inc_last_hdr_byte);
-  stream_hdr.resize(hdr_length);
+  fin_fget_deflate_rec(precompressed_input, rdres, precomp_hdr_flags, stream_hdr, hdr_length, inc_last_hdr_byte);
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_size = fin_fget_vlint(precompressed_input);
   }
@@ -607,15 +606,12 @@ std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompre
 }
 
 std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  //print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
-  //print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", static_cast<BZip2FormatHeaderData&>(precomp_hdr_data).level);
-
   return std::make_unique<DeflateRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
 }
 
 std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
   unsigned hdr_length;
-  fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, false);
+  fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr, hdr_length, inc_last_hdr_byte());
   return fmt_hdr;
 }

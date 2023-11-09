@@ -94,6 +94,8 @@ public:
 	explicit DeflateFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
 		: PrecompFormatHandler2(_header_bytes, _depth_limit, true) {}
 
+  virtual bool inc_last_hdr_byte() { return false; }
+
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
 
 	std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) override;

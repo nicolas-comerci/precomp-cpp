@@ -103,8 +103,8 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
-REGISTER_PRECOMP_FORMAT_HANDLER(D_RAW, ZlibFormatHandler::create);
 std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_RAW, ZlibFormatHandler2::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BRUTE, DeflateFormatHandler::create);
 
@@ -427,9 +427,9 @@ void Precomp::init_format_handlers(bool is_recompressing) {
         format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_BZIP2]()));
     }
     if (is_recompressing || switches.intense_mode) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_RAW]()));
+        format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_RAW]()));
         if (switches.intense_mode_depth_limit >= 0) {
-            format_handlers.back()->depth_limit = switches.intense_mode_depth_limit;
+            format_handlers2.back()->depth_limit = switches.intense_mode_depth_limit;
         }
     }
     // Brute mode detects a bit less than intense mode to avoid false positives and slowdowns, so both can be active.
@@ -692,8 +692,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
           if (formatTag == D_BZIP2) {
             precomp_mgr.statistics.decompressed_bzip2_count++;
           }
-          else {
+          else if (formatTag == D_BRUTE) {
             precomp_mgr.statistics.decompressed_brute_count++;
+          }
+          else {
+            precomp_mgr.statistics.decompressed_zlib_count++;
           }
           precomp_mgr.ctx->non_zlib_was_used = true;
 
@@ -730,8 +733,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (formatTag == D_BZIP2) {
           precomp_mgr.statistics.recompressed_bzip2_count++;
         }
-        else {
+        else if (formatTag == D_BRUTE) {
           precomp_mgr.statistics.recompressed_brute_count++;
+        }
+        else {
+          precomp_mgr.statistics.recompressed_zlib_count++;
         }
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are

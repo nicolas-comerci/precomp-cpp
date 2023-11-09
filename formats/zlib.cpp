@@ -8,34 +8,89 @@ bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   return compression_method == 8;
 }
 
-std::unique_ptr<precompression_result> ZlibFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
-  auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_RAW);
-  int windowbits = (*checkbuf >> 4) + 8;
+class ZlibPrecompressor: public PrecompFormatPrecompressor {
+  std::unique_ptr<DeflatePrecompressor> deflate_precompressor;
+  std::vector<unsigned char> zlib_header;
+  unsigned int hdr_bytes_skipped = 0;
+public:
+  ZlibPrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback):
+    PrecompFormatPrecompressor(buffer, _progress_callback),
+    deflate_precompressor(std::make_unique<DeflatePrecompressor>(buffer, _progress_callback)), zlib_header(std::vector(buffer.data(), buffer.data() + 2)) {}
 
-  const auto deflate_stream_pos = original_input_pos + 2; // skip zLib header
-  if (check_inflate_result(this->falsePositiveDetector, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), std::span(checkbuf_span.data() + 2, checkbuf_span.size() - 2), -windowbits, deflate_stream_pos)) {
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    while (hdr_bytes_skipped < zlib_header.size() && avail_in > 0) {
+      // TODO: maybe check that the bytes are the same?
+      avail_in -= 1;
+      next_in += 1;
+      hdr_bytes_skipped++;
+    }
 
-    result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zlib_count, precomp_mgr.statistics.recompressed_zlib_count,
-      D_RAW, checkbuf, 2, deflate_stream_pos, true, "(intense mode)", precomp_mgr.get_tempfile_name("original_zlib"));
+    // forward pointers and counts
+    deflate_precompressor->avail_in = avail_in;
+    deflate_precompressor->next_in = next_in;
+    deflate_precompressor->avail_out = avail_out;
+    deflate_precompressor->next_out = next_out;
 
-    result->original_size_extra += 2;
+    const auto retval = deflate_precompressor->process(input_eof);
+
+    // recover pointers and counts
+    avail_in = deflate_precompressor->avail_in;
+    next_in = deflate_precompressor->next_in;
+    avail_out = deflate_precompressor->avail_out;
+    next_out = deflate_precompressor->next_out;
+
+    return retval;
   }
-  return result;
+
+  void dump_extra_stream_header_data(OStreamLike& output) override {
+    fout_fput_vlint(output, zlib_header.size());
+    output.write(reinterpret_cast<char*>(const_cast<unsigned char*>(zlib_header.data())), zlib_header.size() - 1);
+    output.put(zlib_header[zlib_header.size() - 1] + 1);
+  }
+  void dump_extra_block_header_data(OStreamLike& output) override { return deflate_precompressor->dump_extra_block_header_data(output); }
+};
+
+std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler2::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
+  return std::make_unique<ZlibPrecompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-std::unique_ptr<PrecompFormatHeaderData> ZlibFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, true);
-  return fmt_hdr;
-}
+class ZlibRecompressor : public PrecompFormatRecompressor {
+  std::unique_ptr<DeflateRecompressor> deflate_recompressor;
+  std::vector<unsigned char> zlib_header;
+  unsigned int hdr_bytes_dumped = 0;
+public:
+  ZlibRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback):
+    PrecompFormatRecompressor(precomp_hdr_data, _progress_callback),
+    deflate_recompressor(std::make_unique<DeflateRecompressor>(precomp_hdr_data, _progress_callback)), zlib_header(precomp_hdr_data.stream_hdr) {}
 
-void ZlibFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
-  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
-  // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
-}
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    // If not dumped yet, dump zlib_header before regular Deflate recompression
+    while (hdr_bytes_dumped < zlib_header.size() && avail_out > 0) {
+      *next_out = static_cast<std::byte>(zlib_header[hdr_bytes_dumped]);
+      avail_out -= 1;
+      hdr_bytes_dumped++;
+    }
 
-void ZlibFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.get_tempfile_name("recomp_zlib", true), "raw zLib", tools);
+    // forward pointers and counts
+    deflate_recompressor->avail_in = avail_in;
+    deflate_recompressor->next_in = next_in;
+    deflate_recompressor->avail_out = avail_out;
+    deflate_recompressor->next_out = next_out;
+
+    const auto retval = deflate_recompressor->process(input_eof);
+
+    // recover pointers and counts
+    avail_in = deflate_recompressor->avail_in;
+    next_in = deflate_recompressor->next_in;
+    avail_out = deflate_recompressor->avail_out;
+    next_out = deflate_recompressor->next_out;
+
+    return retval;
+  }
+
+  void read_extra_block_header_data(IStreamLike& input) override { deflate_recompressor->read_extra_block_header_data(input); }
+};
+
+std::unique_ptr<PrecompFormatRecompressor> ZlibFormatHandler2::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+  return std::make_unique<DeflateRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
 }
