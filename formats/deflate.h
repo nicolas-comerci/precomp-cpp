@@ -63,6 +63,31 @@ public:
 
 void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools);
 
+class PreflateProcessorAdapter;
+class DeflatePrecompressor : public PrecompFormatPrecompressor {
+public:
+  std::unique_ptr<PreflateProcessorAdapter> preflate_processor;
+  recompress_deflate_result result{};
+  uint64_t compressed_stream_size = 0;
+  size_t recon_data_written = 0;
+
+  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback);
+
+  PrecompProcessorReturnCode process(bool input_eof) override;
+  void dump_extra_stream_header_data(OStreamLike& output) override;
+  void dump_extra_block_header_data(OStreamLike& output) override;
+};
+class DeflateRecompressor : public PrecompFormatRecompressor {
+  std::vector<unsigned char>* recon_data;
+public:
+  std::unique_ptr<PreflateProcessorAdapter> preflate_processor;
+
+  DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback);
+
+  PrecompProcessorReturnCode process(bool input_eof) override;
+  void read_extra_block_header_data(IStreamLike& input) override;
+};
+
 class DeflateFormatHandler : public PrecompFormatHandler2 {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector{};
 public:

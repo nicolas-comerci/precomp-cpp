@@ -118,7 +118,7 @@ public:
 
 };
 
-class PreflateProcessorBase : public ProcessorAdapter {
+class PreflateProcessorAdapter : public ProcessorAdapter {
 protected:
   class ProcessorInputStream : public InputStream {
   private:
@@ -147,74 +147,65 @@ protected:
       return size;
     }
   };
-
+  
+public:
   ProcessorInputStream preflate_input;
   ProcessorOutStream preflate_output;
-public:
-  PreflateProcessorBase(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out)
-    : ProcessorAdapter(avail_in, next_in, avail_out, next_out), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {
 
-  }
+  PreflateProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out)
+    : ProcessorAdapter(avail_in, next_in, avail_out, next_out), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
+  PreflateProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool()> process_func_)
+    : ProcessorAdapter(avail_in, next_in, avail_out, next_out, std::move(process_func_)), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
 };
 
-class DeflatePrecompressor : public PrecompFormatPrecompressor, public PreflateProcessorBase {
-public:
-  recompress_deflate_result result{};
-  uint64_t compressed_stream_size = 0;
-  size_t recon_data_written = 0;
-
-  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback)
-    : PrecompFormatPrecompressor(buffer, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out) {
-    process_func = [this]() -> bool {
+DeflatePrecompressor::DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback):
+  PrecompFormatPrecompressor(buffer, _progress_callback),
+  preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
+    [this]() -> bool {
       result.accepted = preflate_decode(
-        preflate_output,
+        preflate_processor->preflate_output,
         result.recon_data,
         compressed_stream_size,
-        preflate_input,
+        preflate_processor->preflate_input,
         []() {},
         1 << 21
       );
       return result.accepted;
-    };
-  }
+    })) {}
 
-  PrecompProcessorReturnCode process(bool input_eof) override {
-    return PreflateProcessorBase::process(input_eof);
-  }
+PrecompProcessorReturnCode DeflatePrecompressor::process(bool input_eof) {
+  return preflate_processor->process(input_eof);
+}
 
-  void dump_extra_stream_header_data(OStreamLike& output) override {
-    fout_fput_vlint(output, 0);  // No Zlib header
-  }
-  void dump_extra_block_header_data(OStreamLike& output) override {
-    const auto new_recon_data_size = result.recon_data.size() - recon_data_written;
-    fout_fput_vlint(output, new_recon_data_size);
-    output.write(reinterpret_cast<const char*>(result.recon_data.data() + recon_data_written), new_recon_data_size);
-    recon_data_written += new_recon_data_size;
-  }
-};
+void DeflatePrecompressor::dump_extra_stream_header_data(OStreamLike& output) {
+  fout_fput_vlint(output, 0);  // No Zlib header
+}
+void DeflatePrecompressor::dump_extra_block_header_data(OStreamLike& output) {
+  const auto new_recon_data_size = result.recon_data.size() - recon_data_written;
+  fout_fput_vlint(output, new_recon_data_size);
+  output.write(reinterpret_cast<const char*>(result.recon_data.data() + recon_data_written), new_recon_data_size);
+  recon_data_written += new_recon_data_size;
+}
 
-class DeflateRecompressor : public PrecompFormatRecompressor, public PreflateProcessorBase {
-  std::vector<unsigned char>* recon_data;
-public:
-  DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
-    : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback), PreflateProcessorBase(&avail_in, &next_in, &avail_out, &next_out),
-      recon_data(const_cast<std::vector<unsigned char>*>(&precomp_hdr_data.rdres.recon_data)) {
-    process_func = [this]() -> bool {
-      return preflate_reencode(preflate_output, *recon_data, preflate_input, progress_callback);
-    };
-  }
+DeflateRecompressor::DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
+  : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback),
+  recon_data(const_cast<std::vector<unsigned char>*>(&precomp_hdr_data.rdres.recon_data)),
+  preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
+    [this]() -> bool {
+      return preflate_reencode(preflate_processor->preflate_output, *recon_data, preflate_processor->preflate_input, progress_callback);
+    }
+  )) {}
 
-  PrecompProcessorReturnCode process(bool input_eof) override {
-    return PreflateProcessorBase::process(input_eof);
-  }
+PrecompProcessorReturnCode DeflateRecompressor::process(bool input_eof) {
+  return preflate_processor->process(input_eof);
+}
 
-  void read_extra_block_header_data(IStreamLike& input) override {
-    const auto new_recon_data_len = fin_fget_vlint(input);
-    const auto recon_data_prev_size = recon_data->size();
-    recon_data->resize(recon_data_prev_size + new_recon_data_len);
-    input.read(reinterpret_cast<char*>(recon_data->data() + recon_data_prev_size), new_recon_data_len);
-  }
-};
+void DeflateRecompressor::read_extra_block_header_data(IStreamLike& input) {
+  const auto new_recon_data_len = fin_fget_vlint(input);
+  const auto recon_data_prev_size = recon_data->size();
+  recon_data->resize(recon_data_prev_size + new_recon_data_len);
+  input.read(reinterpret_cast<char*>(recon_data->data() + recon_data_prev_size), new_recon_data_len);
+}
 
 template <class T>
 PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStreamLike& istream, OStreamLike& ostream, long long& input_stream_size, long long& processed_stream_size) {
