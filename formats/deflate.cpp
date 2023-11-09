@@ -500,16 +500,6 @@ bool check_inflate_result(
 bool DeflateFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   return check_inflate_result(this->falsePositiveDetector, current_input_id, buffer, -15, original_input_pos, true);
 }
-bool DeflateFormatHandler2::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
-  return check_inflate_result(this->falsePositiveDetector, current_input_id, buffer, -15, original_input_pos, true);
-}
-
-std::unique_ptr<precompression_result> DeflateFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) {
-  return try_decompression_deflate_type(precomp_mgr,
-    precomp_mgr.statistics.decompressed_brute_count, precomp_mgr.statistics.recompressed_brute_count,
-    D_BRUTE, checkbuf_span.data(), 0, original_input_pos, false,
-    "(brute mode)", precomp_mgr.get_tempfile_name("decomp_brute"));
-}
 
 bool try_reconstructing_deflate(IStreamLike& fin, OStreamLike& fout, const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& progress_callback) {
   long long precompressed_stream_size = 0;
@@ -621,17 +611,11 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
   }
 }
 
-void DeflateFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  auto& deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
-  auto tmpfile_name = tools.get_tempfile_name("recomp_deflate", true);
-  recompress_deflate(precompressed_input, recompressed_stream, deflate_hdr_data, tmpfile_name, "brute mode", tools);
-}
-
-std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler2::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
+std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
   return std::make_unique<DeflatePrecompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
-std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler2::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   //print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - bZip2\n");
   //print_to_log(PRECOMP_DEBUG_LOG, "Compression level: %i\n", static_cast<BZip2FormatHeaderData&>(precomp_hdr_data).level);
 
@@ -639,11 +623,6 @@ std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler2::make_recompres
 }
 
 std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
-  return fmt_hdr;
-}
-std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler2::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
   unsigned hdr_length;
   fin_fget_deflate_hdr(*context.fin, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr.data(), hdr_length, false);

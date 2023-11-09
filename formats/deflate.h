@@ -63,29 +63,10 @@ public:
 
 void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools);
 
-class DeflateFormatHandler : public PrecompFormatHandler {
-	DeflateHistogramFalsePositiveDetector falsePositiveDetector {};
-public:
-	explicit DeflateFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
-		: PrecompFormatHandler(_header_bytes, _depth_limit, true) {}
-
-	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
-
-	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, const long long original_input_pos) override;
-
-  std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
-
-  void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) override;
-
-  static DeflateFormatHandler* create() {
-    return new DeflateFormatHandler({ D_BRUTE });
-  }
-};
-
-class DeflateFormatHandler2 : public PrecompFormatHandler2 {
+class DeflateFormatHandler : public PrecompFormatHandler2 {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector{};
 public:
-	explicit DeflateFormatHandler2(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
+	explicit DeflateFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
 		: PrecompFormatHandler2(_header_bytes, _depth_limit, true) {}
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
@@ -96,8 +77,8 @@ public:
 
 	std::unique_ptr<PrecompFormatRecompressor> make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) override;
 
-	static DeflateFormatHandler2* create() {
-		return new DeflateFormatHandler2({ D_BRUTE });
+	static DeflateFormatHandler* create() {
+		return new DeflateFormatHandler({ D_BRUTE });
 	}
 };
 
