@@ -8,6 +8,15 @@ bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   return compression_method == 8;
 }
 
+bool ZlibFormatHandler2::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  const bool looks_like_zlib_header = zlib_header_check(buffer);
+  if (!looks_like_zlib_header) return false;
+  const auto checkbuf = buffer.data();
+  const auto checkbuf_skip_zlib_hdr = std::span(checkbuf + 2, checkbuf - 2);
+  const int windowbits = (*checkbuf >> 4) + 8;
+  return check_inflate_result(this->falsePositiveDetector, current_input_id, checkbuf_skip_zlib_hdr, -windowbits, original_input_pos, false);
+}
+
 class ZlibPrecompressor: public PrecompFormatPrecompressor {
   std::unique_ptr<DeflatePrecompressor> deflate_precompressor;
   std::vector<unsigned char> zlib_header;
@@ -57,20 +66,12 @@ std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler2::make_precompress
 class ZlibRecompressor : public PrecompFormatRecompressor {
   std::unique_ptr<DeflateRecompressor> deflate_recompressor;
   std::vector<unsigned char> zlib_header;
-  unsigned int hdr_bytes_dumped = 0;
 public:
   ZlibRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback):
     PrecompFormatRecompressor(precomp_hdr_data, _progress_callback),
     deflate_recompressor(std::make_unique<DeflateRecompressor>(precomp_hdr_data, _progress_callback)), zlib_header(precomp_hdr_data.stream_hdr) {}
 
   PrecompProcessorReturnCode process(bool input_eof) override {
-    // If not dumped yet, dump zlib_header before regular Deflate recompression
-    while (hdr_bytes_dumped < zlib_header.size() && avail_out > 0) {
-      *next_out = static_cast<std::byte>(zlib_header[hdr_bytes_dumped]);
-      avail_out -= 1;
-      hdr_bytes_dumped++;
-    }
-
     // forward pointers and counts
     deflate_recompressor->avail_in = avail_in;
     deflate_recompressor->next_in = next_in;
@@ -92,5 +93,10 @@ public:
 };
 
 std::unique_ptr<PrecompFormatRecompressor> ZlibFormatHandler2::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  return std::make_unique<DeflateRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
+  return std::make_unique<ZlibRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
+}
+
+void ZlibFormatHandler2::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+  const auto hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+  context.fout->write(reinterpret_cast<const char*>(hdr_data.stream_hdr.data()), hdr_data.stream_hdr.size());
 }
