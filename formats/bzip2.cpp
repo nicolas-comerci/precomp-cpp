@@ -50,11 +50,15 @@ public:
     if (strm.avail_out == 0) return PrecompProcessorReturnCode::PP_OK;
     strm.next_out = reinterpret_cast<char*>(next_out);
 
+    const auto avail_in_before_decompress = strm.avail_in;
+
     int ret = BZ2_bzDecompress(&strm);
     if ((ret != BZ_OK) && (ret != BZ_STREAM_END)) {
       stream_failed = true;
       return PP_ERROR;
     }
+
+    original_stream_size += (avail_in_before_decompress - strm.avail_in);
 
     avail_in = strm.avail_in;
     next_in = reinterpret_cast<std::byte*>(strm.next_in);

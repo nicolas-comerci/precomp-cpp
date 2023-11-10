@@ -596,7 +596,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         std::unique_ptr<PrecompFormatPrecompressor> precompressor{};
         std::unique_ptr<IStreamLike> precompressed;
-        uint64_t original_stream_size = 0;
         uint64_t precompressed_stream_size = 0;
         // Precomp format header
         std::byte header_byte{ 0b1 };
@@ -648,10 +647,6 @@ int compress_file_impl(Precomp& precomp_mgr) {
             ret = precompressor->process(reached_eof);
             if (ret != PP_OK && ret != PP_STREAM_END) break;
 
-            // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
-            // and shouldn't be counted towards the stream's size
-            original_stream_size += (avail_in_before_process - precompressor->avail_in);
-
             const auto decompressed_chunk_size = output_chunk_size - precompressor->avail_out;
             if (ret == PP_STREAM_END || decompressed_chunk_size == output_chunk_size) {
               precompressed_stream_size += decompressed_chunk_size;
@@ -694,17 +689,15 @@ int compress_file_impl(Precomp& precomp_mgr) {
           }
           else if (formatTag == D_BRUTE) {
             precomp_mgr.statistics.decompressed_brute_count++;
-            original_stream_size = precompressor->original_stream_size;
           }
           else {
             precomp_mgr.statistics.decompressed_zlib_count++;
-            original_stream_size = precompressor->original_stream_size;
           }
           precomp_mgr.ctx->non_zlib_was_used = true;
 
           precompressed_stream_size = precompressed_tmp->tellp();
 
-          print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", original_stream_size);
+          print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", precompressor->original_stream_size);
           print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", precompressed_stream_size);
 
           // ensure precompressed is ready to be read from again
@@ -723,7 +716,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
           try {
-            verification_success = verify_precompressed_result2(precomp_mgr, original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
+            verification_success = verify_precompressed_result2(precomp_mgr, precompressor->original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (!verification_success) continue;
@@ -752,7 +745,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
           recursion_result r{};
           try {
-            r = recursion_compress(precomp_mgr, original_stream_size, precompressed_stream_size, *precompressed, recurse_tempfile_name);
+            r = recursion_compress(precomp_mgr, precompressor->original_stream_size, precompressed_stream_size, *precompressed, recurse_tempfile_name);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (r.success) {
@@ -771,7 +764,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         fast_copy(*precompressed, *precomp_mgr.ctx->fout, precompressed_stream_size);
 
         // set input file pointer after recompressed data
-        input_file_pos += original_stream_size - 1;
+        input_file_pos += precompressor->original_stream_size - 1;
         compressed_data_found = true;
         break;
       }
