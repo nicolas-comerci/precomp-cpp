@@ -8,7 +8,7 @@ bool zlib_header_check(const std::span<unsigned char> checkbuf_span) {
   return compression_method == 8;
 }
 
-bool ZlibFormatHandler2::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+bool ZlibFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
   const bool looks_like_zlib_header = zlib_header_check(buffer);
   if (!looks_like_zlib_header) return false;
   const auto checkbuf = buffer.data();
@@ -61,7 +61,7 @@ public:
   void dump_extra_block_header_data(OStreamLike& output) override { return deflate_precompressor->dump_extra_block_header_data(output); }
 };
 
-std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler2::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
+std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
   return std::make_unique<ZlibPrecompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
@@ -94,11 +94,11 @@ public:
   void read_extra_block_header_data(IStreamLike& input) override { deflate_recompressor->read_extra_block_header_data(input); }
 };
 
-std::unique_ptr<PrecompFormatRecompressor> ZlibFormatHandler2::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+std::unique_ptr<PrecompFormatRecompressor> ZlibFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
   return std::make_unique<ZlibRecompressor>(static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.progress_callback);
 }
 
-void ZlibFormatHandler2::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+void ZlibFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
   const auto hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
   context.fout->write(reinterpret_cast<const char*>(hdr_data.stream_hdr.data()), hdr_data.stream_hdr.size());
 }

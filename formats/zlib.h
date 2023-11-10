@@ -7,10 +7,10 @@
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span);
 
-class ZlibFormatHandler2 : public DeflateFormatHandler {
+class ZlibFormatHandler : public DeflateFormatHandler {
 	DeflateHistogramFalsePositiveDetector falsePositiveDetector{};
 public:
-	explicit ZlibFormatHandler2(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
+	explicit ZlibFormatHandler(std::vector<SupportedFormats> _header_bytes, std::optional<unsigned int> _depth_limit = std::nullopt)
 		: DeflateFormatHandler(_header_bytes, _depth_limit) {}
 
 	bool inc_last_hdr_byte() override { return true; }
@@ -23,8 +23,8 @@ public:
 
 	void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) override;
 
-	static ZlibFormatHandler2* create() {
-		return new ZlibFormatHandler2({ D_RAW });
+	static ZlibFormatHandler* create() {
+		return new ZlibFormatHandler({ D_RAW });
 	}
 };
 

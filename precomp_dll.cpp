@@ -104,7 +104,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
 std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
-REGISTER_PRECOMP_FORMAT_HANDLER2(D_RAW, ZlibFormatHandler2::create);
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_RAW, ZlibFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BRUTE, DeflateFormatHandler::create);
 
