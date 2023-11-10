@@ -68,7 +68,6 @@ class DeflatePrecompressor : public PrecompFormatPrecompressor {
 public:
   std::unique_ptr<PreflateProcessorAdapter> preflate_processor;
   recompress_deflate_result result{};
-  uint64_t compressed_stream_size = 0;
   size_t recon_data_written = 0;
 
   DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback);

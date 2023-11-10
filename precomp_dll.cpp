@@ -694,9 +694,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
           }
           else if (formatTag == D_BRUTE) {
             precomp_mgr.statistics.decompressed_brute_count++;
+            original_stream_size = precompressor->original_stream_size;
           }
           else {
             precomp_mgr.statistics.decompressed_zlib_count++;
+            original_stream_size = precompressor->original_stream_size;
           }
           precomp_mgr.ctx->non_zlib_was_used = true;
 

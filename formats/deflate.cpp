@@ -165,7 +165,7 @@ DeflatePrecompressor::DeflatePrecompressor(const std::span<unsigned char>& buffe
       result.accepted = preflate_decode(
         preflate_processor->preflate_output,
         result.recon_data,
-        compressed_stream_size,
+        original_stream_size,
         preflate_processor->preflate_input,
         []() {},
         1 << 21
@@ -284,7 +284,7 @@ recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStrea
   }
 
   recompress_deflate_result result = std::move(precompressor->result);
-  result.compressed_stream_size = precompressor->compressed_stream_size;
+  result.compressed_stream_size = precompressor->original_stream_size;
   result.uncompressed_stream_size = decompressed_stream_size;
 
   return result;

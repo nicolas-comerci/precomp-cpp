@@ -12,7 +12,7 @@ bool ZlibFormatHandler2::quick_check(const std::span<unsigned char> buffer, uint
   const bool looks_like_zlib_header = zlib_header_check(buffer);
   if (!looks_like_zlib_header) return false;
   const auto checkbuf = buffer.data();
-  const auto checkbuf_skip_zlib_hdr = std::span(checkbuf + 2, checkbuf - 2);
+  const auto checkbuf_skip_zlib_hdr = std::span(checkbuf + 2, buffer.size() - 2);
   const int windowbits = (*checkbuf >> 4) + 8;
   return check_inflate_result(this->falsePositiveDetector, current_input_id, checkbuf_skip_zlib_hdr, -windowbits, original_input_pos, false);
 }
@@ -47,6 +47,8 @@ public:
     next_in = deflate_precompressor->next_in;
     avail_out = deflate_precompressor->avail_out;
     next_out = deflate_precompressor->next_out;
+
+    original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped;
 
     return retval;
   }
