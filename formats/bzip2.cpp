@@ -22,7 +22,7 @@ public:
   bool stream_failed = false;
 
   Bzip2Decompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback):
-    PrecompFormatPrecompressor(buffer, _progress_callback), compression_level(*(buffer.data() + 3) - '0')
+    PrecompFormatPrecompressor(_progress_callback), compression_level(*(buffer.data() + 3) - '0')
   {
     strm.bzalloc = nullptr;
     strm.bzfree = nullptr;

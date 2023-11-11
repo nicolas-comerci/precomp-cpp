@@ -101,9 +101,9 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GIF, GifFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_JPG, JpegFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
-REGISTER_PRECOMP_FORMAT_HANDLER(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
 std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_SWF, SwfFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_RAW, ZlibFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BRUTE, DeflateFormatHandler::create);
@@ -418,7 +418,7 @@ void Precomp::init_format_handlers(bool is_recompressing) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_MP3]()));
     }
     if (is_recompressing || switches.use_swf) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_SWF]()));
+        format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_SWF]()));
     }
     if (is_recompressing || switches.use_base64) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BASE64]()));
@@ -690,8 +690,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
           else if (formatTag == D_BRUTE) {
             precomp_mgr.statistics.decompressed_brute_count++;
           }
-          else {
+          else if (formatTag == D_RAW) {
             precomp_mgr.statistics.decompressed_zlib_count++;
+          }
+          else if (formatTag == D_SWF) {
+            precomp_mgr.statistics.decompressed_swf_count++;
           }
           precomp_mgr.ctx->non_zlib_was_used = true;
 
@@ -731,8 +734,11 @@ int compress_file_impl(Precomp& precomp_mgr) {
         else if (formatTag == D_BRUTE) {
           precomp_mgr.statistics.recompressed_brute_count++;
         }
-        else {
+        else if (formatTag == D_RAW) {
           precomp_mgr.statistics.recompressed_zlib_count++;
+        }
+        else if (formatTag == D_SWF) {
+          precomp_mgr.statistics.recompressed_swf_count++;
         }
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are

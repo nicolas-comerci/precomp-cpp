@@ -70,7 +70,7 @@ public:
   recompress_deflate_result result{};
   size_t recon_data_written = 0;
 
-  DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback);
+  DeflatePrecompressor(const std::function<void()>& _progress_callback);
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) override;

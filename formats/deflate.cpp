@@ -158,8 +158,8 @@ public:
     : ProcessorAdapter(avail_in, next_in, avail_out, next_out, std::move(process_func_)), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
 };
 
-DeflatePrecompressor::DeflatePrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback):
-  PrecompFormatPrecompressor(buffer, _progress_callback),
+DeflatePrecompressor::DeflatePrecompressor(const std::function<void()>& _progress_callback):
+  PrecompFormatPrecompressor(_progress_callback),
   preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
     [this]() -> bool {
       result.accepted = preflate_decode(
@@ -267,8 +267,7 @@ PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStream
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
   file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
-  std::vector<unsigned char> fake_checkbuf{};
-  auto precompressor = std::make_unique<DeflatePrecompressor>(fake_checkbuf, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  auto precompressor = std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 
   long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
@@ -602,7 +601,7 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
 }
 
 std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
-  return std::make_unique<DeflatePrecompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  return std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
 }
 
 std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {

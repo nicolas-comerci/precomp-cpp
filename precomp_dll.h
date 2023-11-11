@@ -222,7 +222,7 @@ public:
   std::byte* next_out = nullptr;
   uint64_t original_stream_size = 0;
 
-  PrecompFormatPrecompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
+  PrecompFormatPrecompressor(const std::function<void()>& _progress_callback) : progress_callback(_progress_callback) {}
   virtual ~PrecompFormatPrecompressor() = default;
 
   virtual PrecompProcessorReturnCode process(bool input_eof) = 0;
