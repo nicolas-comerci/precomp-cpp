@@ -11,10 +11,11 @@ protected:
   std::vector<unsigned char> pre_deflate_header;
   unsigned int hdr_bytes_skipped = 0;
 public:
-	DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback);
+  DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback, Tools* _precomp_tools);
+
   PrecompProcessorReturnCode process(bool input_eof) override;
-	void dump_extra_stream_header_data(OStreamLike& output) override;
-	void dump_extra_block_header_data(OStreamLike& output) override;
+  void dump_extra_stream_header_data(OStreamLike& output) override;
+  void dump_extra_block_header_data(OStreamLike& output) override;
 };
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span);

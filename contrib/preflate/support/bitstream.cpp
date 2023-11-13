@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <memory.h>
+#include <cstring>
 #include "bitstream.h"
 
 BitInputStream::BitInputStream(InputStream& is)

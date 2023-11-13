@@ -90,8 +90,8 @@ private:
 public:
     BMP_HEADER_TYPE bmp_header_type = BMP_HEADER_NONE;
 
-    explicit pdf_precompression_result(unsigned int img_width, unsigned int img_height)
-        : deflate_precompression_result(D_PDF), img_width(img_width), img_height(img_height) {}
+    explicit pdf_precompression_result(Tools* _tools, unsigned int img_width, unsigned int img_height)
+        : deflate_precompression_result(D_PDF, _tools), img_width(img_width), img_height(img_height) {}
 
     void dump_precompressed_data_to_outfile(OStreamLike& outfile) const override {
         bool must_pad_bmp = false;
@@ -120,6 +120,17 @@ public:
         dump_bmp_hdr_to_outfile(outfile);
         dump_precompressed_data_to_outfile(outfile);
     }
+
+    std::string get_format_count_tag() const {
+      switch (bmp_header_type)
+      {
+      case BMP_HEADER_8BPP: return "PDF image (8-bit)";
+      case BMP_HEADER_24BPP: return "PDF image (24-bit)";
+      default: return "PDF";
+      }
+    }
+    void increase_detected_count() override { tools->increase_detected_count(get_format_count_tag()); }
+    void increase_precompressed_count() override { tools->increase_precompressed_count(get_format_count_tag()); }
 };
 
 bool PdfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
@@ -127,8 +138,6 @@ bool PdfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
 }
 
 std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
-  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(img_width, img_height);
-
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("decomp_pdf"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
@@ -137,85 +146,70 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
 
-  if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
+  if (rdres.uncompressed_stream_size <= 0) return std::unique_ptr<precompression_result>{};
 
-    precomp_mgr.statistics.decompressed_streams_count++;
+  // seems to be a zLib-Stream
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(&precomp_mgr.format_handler_tools, img_width, img_height);
+  if (img_bpc == 8) {
+    result->bmp_header_type = BMP_HEADER_8BPP;
+  }
+
+  debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF", deflate_stream_pos);
+
+  if (!rdres.accepted) {
+    if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_pos - 2);
+    if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_pos);
+    print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
+  }
+  else {
+    result->success = true;
+
+    result->original_size = rdres.compressed_stream_size;
+    result->precompressed_size = rdres.uncompressed_stream_size;
+
+    debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
+
     if (img_bpc == 8) {
-      precomp_mgr.statistics.decompressed_pdf_count_8_bit++;
-    }
-    else {
-      precomp_mgr.statistics.decompressed_pdf_count++;
-    }
-
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF", deflate_stream_pos);
-
-    if (rdres.accepted) {
-      result->success = true;
-
-      result->original_size = rdres.compressed_stream_size;
-      result->precompressed_size = rdres.uncompressed_stream_size;
-
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_pdf_count++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
-      debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
-
-      if (img_bpc == 8) {
-        if (rdres.uncompressed_stream_size == (img_width * img_height)) {
-          result->bmp_header_type = BMP_HEADER_8BPP;
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (8 bit)\n");
-          precomp_mgr.statistics.recompressed_pdf_count_8_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count--;
-        }
-        else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
-          result->bmp_header_type = BMP_HEADER_24BPP;
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (24 bit)\n");
-          precomp_mgr.statistics.decompressed_pdf_count_8_bit--;
-          precomp_mgr.statistics.decompressed_pdf_count_24_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count_24_bit++;
-          precomp_mgr.statistics.recompressed_pdf_count--;
-        }
-        else {
-          print_to_log(PRECOMP_DEBUG_LOG, "Image size didn't match with stream size\n");
-          precomp_mgr.statistics.decompressed_pdf_count_8_bit--;
-          precomp_mgr.statistics.decompressed_pdf_count++;
-        }
+      if (rdres.uncompressed_stream_size == (img_width * img_height)) {
+        result->bmp_header_type = BMP_HEADER_8BPP;
+        print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (8 bit)\n");
       }
-
-      // write compressed data header (PDF) without 12 first bytes
-      //   (/FlateDecode)
-
-      std::byte bmp_c{ 0 };
-      if (result->bmp_header_type == BMP_HEADER_8BPP) {
-        // 8 Bit, Bit 7,6 = 01
-        bmp_c = std::byte{ 0b01000000 };
-      }
-      else if (result->bmp_header_type == BMP_HEADER_24BPP) {
-        // 24 Bit, Bit 7,6 = 10
-        bmp_c = std::byte{ 0b10000000 };
-      }
-
-      result->flags = bmp_c;
-      result->inc_last_hdr_byte = false;
-      result->zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
-
-      // write decompressed data
-      if (!rdres.uncompressed_stream_mem.empty()) {
-        unsigned char* buf_ptr = rdres.uncompressed_stream_mem.data();
-        result->precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result->precompressed_size);
+      else if (rdres.uncompressed_stream_size == (img_width * img_height * 3)) {
+        result->bmp_header_type = BMP_HEADER_24BPP;
+        print_to_log(PRECOMP_DEBUG_LOG, "Image size did match (24 bit)\n");
       }
       else {
-        tmpfile->reopen();
-        result->precompressed_stream = std::move(tmpfile);
+        print_to_log(PRECOMP_DEBUG_LOG, "Image size didn't match with stream size\n");
       }
-      result->rdres = std::move(rdres);
+    }
+
+    // write compressed data header (PDF) without 12 first bytes
+    //   (/FlateDecode)
+
+    std::byte bmp_c{ 0 };
+    if (result->bmp_header_type == BMP_HEADER_8BPP) {
+      // 8 Bit, Bit 7,6 = 01
+      bmp_c = std::byte{ 0b01000000 };
+    }
+    else if (result->bmp_header_type == BMP_HEADER_24BPP) {
+      // 24 Bit, Bit 7,6 = 10
+      bmp_c = std::byte{ 0b10000000 };
+    }
+
+    result->flags = bmp_c;
+    result->inc_last_hdr_byte = false;
+    result->zlib_header = std::vector(checkbuf + 12, checkbuf + pdf_header_length);
+
+    // write decompressed data
+    if (!rdres.uncompressed_stream_mem.empty()) {
+      unsigned char* buf_ptr = rdres.uncompressed_stream_mem.data();
+      result->precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result->precompressed_size);
     }
     else {
-      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_pos - 2);
-      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_pos);
-      print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
+      tmpfile->reopen();
+      result->precompressed_stream = std::move(tmpfile);
     }
+    result->rdres = std::move(rdres);
   }
 
   result->original_size_extra += pdf_header_length;  // Add PDF header length to the deflate stream length for the actual PDF stream size
@@ -224,7 +218,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
 
 std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos) {
   auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(0, 0);
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(&precomp_mgr.format_handler_tools, 0, 0);
   long long act_search_pos = 12;
   bool found_stream = false;
   do {
@@ -356,7 +350,7 @@ std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(Re
   return fmt_hdr;
 }
 
-void PdfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+void PdfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   auto& deflate_precomp_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
 
   // restore PDF header
@@ -400,7 +394,7 @@ void PdfFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
     read_part = bmp_width;
     skip_part = (-bmp_width) & 3;
   }
-  if (!try_reconstructing_deflate_skip(precompressed_input, recompressed_stream, deflate_precomp_hdr_data.rdres, read_part, skip_part, tools.progress_callback)) {
+  if (!try_reconstructing_deflate_skip(precompressed_input, recompressed_stream, deflate_precomp_hdr_data.rdres, read_part, skip_part, precomp_tools->progress_callback)) {
     throw PrecompError(ERR_DURING_RECOMPRESSION);
   }
 }

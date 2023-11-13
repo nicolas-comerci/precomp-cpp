@@ -109,48 +109,11 @@ typedef struct {
 
 typedef struct {
   uintmax_t fin_length;
-
-  bool anything_was_used;
-  bool non_zlib_was_used;
 } CRecursionContext;
 
 typedef struct {
-  unsigned int recompressed_streams_count;
-  unsigned int recompressed_pdf_count;
-  unsigned int recompressed_pdf_count_8_bit;
-  unsigned int recompressed_pdf_count_24_bit;
-  unsigned int recompressed_zip_count;
-  unsigned int recompressed_gzip_count;
-  unsigned int recompressed_png_count;
-  unsigned int recompressed_png_multi_count;
-  unsigned int recompressed_gif_count;
-  unsigned int recompressed_jpg_count;
-  unsigned int recompressed_jpg_prog_count;
-  unsigned int recompressed_mp3_count;
-  unsigned int recompressed_swf_count;
-  unsigned int recompressed_base64_count;
-  unsigned int recompressed_bzip2_count;
-  unsigned int recompressed_zlib_count;    // intense mode
-  unsigned int recompressed_brute_count;   // brute mode
-
+  unsigned int precompressed_streams_count;
   unsigned int decompressed_streams_count;
-  unsigned int decompressed_pdf_count;
-  unsigned int decompressed_pdf_count_8_bit;
-  unsigned int decompressed_pdf_count_24_bit;
-  unsigned int decompressed_zip_count;
-  unsigned int decompressed_gzip_count;
-  unsigned int decompressed_png_count;
-  unsigned int decompressed_png_multi_count;
-  unsigned int decompressed_gif_count;
-  unsigned int decompressed_jpg_count;
-  unsigned int decompressed_jpg_prog_count;
-  unsigned int decompressed_mp3_count;
-  unsigned int decompressed_swf_count;
-  unsigned int decompressed_base64_count;
-  unsigned int decompressed_bzip2_count;
-  unsigned int decompressed_zlib_count;    // intense mode
-  unsigned int decompressed_brute_count;   // brute mode
-
   // recursion
   int max_recursion_depth_used;
   bool max_recursion_depth_reached;
@@ -170,6 +133,9 @@ ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(Precomp* precomp_mgr);
 ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count);
 ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr);
 ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr);
+
+// This is not really a realistic interface to access the results, but works for Precomp CLI for now
+ExternC LIBPRECOMP void PrecompPrintResults(Precomp* precomp_mgr);
 
 // IMPORTANT!! Input streams for precompression HAVE to be seekable, else it WILL fail.
 // For recompression no seeking is done so in those cases its okay to have input streams that can't seek.

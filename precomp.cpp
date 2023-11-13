@@ -174,6 +174,7 @@ void printf_time(long long t) {
   else {
     log_output_func(make_cstyle_format_string("%li day(s), %li hour(s), %li minute(s)\n", (long)(t / (1000 * 60 * 60 * 24)), (long)((t / (1000 * 60 * 60)) % 24), (long)((t / (1000 * 60)) % 60)));
   }
+  log_output_func("\n");
 }
 
 int work_sign_var = 0;
@@ -205,7 +206,7 @@ void print_results(Precomp& precomp_mgr, bool print_new_size, long long start_ti
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
     auto fout_length = std::filesystem::file_size(output_file_name.c_str());
-    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "     \n";
+    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "      ";
     log_output_func("100.00% - " + result_print);
   }
   else {
@@ -216,93 +217,23 @@ void print_results(Precomp& precomp_mgr, bool print_new_size, long long start_ti
 }
 
 void show_used_levels(Precomp& precomp_mgr, CSwitches& precomp_switches) {
-  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
   auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
 
-  if (!precomp_context->anything_was_used) {
-    if (!precomp_context->non_zlib_was_used) {
-      log_output_func("\nNone of the given compression and memory levels could be used.\n");
-      log_output_func("There will be no gain compressing the output file.\n");
-    } else {
-      if ((!precomp_statistics->max_recursion_depth_reached) && (precomp_statistics->max_recursion_depth_used != precomp_switches.max_recursion_depth)) {
-          log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-          log_output_func("-d");
-          log_output_func(make_cstyle_format_string("%i\n", precomp_statistics->max_recursion_depth_used));
-      }
-    }
-    if (precomp_statistics->max_recursion_depth_reached) {
-      log_output_func(make_cstyle_format_string("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_switches.max_recursion_depth));
-    }
-    return;
+  if (precomp_statistics->decompressed_streams_count == 0) {
+    log_output_func("\nPrecomp was not able to precompress any stream.\n");
+    log_output_func("There will be no gain compressing the output file.\n");
   }
-  
-  int level_count = 0;
-  log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
-  log_output_func("-zl");
-
-  std::string disable_methods;
-  std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 10> disable_formats{{
-    {precomp_switches.use_pdf, precomp_statistics->recompressed_pdf_count, precomp_statistics->decompressed_pdf_count, "p"},
-    {precomp_switches.use_zip, precomp_statistics->recompressed_zip_count, precomp_statistics->decompressed_zip_count, "z"},
-    {precomp_switches.use_gzip, precomp_statistics->recompressed_gzip_count, precomp_statistics->decompressed_gzip_count, "g"},
-    {precomp_switches.use_png, precomp_statistics->recompressed_png_count + precomp_statistics->recompressed_png_multi_count, precomp_statistics->decompressed_png_count + precomp_statistics->decompressed_png_multi_count, "n"},
-    {precomp_switches.use_gif, precomp_statistics->recompressed_gif_count, precomp_statistics->decompressed_gif_count, "f"},
-    {precomp_switches.use_jpg, precomp_statistics->recompressed_jpg_count + precomp_statistics->recompressed_jpg_prog_count, precomp_statistics->decompressed_jpg_count + precomp_statistics->decompressed_jpg_prog_count, "j"},
-    {precomp_switches.use_swf, precomp_statistics->recompressed_swf_count, precomp_statistics->decompressed_swf_count, "s"},
-    {precomp_switches.use_base64, precomp_statistics->recompressed_base64_count, precomp_statistics->decompressed_base64_count, "m"},
-    {precomp_switches.use_bzip2, precomp_statistics->recompressed_bzip2_count, precomp_statistics->decompressed_bzip2_count, "b"},
-    {precomp_switches.use_mp3, precomp_statistics->recompressed_mp3_count, precomp_statistics->decompressed_mp3_count, "3"},
-  }};
-  for (auto disable_format : disable_formats) {
-      if ((std::get<0>(disable_format) && ((std::get<1>(disable_format) == 0) && (std::get<2>(disable_format) > 0)))) disable_methods += std::get<3>(disable_format);
+  else if (!precomp_statistics->max_recursion_depth_reached && (precomp_statistics->max_recursion_depth_used != precomp_switches.max_recursion_depth)) {
+    log_output_func("\nYou can speed up Precomp for THIS FILE with these parameters:\n");
+    log_output_func("-d");
+    log_output_func(make_cstyle_format_string("%i\n", precomp_statistics->max_recursion_depth_used));
+  } else {
+    log_output_func(make_cstyle_format_string("\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_switches.max_recursion_depth));
   }
-  if ( disable_methods.length() > 0 ) {
-      log_output_func(make_cstyle_format_string(" -t-%s",disable_methods.c_str()));
-  }
-
-  if (precomp_statistics->max_recursion_depth_reached) {
-      log_output_func(make_cstyle_format_string("\n\nMaximal recursion depth %i reached, increasing it could give better results.\n", precomp_switches.max_recursion_depth));
-  } else if (precomp_statistics->max_recursion_depth_used != precomp_switches.max_recursion_depth) {
-      log_output_func(" -d");
-      log_output_func(make_cstyle_format_string("%i", precomp_statistics->max_recursion_depth_used));
-  }
-
-  log_output_func("\n");
 }
 
 void print_statistics(Precomp& precomp_mgr, CSwitches& precomp_switches) {
-  auto precomp_statistics = PrecompGetResultStatistics(&precomp_mgr);
-  log_output_func(make_cstyle_format_string("\nRecompressed streams: %i/%i\n", precomp_statistics->recompressed_streams_count, precomp_statistics->decompressed_streams_count));
-
-  if ((precomp_statistics->recompressed_streams_count > 0) || (precomp_statistics->decompressed_streams_count > 0)) {
-    std::array<std::tuple<bool, unsigned int, unsigned int, std::string>, 16> format_statistics{ {
-      {precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count, precomp_statistics->recompressed_pdf_count, "PDF"},
-      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count_8_bit, precomp_statistics->recompressed_pdf_count_8_bit, "PDF image (8-bit)"},
-      {precomp_switches.pdf_bmp_mode && precomp_switches.use_pdf, precomp_statistics->decompressed_pdf_count_24_bit, precomp_statistics->recompressed_pdf_count_24_bit, "PDF image (24-bit)"},
-      {precomp_switches.use_zip, precomp_statistics->decompressed_zip_count, precomp_statistics->recompressed_zip_count, "ZIP"},
-      {precomp_switches.use_gzip, precomp_statistics->decompressed_gzip_count, precomp_statistics->recompressed_gzip_count, "GZip"},
-      {precomp_switches.use_png, precomp_statistics->decompressed_png_count, precomp_statistics->recompressed_png_count, "PNG"},
-      {precomp_switches.use_png, precomp_statistics->decompressed_png_multi_count, precomp_statistics->recompressed_png_multi_count, "PNG (multi)"},
-      {precomp_switches.use_gif, precomp_statistics->decompressed_gif_count, precomp_statistics->recompressed_gif_count, "GIF"},
-      {precomp_switches.use_jpg, precomp_statistics->decompressed_jpg_count, precomp_statistics->recompressed_jpg_count, "JPG"},
-      {precomp_switches.use_jpg, precomp_statistics->decompressed_jpg_prog_count, precomp_statistics->recompressed_jpg_prog_count, "JPG (progressive)"},
-      {precomp_switches.use_mp3, precomp_statistics->decompressed_mp3_count, precomp_statistics->recompressed_mp3_count, "MP3"},
-      {precomp_switches.use_swf, precomp_statistics->decompressed_swf_count, precomp_statistics->recompressed_swf_count, "SWF"},
-      {precomp_switches.use_base64, precomp_statistics->decompressed_base64_count, precomp_statistics->recompressed_base64_count, "Base64"},
-      {precomp_switches.use_bzip2, precomp_statistics->decompressed_bzip2_count, precomp_statistics->recompressed_bzip2_count, "bZip2"},
-      {precomp_switches.intense_mode, precomp_statistics->decompressed_zlib_count, precomp_statistics->recompressed_zlib_count, "zLib (intense mode)"},
-      {precomp_switches.brute_mode, precomp_statistics->decompressed_brute_count, precomp_statistics->recompressed_brute_count, "Brute mode"},
-    } };
-    for (auto format_stats : format_statistics) {
-      bool condition = std::get<0>(format_stats);
-      unsigned int decompressed_count = std::get<1>(format_stats);
-      unsigned int recompressed_count = std::get<2>(format_stats);
-      std::string format_tag = std::get<3>(format_stats);
-      if (condition && ((recompressed_count > 0) || (decompressed_count > 0)))
-        log_output_func(format_tag + " streams: " + std::to_string(recompressed_count) + "/" + std::to_string(decompressed_count) + "\n");
-    }
-  }
-
+  PrecompPrintResults(&precomp_mgr);
   if (!precomp_switches.level_switch_used) show_used_levels(precomp_mgr, precomp_switches);
 }
 

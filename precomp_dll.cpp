@@ -92,7 +92,7 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
   logging_callback(log_level, format.data());
 }
 
-std::map<SupportedFormats, std::function<PrecompFormatHandler*()>> registeredHandlerFactoryFunctions = std::map<SupportedFormats, std::function<PrecompFormatHandler*()>>{};
+std::map<SupportedFormats, std::function<PrecompFormatHandler* (Tools*)>> registeredHandlerFactoryFunctions {};
 REGISTER_PRECOMP_FORMAT_HANDLER(D_ZIP, ZipFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_GZIP, GZipFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PDF, PdfFormatHandler::create);
@@ -148,42 +148,6 @@ void precompression_result::dump_to_outfile(OStreamLike& outfile) const {
 }
 
 ResultStatistics::ResultStatistics(): CResultStatistics() {
-  recompressed_streams_count = 0;
-  recompressed_pdf_count = 0;
-  recompressed_pdf_count_8_bit = 0;
-  recompressed_pdf_count_24_bit = 0;
-  recompressed_zip_count = 0;
-  recompressed_gzip_count = 0;
-  recompressed_png_count = 0;
-  recompressed_png_multi_count = 0;
-  recompressed_gif_count = 0;
-  recompressed_jpg_count = 0;
-  recompressed_jpg_prog_count = 0;
-  recompressed_mp3_count = 0;
-  recompressed_swf_count = 0;
-  recompressed_base64_count = 0;
-  recompressed_bzip2_count = 0;
-  recompressed_zlib_count = 0;    // intense mode
-  recompressed_brute_count = 0;   // brute mode
-
-  decompressed_streams_count = 0;
-  decompressed_pdf_count = 0;
-  decompressed_pdf_count_8_bit = 0;
-  decompressed_pdf_count_24_bit = 0;
-  decompressed_zip_count = 0;
-  decompressed_gzip_count = 0;
-  decompressed_png_count = 0;
-  decompressed_png_multi_count = 0;
-  decompressed_gif_count = 0;
-  decompressed_jpg_count = 0;
-  decompressed_jpg_prog_count = 0;
-  decompressed_mp3_count = 0;
-  decompressed_swf_count = 0;
-  decompressed_base64_count = 0;
-  decompressed_bzip2_count = 0;
-  decompressed_zlib_count = 0;    // intense mode
-  decompressed_brute_count = 0;   // brute mode
-
   header_already_read = false;
 
   max_recursion_depth_used = 0;
@@ -319,7 +283,14 @@ std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
   return recursion_contexts_stack[0];
 }
 
-Precomp::Precomp() {
+Precomp::Precomp():
+  format_handler_tools(
+    [this]() { this->call_progress_callback(); },
+    [this](std::string name, bool append_tag) { return this->get_tempfile_name(name, append_tag); },
+    [this](std::string name) { return this->statistics.increase_detected_count(name); },
+    [this](std::string name) { return this->statistics.increase_precompressed_count(name); }
+  )
+{
   recursion_depth = 0;
 }
 
@@ -397,31 +368,31 @@ std::string Precomp::get_tempfile_name(const std::string& name, bool prepend_ran
 
 void Precomp::init_format_handlers(bool is_recompressing) {
     if (is_recompressing || switches.use_zip) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_ZIP]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_ZIP](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_gzip) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GZIP]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GZIP](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_pdf) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PDF]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PDF](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_png) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PNG]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PNG](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_gif) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GIF]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GIF](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_jpg) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_JPG]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_JPG](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_mp3) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_MP3]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_MP3](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_swf) {
         format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_SWF]()));
     }
     if (is_recompressing || switches.use_base64) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BASE64]()));
+        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_BASE64](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_bzip2) {
         format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_BZIP2]()));
@@ -541,8 +512,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
   // This buffer will be fed to the format handlers so they can confirm if the current position is the beggining of a stream they support
   std::span<unsigned char> checkbuf;
 
-  precomp_mgr.ctx->anything_was_used = false;
-  precomp_mgr.ctx->non_zlib_was_used = false;
+  bool anything_was_used = false;
 
   for (long long input_file_pos = 0; input_file_pos < precomp_mgr.ctx->fin_length; input_file_pos++) {
     precomp_mgr.ctx->input_file_pos = input_file_pos;
@@ -682,21 +652,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           // TODO: set reasonable lower limit for precompressed_stream_size
           if (ret == PP_ERROR || precompressed_stream_size <= 0) continue;
 
-          precomp_mgr.statistics.decompressed_streams_count++;
-          // TODO: do this in a non stupid way
-          if (formatTag == D_BZIP2) {
-            precomp_mgr.statistics.decompressed_bzip2_count++;
-          }
-          else if (formatTag == D_BRUTE) {
-            precomp_mgr.statistics.decompressed_brute_count++;
-          }
-          else if (formatTag == D_RAW) {
-            precomp_mgr.statistics.decompressed_zlib_count++;
-          }
-          else if (formatTag == D_SWF) {
-            precomp_mgr.statistics.decompressed_swf_count++;
-          }
-          precomp_mgr.ctx->non_zlib_was_used = true;
+          precompressor->increase_detected_count();
 
           precompressed_stream_size = precompressed_tmp->tellp();
 
@@ -727,19 +683,8 @@ int compress_file_impl(Precomp& precomp_mgr) {
           precompressed->seekg(0, std::ios_base::beg);
         }
 
-        precomp_mgr.statistics.recompressed_streams_count++;
-        if (formatTag == D_BZIP2) {
-          precomp_mgr.statistics.recompressed_bzip2_count++;
-        }
-        else if (formatTag == D_BRUTE) {
-          precomp_mgr.statistics.recompressed_brute_count++;
-        }
-        else if (formatTag == D_RAW) {
-          precomp_mgr.statistics.recompressed_zlib_count++;
-        }
-        else if (formatTag == D_SWF) {
-          precomp_mgr.statistics.recompressed_swf_count++;
-        }
+        precompressor->increase_precompressed_count();
+        anything_was_used = true;
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
@@ -812,7 +757,10 @@ int compress_file_impl(Precomp& precomp_mgr) {
           result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
         }
         catch (...) {}  // TODO: print/record/report handler failed
-        if (!result || !result->success) continue;
+
+        if (!result) continue;
+        result->increase_detected_count();
+        if (!result->success) continue;
 
         // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
         // Note that this is done before recursion for 2 reasons:
@@ -828,6 +776,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           // ensure that the precompressed stream is ready to read from the start, as if verification never happened
           result->precompressed_stream->seekg(0, std::ios_base::beg);
         }
+        result->increase_precompressed_count();
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
@@ -888,7 +837,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
   precomp_mgr.ctx->fout = nullptr; // To close the outfile TODO: maybe we should just make sure the whole last context gets destroyed if at recursion_depth == 0?
 
-  return (precomp_mgr.ctx->anything_was_used || precomp_mgr.ctx->non_zlib_was_used) ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
+  return anything_was_used ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
 }
 
 int wrap_with_exception_catch(std::function<int()> func)
@@ -978,15 +927,7 @@ public:
 int decompress_file_impl(RecursionContext& precomp_ctx) {
   precomp_ctx.comp_decomp_state = P_RECOMPRESS;
   const auto& format_handlers = precomp_ctx.precomp.get_format_handlers();
-  const auto handler_tools = PrecompFormatHandler::Tools(
-    [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
-    [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
-  );
   const auto& format_handlers2 = precomp_ctx.precomp.get_format_handlers2();
-  const auto handler_tools2 = PrecompFormatHandler2::Tools(
-    [&precomp = precomp_ctx.precomp]() { precomp.call_progress_callback(); },
-    [&precomp = precomp_ctx.precomp](std::string name, bool append_tag) { return precomp.get_tempfile_name(name, append_tag); }
-  );
   
   std::array<unsigned char, CHUNK> in_buf{};
   std::array<unsigned char, CHUNK> out_buf{};
@@ -1032,7 +973,7 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
               recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
               precompressed_input = recurse_passthrough_input.get();
             }
-            auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, handler_tools2);
+            auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, precomp_ctx.precomp.format_handler_tools);
 
             while (true) {
               const auto data_hdr = static_cast<std::byte>(precompressed_input->get());
@@ -1114,11 +1055,11 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
 
             if (format_hdr_data->recursion_data_size > 0) {
               auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
-              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte);
               recurse_passthrough_input->get_recursion_return_code();
             }
             else {
-              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte, handler_tools);
+              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte);
             }
             handlerFound = true;
             break;
@@ -1309,9 +1250,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
   recursion_result tmp_r;
   tmp_r.success = false;
 
-  bool rescue_anything_was_used = false;
-  bool rescue_non_zlib_was_used = false;
-
   if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.switches.max_recursion_depth) {
     precomp_mgr.statistics.max_recursion_depth_reached = true;
     return tmp_r;
@@ -1336,20 +1274,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 
   // TODO CHECK: Delete ctx?
 
-  if (precomp_mgr.ctx->anything_was_used)
-    rescue_anything_was_used = true;
-
-  if (precomp_mgr.ctx->non_zlib_was_used)
-    rescue_non_zlib_was_used = true;
-
   precomp_mgr.recursion_depth--;
   recursion_pop(precomp_mgr);
-
-  if (rescue_anything_was_used)
-    precomp_mgr.ctx->anything_was_used = true;
-
-  if (rescue_non_zlib_was_used)
-    precomp_mgr.ctx->non_zlib_was_used = true;
 
   if (tmp_r.success) {
     print_to_log(PRECOMP_DEBUG_LOG, "Recursion streams found\n");
@@ -1512,7 +1438,14 @@ void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* 
   }
 }
 CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
-CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) { return &precomp_mgr->statistics; }
+CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
+  // update counts in a CResultStatistics accessible way before returning it
+  precomp_mgr->statistics.decompressed_streams_count = precomp_mgr->statistics.get_total_detected_count();
+  precomp_mgr->statistics.precompressed_streams_count = precomp_mgr->statistics.get_total_precompressed_count();
+  return &precomp_mgr->statistics;
+}
+
+void PrecompPrintResults(Precomp* precomp_mgr) { precomp_mgr->statistics.print_results(); }
 
 int PrecompPrecompress(Precomp* precomp_mgr) {
   return compress_file(*precomp_mgr);

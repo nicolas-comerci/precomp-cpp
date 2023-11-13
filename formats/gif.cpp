@@ -18,7 +18,7 @@ class gif_precompression_result : public precompression_result {
 public:
     std::vector<unsigned char> gif_diff;
 
-    explicit gif_precompression_result() : precompression_result(D_GIF) {}
+    explicit gif_precompression_result(Tools* _tools) : precompression_result(D_GIF, _tools) {}
 
     void dump_to_outfile(OStreamLike& outfile) const override {
         dump_header_to_outfile(outfile);
@@ -27,6 +27,9 @@ public:
         dump_stream_sizes_to_outfile(outfile);
         dump_precompressed_data_to_outfile(outfile);
     }
+
+    void increase_detected_count() override { tools->increase_detected_count("GIF"); }
+    void increase_precompressed_count() override { tools->increase_precompressed_count("GIF"); }
 };
 
 int DGifGetLineByte(GifFileType* GifFile, GifPixelType* Line, int LineLen, GifCodeStruct* g)
@@ -418,12 +421,12 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
   return fmt_hdr;
 }
 
-void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   auto& gif_precomp_hdr_format = static_cast<GifFormatHeaderData&>(precomp_hdr_data);
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", gif_precomp_hdr_format.original_size, gif_precomp_hdr_format.precompressed_size);
 
   std::string tmp_tag = temp_files_tag();
-  std::string tempfile = tools.get_tempfile_name(tmp_tag + "_precompressed_gif", false);
+  std::string tempfile = precomp_tools->get_tempfile_name(tmp_tag + "_precompressed_gif", false);
 
   dump_to_file(precompressed_input, tempfile, gif_precomp_hdr_format.precompressed_size);
   bool recompress_success;
@@ -449,7 +452,7 @@ void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
 }
 
 std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
-  std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>();
+  std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>(&precomp_mgr.format_handler_tools);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_mgr.get_tempfile_name("decomp_gif"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
@@ -487,9 +490,6 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
     print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", decomp_length);
   }
 
-  precomp_mgr.statistics.decompressed_streams_count++;
-  precomp_mgr.statistics.decompressed_gif_count++;
-
   std::string tempfile2 = tmpfile->file_path + "_rec_";
   tmpfile->reopen();
   PrecompTmpFile frecomp;
@@ -515,10 +515,6 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
       recompress_success_needed = true;
 
       if (result->original_size > precomp_mgr.switches.min_ident_size) {
-        precomp_mgr.statistics.recompressed_streams_count++;
-        precomp_mgr.statistics.recompressed_gif_count++;
-        precomp_mgr.ctx->non_zlib_was_used = true;
-
         result->success = true;
 
         // write compressed data header (GIF)

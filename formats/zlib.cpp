@@ -17,9 +17,9 @@ bool ZlibFormatHandler::quick_check(const std::span<unsigned char> buffer, uintp
   return check_inflate_result(this->falsePositiveDetector, current_input_id, checkbuf_skip_zlib_hdr, -windowbits, original_input_pos, false);
 }
 
-DeflateWithHeaderPrecompressor::DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback) :
-  PrecompFormatPrecompressor(_progress_callback),
-  deflate_precompressor(std::make_unique<DeflatePrecompressor>(_progress_callback)), pre_deflate_header(std::move(_pre_deflate_header)) {}
+DeflateWithHeaderPrecompressor::DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback, Tools* _precomp_tools) :
+  PrecompFormatPrecompressor(_progress_callback, _precomp_tools),
+  deflate_precompressor(std::make_unique<DeflatePrecompressor>(_progress_callback, _precomp_tools)), pre_deflate_header(std::move(_pre_deflate_header)) {}
 
 PrecompProcessorReturnCode DeflateWithHeaderPrecompressor::process(bool input_eof) {
   while (hdr_bytes_skipped < pre_deflate_header.size() && avail_in > 0) {
@@ -55,8 +55,20 @@ void DeflateWithHeaderPrecompressor::dump_extra_stream_header_data(OStreamLike& 
 }
 void DeflateWithHeaderPrecompressor::dump_extra_block_header_data(OStreamLike& output) { return deflate_precompressor->dump_extra_block_header_data(output); }
 
+class ZlibPrecompressor: public DeflateWithHeaderPrecompressor {
+public:
+  explicit ZlibPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback, Tools* _precomp_tools):
+    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _progress_callback, _precomp_tools) {}
+
+  void increase_detected_count() override { precomp_tools->increase_detected_count("zLib (intense mode)"); }
+  void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("zLib (intense mode)"); }
+};
+
 std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
-  return std::make_unique<DeflateWithHeaderPrecompressor>(std::vector(buffer.data(), buffer.data() + 2), [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  return std::make_unique<ZlibPrecompressor>(
+    std::vector(buffer.data(), buffer.data() + 2),
+    [&precomp_mgr]() { precomp_mgr.call_progress_callback(); },
+    &precomp_mgr.format_handler_tools);
 }
 
 void ZlibFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {

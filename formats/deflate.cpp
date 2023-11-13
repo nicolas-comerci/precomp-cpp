@@ -15,7 +15,7 @@ void deflate_precompression_result::dump_recon_data_to_outfile(OStreamLike& outf
   fout_fput_vlint(outfile, rdres.recon_data.size());
   outfile.write(reinterpret_cast<const char*>(rdres.recon_data.data()), rdres.recon_data.size());
 }
-deflate_precompression_result::deflate_precompression_result(SupportedFormats format) : precompression_result(format) {}
+deflate_precompression_result::deflate_precompression_result(SupportedFormats format, Tools* _tools) : precompression_result(format, _tools) {}
 void deflate_precompression_result::dump_header_to_outfile(OStreamLike& outfile) const {
   // write compressed data header
   outfile.put(static_cast<char>(make_deflate_pcf_hdr_flags(rdres) | flags | (recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 })));
@@ -158,8 +158,8 @@ public:
     : ProcessorAdapter(avail_in, next_in, avail_out, next_out, std::move(process_func_)), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
 };
 
-DeflatePrecompressor::DeflatePrecompressor(const std::function<void()>& _progress_callback):
-  PrecompFormatPrecompressor(_progress_callback),
+DeflatePrecompressor::DeflatePrecompressor(const std::function<void()>& _progress_callback, Tools* _precomp_tools):
+  PrecompFormatPrecompressor(_progress_callback, _precomp_tools),
   preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
     [this]() -> bool {
       result.accepted = preflate_decode(
@@ -267,7 +267,7 @@ PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStream
 recompress_deflate_result try_recompression_deflate(Precomp& precomp_mgr, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
   file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
-  auto precompressor = std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  auto precompressor = std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); }, &precomp_mgr.format_handler_tools);
 
   long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
@@ -314,30 +314,22 @@ void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stre
     sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precompressed_input.tellg(), (uint64_t)recompressed_stream.tellp());
 }
 
-std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
+void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Precomp& precomp_mgr, SupportedFormats type,
   const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(type);
 
   // try to decompress at current position
   recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
   tmpfile->close();
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
-    precomp_mgr.statistics.decompressed_streams_count++;
-    dcounter++;
-
     debug_deflate_detected(*precomp_mgr.ctx, rdres, debugname, deflate_stream_pos);
 
     if (rdres.accepted) {
       result->success = rdres.accepted;
       result->original_size = rdres.compressed_stream_size;
       result->precompressed_size = rdres.uncompressed_stream_size;
-      precomp_mgr.statistics.recompressed_streams_count++;
-      rcounter++;
-
-      precomp_mgr.ctx->non_zlib_was_used = true;
 
       debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
 
@@ -347,7 +339,7 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       if (rdres.uncompressed_stream_size <= rdres.compressed_stream_size && !r.success) {
         precomp_mgr.statistics.recompressed_streams_count--;
         compressed_data_found = false;
-        return result;
+        return;
       }
 #endif
 
@@ -371,7 +363,6 @@ std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Pr
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
-  return result;
 }
 
 bool check_inflate_result(
@@ -589,7 +580,7 @@ void DeflateFormatHeaderData::read_data(IStreamLike& precompressed_input, std::b
   }
 }
 
-void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools) {
+void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const Tools& tools) {
   bool ok;
 
   // write decompressed data
@@ -601,7 +592,7 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
 }
 
 std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
-  return std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  return std::make_unique<DeflatePrecompressor>([&precomp_mgr]() { precomp_mgr.call_progress_callback(); }, &precomp_mgr.format_handler_tools);
 }
 
 std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {

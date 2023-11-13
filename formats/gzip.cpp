@@ -12,9 +12,16 @@ bool GZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintp
   return false;
 }
 
+class gzip_precompression_result: public deflate_precompression_result {
+public:
+  explicit gzip_precompression_result(Tools* tools): deflate_precompression_result(D_GZIP, tools) {}
+
+  void increase_detected_count() override { tools->increase_detected_count("GZip"); }
+  void increase_precompressed_count() override { tools->increase_precompressed_count("GZip"); }
+};
+
 std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
   auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<deflate_precompression_result>(D_GZIP);
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
           //
@@ -29,8 +36,8 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
 
   int header_length = 10;
 
+  // TODO: Why not move this code to the quick_check?
   bool dont_compress = false;
-
   if (fhcrc || fextra || fname || fcomment) {
     int act_checkbuf_pos = 10;
 
@@ -66,9 +73,10 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
       header_length += 2;
     }
   }
-  if (dont_compress) return result;
+  if (dont_compress) return std::unique_ptr<precompression_result>{};
 
-  result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_gzip_count, precomp_mgr.statistics.recompressed_gzip_count,
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<gzip_precompression_result>(&precomp_mgr.format_handler_tools);
+  try_decompression_deflate_type(result, precomp_mgr,
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
     "in GZIP", precomp_mgr.get_tempfile_name("precomp_gzip"));
 
@@ -91,6 +99,6 @@ void GZipFormatHandler::write_pre_recursion_data(RecursionContext& context, Prec
   context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 }
 
-void GZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.get_tempfile_name("recomp_gzip", true), "GZIP", tools);
+void GZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), precomp_tools->get_tempfile_name("recomp_gzip", true), "GZIP", *precomp_tools);
 }

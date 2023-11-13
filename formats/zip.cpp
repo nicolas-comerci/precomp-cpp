@@ -25,7 +25,16 @@ bool ZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
   return false;
 }
 
+class zip_precompression_result : public deflate_precompression_result {
+public:
+  explicit zip_precompression_result(Tools* tools) : deflate_precompression_result(D_ZIP, tools) {}
+
+  void increase_detected_count() override { tools->increase_detected_count("ZIP"); }
+  void increase_precompressed_count() override { tools->increase_precompressed_count("ZIP"); }
+};
+
 std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<zip_precompression_result>(&precomp_mgr.format_handler_tools);
   unsigned char* checkbuf = checkbuf_span.data();
   unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
   unsigned int extra_field_length = (*(checkbuf + 29) << 8) + *(checkbuf + 28);
@@ -33,7 +42,7 @@ std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(
 
   auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
 
-  auto result = try_decompression_deflate_type(precomp_mgr, precomp_mgr.statistics.decompressed_zip_count, precomp_mgr.statistics.recompressed_zip_count,
+  try_decompression_deflate_type(result, precomp_mgr,
     D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_mgr.get_tempfile_name("decomp_zip"));
 
   result->original_size_extra += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
@@ -57,6 +66,6 @@ void ZipFormatHandler::write_pre_recursion_data(RecursionContext& context, Preco
   context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 }
 
-void ZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
-  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), tools.get_tempfile_name("recomp_zip", true), "ZIP", tools);
+void ZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
+  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), precomp_tools->get_tempfile_name("recomp_zip", true), "ZIP", *precomp_tools);
 }

@@ -26,8 +26,17 @@ bool JpegFormatHandler::quick_check(const std::span<unsigned char> buffer, uintp
       );
 }
 
+class jpeg_precompression_result: public precompression_result {
+  bool is_progressive_jpeg;
+public:
+  explicit jpeg_precompression_result(Tools* tools, bool _is_progressive_jpeg): precompression_result(D_JPG, tools), is_progressive_jpeg(_is_progressive_jpeg) {}
+
+  void increase_detected_count() override { tools->increase_detected_count(is_progressive_jpeg ? "JPG (progressive)" : "JPG"); }
+  void increase_precompressed_count() override { tools->increase_precompressed_count(is_progressive_jpeg ? "JPG (progressive)" : "JPG"); }
+};
+
 std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
-  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_JPG);
+  std::unique_ptr<precompression_result> result = std::make_unique<jpeg_precompression_result>(&precomp_mgr.format_handler_tools, progressive_jpg);
   auto random_tag = temp_files_tag();
   std::string original_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_original_jpg", false);
   std::string decompressed_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_precompressed_jpg", false);
@@ -240,14 +249,6 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
     mjpg_dht_used = recompress_success;
   }
 
-  precomp_mgr.statistics.decompressed_streams_count++;
-  if (progressive_jpg) {
-    precomp_mgr.statistics.decompressed_jpg_prog_count++;
-  }
-  else {
-    precomp_mgr.statistics.decompressed_jpg_count++;
-  }
-
   if ((!recompress_success) && (precomp_mgr.switches.use_packjpg_fallback)) {
     print_to_log(PRECOMP_DEBUG_LOG, "packJPG error: %s\n", recompress_msg);
   }
@@ -270,15 +271,6 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
     }
 
     if (jpg_new_length.has_value()) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      if (progressive_jpg) {
-        precomp_mgr.statistics.recompressed_jpg_prog_count++;
-      }
-      else {
-        precomp_mgr.statistics.recompressed_jpg_count++;
-      }
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
       result->original_size = jpg_length;
       result->precompressed_size = jpg_new_length.value();
       jpg_success = true;
@@ -312,7 +304,6 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
 }
 
 std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos) {
-  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_JPG);
   bool done = false, found = false;
   bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
   bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);
@@ -383,9 +374,9 @@ std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression
 
   if (found) {
     long long jpg_length = jpg_end_pos - jpg_start_pos;
-    result = try_decompression_jpg(precomp_mgr, jpg_start_pos, jpg_length, progressive_flag);
+    return try_decompression_jpg(precomp_mgr, jpg_start_pos, jpg_length, progressive_flag);
   }
-  return result;
+  return std::unique_ptr<precompression_result>{};
 }
 
 int BrunsliStringWriter(void* data, const uint8_t* buf, size_t count) {
@@ -418,13 +409,13 @@ std::unique_ptr<PrecompFormatHeaderData> JpegFormatHandler::read_format_header(R
   return fmt_hdr;
 }
 
-void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - JPG\n");
   auto& jpeg_format_hdr_data = static_cast<JpegFormatHeaderData&>(precomp_hdr_data);
 
   auto random_tag = temp_files_tag();
-  std::string precompressed_filename = tools.get_tempfile_name(random_tag + "_precompressed_jpg", false);
-  std::string recompressed_filename = tools.get_tempfile_name(random_tag + "_original_jpg", false);
+  std::string precompressed_filename = precomp_tools->get_tempfile_name(random_tag + "_precompressed_jpg", false);
+  std::string recompressed_filename = precomp_tools->get_tempfile_name(random_tag + "_original_jpg", false);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli - decompressed length: %lli\n", jpeg_format_hdr_data.original_size, jpeg_format_hdr_data.precompressed_size);
 

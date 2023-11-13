@@ -33,8 +33,15 @@ public:
   long long mp3_parsing_cache_mp3_length;
 };
 
+class mp3_precompression_result: public precompression_result {
+public:
+  explicit mp3_precompression_result(Tools* _tools): precompression_result(D_MP3, _tools) {}
+
+  void increase_detected_count() override { tools->increase_detected_count("MP3"); }
+  void increase_precompressed_count() override { tools->increase_precompressed_count("MP3"); }
+};
+
 std::unique_ptr<precompression_result> try_precompression_mp3(Precomp& precomp_mgr, long long original_input_pos, long long mp3_length, std::string tmp_filename, mp3_suppression_vars& suppression) {
-  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_MP3);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   std::string decompressed_mp3_filename = tmp_filename + "_";
@@ -121,8 +128,7 @@ std::unique_ptr<precompression_result> try_precompression_mp3(Precomp& precomp_m
     print_to_log(PRECOMP_DEBUG_LOG, "Ignoring following streams with position/length sum %lli to avoid slowdown\n", suppression.suppress_mp3_inconsistent_original_bit);
   }
 
-  precomp_mgr.statistics.decompressed_streams_count++;
-  precomp_mgr.statistics.decompressed_mp3_count++;
+  std::unique_ptr<precompression_result> result = std::make_unique<mp3_precompression_result>(&precomp_mgr.format_handler_tools);
 
   if (!recompress_success) {
     print_to_log(PRECOMP_DEBUG_LOG, "packMP3 error: %s\n", recompress_msg);
@@ -132,10 +138,6 @@ std::unique_ptr<precompression_result> try_precompression_mp3(Precomp& precomp_m
     auto mp3_new_length = in_memory ? mp3_mem_out_size : std::filesystem::file_size(tmpfile->file_path);
 
     if (mp3_new_length > 0) {
-      precomp_mgr.statistics.recompressed_streams_count++;
-      precomp_mgr.statistics.recompressed_mp3_count++;
-      precomp_mgr.ctx->non_zlib_was_used = true;
-
       result->original_size = mp3_length;
       result->precompressed_size = mp3_new_length;
       mp3_success = true;
@@ -238,7 +240,6 @@ bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsign
 
 std::unique_ptr<precompression_result> Mp3FormatHandler::attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) {
   mp3_suppression_vars suppression;
-  std::unique_ptr<precompression_result> result = std::make_unique<precompression_result>(D_MP3);
   int mpeg = -1;
   int layer = -1;
   int samples = -1;
@@ -374,7 +375,7 @@ std::unique_ptr<precompression_result> Mp3FormatHandler::attempt_precompression(
       print_to_log(PRECOMP_DEBUG_LOG, "Type: %s\n", filetype_description[type]);
     }
   }
-  return result;
+  return std::unique_ptr<precompression_result>{};
 }
 
 std::unique_ptr<PrecompFormatHeaderData> Mp3FormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
@@ -386,7 +387,7 @@ std::unique_ptr<PrecompFormatHeaderData> Mp3FormatHandler::read_format_header(Re
   return fmt_hdr;
 }
 
-void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {
+void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
   print_to_log(PRECOMP_DEBUG_LOG, "Prcompressed data - MP3\n");
 
   print_to_log(PRECOMP_DEBUG_LOG, "Recompressed length: %lli  - precompressed length: %lli\n", precomp_hdr_data.original_size, precomp_hdr_data.precompressed_size);
@@ -398,8 +399,8 @@ void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
   bool recompress_success = false;
 
   auto random_tag = temp_files_tag();
-  std::string precompressed_filename = tools.get_tempfile_name(random_tag + "_precompressed_mp3", false);
-  std::string recompressed_filename = tools.get_tempfile_name(random_tag + "_original_mp3", false);
+  std::string precompressed_filename = precomp_tools->get_tempfile_name(random_tag + "_precompressed_mp3", false);
+  std::string recompressed_filename = precomp_tools->get_tempfile_name(random_tag + "_original_mp3", false);
 
   std::unique_ptr<IStreamLike> recompressed_tmp;
 

@@ -20,10 +20,13 @@ public:
   std::vector<unsigned char> zlib_header;
   bool inc_last_hdr_byte = false;
 
-  explicit deflate_precompression_result(SupportedFormats format);
+  explicit deflate_precompression_result(SupportedFormats format, Tools* _tools);
 
   void dump_header_to_outfile(OStreamLike& outfile) const override;
   void dump_to_outfile(OStreamLike& outfile) const override;
+
+  void increase_detected_count() override { tools->increase_detected_count("Brute mode"); }
+  void increase_precompressed_count() override { tools->increase_precompressed_count("Brute mode"); }
 };
 
 struct DeflateHistogramFalsePositiveDetector {
@@ -44,7 +47,7 @@ void debug_deflate_detected(RecursionContext& context, const recompress_deflate_
 
 void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, const recompress_deflate_result& rdres);
 
-std::unique_ptr<deflate_precompression_result> try_decompression_deflate_type(Precomp& precomp_mgr, unsigned& dcounter, unsigned& rcounter, SupportedFormats type,
+void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Precomp& precomp_mgr, SupportedFormats type,
   const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename);
 
 bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDetector, uintptr_t current_input_id, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters = false);
@@ -61,7 +64,7 @@ public:
   void read_data(IStreamLike& precompressed_input, std::byte precomp_hdr_flags, bool inc_last_hdr_byte);
 };
 
-void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const PrecompFormatHandler::Tools& tools);
+void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, DeflateFormatHeaderData& precomp_hdr_data, std::string filename, std::string type, const Tools& tools);
 
 class PreflateProcessorAdapter;
 class DeflatePrecompressor : public PrecompFormatPrecompressor {
@@ -70,11 +73,14 @@ public:
   recompress_deflate_result result{};
   size_t recon_data_written = 0;
 
-  DeflatePrecompressor(const std::function<void()>& _progress_callback);
+  explicit DeflatePrecompressor(const std::function<void()>& _progress_callback, Tools* _precomp_tools);
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) override;
   void dump_extra_block_header_data(OStreamLike& output) override;
+
+  void increase_detected_count() override { precomp_tools->increase_detected_count("Brute mode"); }
+  void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("Brute mode"); }
 };
 class DeflateRecompressor : public PrecompFormatRecompressor {
   std::vector<unsigned char>* recon_data;

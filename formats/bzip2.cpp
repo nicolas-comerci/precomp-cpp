@@ -21,8 +21,8 @@ class Bzip2Decompressor: public PrecompFormatPrecompressor {
 public:
   bool stream_failed = false;
 
-  Bzip2Decompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback):
-    PrecompFormatPrecompressor(_progress_callback), compression_level(*(buffer.data() + 3) - '0')
+  Bzip2Decompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback, Tools* _precomp_tools):
+    PrecompFormatPrecompressor(_progress_callback, _precomp_tools), compression_level(*(buffer.data() + 3) - '0')
   {
     strm.bzalloc = nullptr;
     strm.bzfree = nullptr;
@@ -70,6 +70,9 @@ public:
   void dump_extra_stream_header_data(OStreamLike& output) override {
     output.put(compression_level);
   }
+
+  void increase_detected_count() override { precomp_tools->increase_detected_count("bZip2"); }
+  void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("bZip2"); }
 };
 
 class BZip2FormatHeaderData : public PrecompFormatHeaderData {
@@ -213,7 +216,7 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, int level, unsigned l
 }
 
 std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
-  return std::make_unique<Bzip2Decompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); });
+  return std::make_unique<Bzip2Decompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); }, &precomp_mgr.format_handler_tools);
 }
 
 /*
