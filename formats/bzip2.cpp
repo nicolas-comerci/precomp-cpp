@@ -21,8 +21,8 @@ class Bzip2Decompressor: public PrecompFormatPrecompressor {
 public:
   bool stream_failed = false;
 
-  Bzip2Decompressor(const std::span<unsigned char>& buffer, const std::function<void()>& _progress_callback, Tools* _precomp_tools):
-    PrecompFormatPrecompressor(_progress_callback, _precomp_tools), compression_level(*(buffer.data() + 3) - '0')
+  Bzip2Decompressor(const std::span<unsigned char>& buffer, Tools* _precomp_tools):
+    PrecompFormatPrecompressor(_precomp_tools), compression_level(*(buffer.data() + 3) - '0')
   {
     strm.bzalloc = nullptr;
     strm.bzfree = nullptr;
@@ -40,7 +40,7 @@ public:
 
   PrecompProcessorReturnCode process(bool input_eof) override {
     if (stream_failed) return PrecompProcessorReturnCode::PP_ERROR;
-    progress_callback();
+    precomp_tools->progress_callback();
 
     strm.avail_in = avail_in;
     if (strm.avail_in == 0) return PrecompProcessorReturnCode::PP_OK;
@@ -215,8 +215,8 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, int level, unsigned l
   return BZ_OK;
 }
 
-std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
-  return std::make_unique<Bzip2Decompressor>(buffer, [&precomp_mgr]() { precomp_mgr.call_progress_callback(); }, &precomp_mgr.format_handler_tools);
+std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) {
+  return std::make_unique<Bzip2Decompressor>(buffer, &precomp_tools);
 }
 
 /*
@@ -327,9 +327,9 @@ std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_m
 }
 */
 
-std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(IStreamLike& input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<BZip2FormatHeaderData>();
-  fmt_hdr->level = context.fin->get();
+  fmt_hdr->level = input.get();
   return fmt_hdr;
 }
 

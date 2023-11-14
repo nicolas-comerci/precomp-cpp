@@ -206,7 +206,7 @@ void print_results(Precomp& precomp_mgr, bool print_new_size, long long start_ti
   delete_current_progress_text();
   if (print_new_size && output_file_name != "stdout") {
     auto fout_length = std::filesystem::file_size(output_file_name.c_str());
-    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetRecursionContext(&precomp_mgr)->fin_length) + "      ";
+    std::string result_print = "New size: " + std::to_string(fout_length) + " instead of " + std::to_string(PrecompGetSwitches(&precomp_mgr)->fin_length) + "      ";
     log_output_func("100.00% - " + result_print);
   }
   else {
@@ -251,8 +251,6 @@ void setSwitchesIgnoreList(CSwitches& precomp_switches, const std::vector<long l
 }
 
 int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv[]) {
-  auto precomp_context = PrecompGetRecursionContext(&precomp_mgr);
-
   int i, j;
   bool appended_pcf = false;
 
@@ -578,7 +576,7 @@ int init(Precomp& precomp_mgr, CSwitches& precomp_switches, int argc, char* argv
         input_stream = &std::cin;
       }
       else {
-        precomp_context->fin_length = std::filesystem::file_size(argv[i]);
+        precomp_switches.fin_length = std::filesystem::file_size(argv[i]);
 
         auto fin = new std::ifstream();
         fin->open(argv[i], std::ios_base::in | std::ios_base::binary);

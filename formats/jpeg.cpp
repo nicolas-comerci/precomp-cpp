@@ -35,11 +35,11 @@ public:
   void increase_precompressed_count() override { tools->increase_precompressed_count(is_progressive_jpeg ? "JPG (progressive)" : "JPG"); }
 };
 
-std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mgr, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
-  std::unique_ptr<precompression_result> result = std::make_unique<jpeg_precompression_result>(&precomp_mgr.format_handler_tools, progressive_jpg);
+std::unique_ptr<precompression_result> try_decompression_jpg(Tools& precomp_tools, const Switches& precomp_switches, IStreamLike& input, long long jpg_start_pos, long long jpg_length, bool progressive_jpg) {
+  std::unique_ptr<precompression_result> result = std::make_unique<jpeg_precompression_result>(&precomp_tools, progressive_jpg);
   auto random_tag = temp_files_tag();
-  std::string original_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_original_jpg", false);
-  std::string decompressed_jpg_filename = precomp_mgr.get_tempfile_name(random_tag + "_precompressed_jpg", false);
+  std::string original_jpg_filename = precomp_tools.get_tempfile_name(random_tag + "_original_jpg", false);
+  std::string decompressed_jpg_filename = precomp_tools.get_tempfile_name(random_tag + "_precompressed_jpg", false);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(original_jpg_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
@@ -52,7 +52,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
   }
   print_to_log(PRECOMP_DEBUG_LOG, "%lli, length %lli\n", jpg_start_pos, jpg_length);
   // do not recompress non-progressive JPGs when prog_only is set
-  if ((!progressive_jpg) && (precomp_mgr.switches.prog_only)) {
+  if ((!progressive_jpg) && (precomp_switches.prog_only)) {
     print_to_log(PRECOMP_DEBUG_LOG, "Skipping (only progressive JPGs mode set)\n");
     return result;
   }
@@ -68,14 +68,14 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
   bool in_memory = ((jpg_length + MJPGDHT_LEN) <= JPG_MAX_MEMORY_SIZE);
 
   if (in_memory) { // small stream => do everything in memory
-    precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
+    input.seekg(jpg_start_pos, std::ios_base::beg);
     jpg_mem_in.resize(jpg_length + MJPGDHT_LEN);
     auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpg_length);
-    fast_copy(*precomp_mgr.ctx->fin, *memstream, jpg_length);
+    fast_copy(input, *memstream, jpg_length);
 
     bool brunsli_success = false;
 
-    if (precomp_mgr.switches.use_brunsli) {
+    if (precomp_switches.use_brunsli) {
       print_to_log(PRECOMP_DEBUG_LOG, "Trying to compress using brunsli...\n");
       brunsli::JPEGData jpegData;
       if (brunsli::ReadJpeg(jpg_mem_in.data(), jpg_length, brunsli::JPEG_READ_ALL, &jpegData)) {
@@ -142,7 +142,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
         }
       }
       if (!brunsli_success) {
-        if (precomp_mgr.switches.use_packjpg_fallback) {
+        if (precomp_switches.use_packjpg_fallback) {
           print_to_log(PRECOMP_DEBUG_LOG, "Brunsli compression failed, using packJPG fallback...\n");
         }
         else {
@@ -151,7 +151,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
       }
     }
 
-    if ((!precomp_mgr.switches.use_brunsli || !brunsli_success) && precomp_mgr.switches.use_packjpg_fallback) {
+    if ((!precomp_switches.use_brunsli || !brunsli_success) && precomp_switches.use_packjpg_fallback) {
       unsigned char* mem = nullptr;
       pjglib_init_streams(jpg_mem_in.data(), 1, jpg_length, mem, 1);
       recompress_success = pjglib_convert_stream2mem(&mem, &jpg_mem_out_size, recompress_msg);
@@ -159,14 +159,14 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
       jpg_mem_out = std::unique_ptr<unsigned char[]>(mem);
     }
   }
-  else if (precomp_mgr.switches.use_packjpg_fallback) { // large stream => use temporary files
+  else if (precomp_switches.use_packjpg_fallback) { // large stream => use temporary files
     print_to_log(PRECOMP_DEBUG_LOG, "JPG too large for brunsli, using packJPG fallback...\n");
     // try to decompress at current position
     {
       WrappedFStream decompressed_jpg;
       decompressed_jpg.open(decompressed_jpg_filename, std::ios_base::out | std::ios_base::binary);
-      precomp_mgr.ctx->fin->seekg(jpg_start_pos, std::ios_base::beg);
-      fast_copy(*precomp_mgr.ctx->fin, decompressed_jpg, jpg_length);
+      input.seekg(jpg_start_pos, std::ios_base::beg);
+      fast_copy(input, decompressed_jpg, jpg_length);
       decompressed_jpg.close();
     }
 
@@ -184,7 +184,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
     brunsli_used = false;
   }
 
-  if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (precomp_mgr.switches.use_mjpeg) && (precomp_mgr.switches.use_packjpg_fallback)) {
+  if ((!recompress_success) && (strncmp(recompress_msg, "huffman table missing", 21) == 0) && (precomp_switches.use_mjpeg) && (precomp_switches.use_packjpg_fallback)) {
     print_to_log(PRECOMP_DEBUG_LOG, "huffman table missing, trying to use Motion JPEG DHT\n");
     // search 0xFF 0xDA, insert MJPGDHT (MJPGDHT_LEN bytes)
     bool found_ffda = false;
@@ -249,7 +249,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
     mjpg_dht_used = recompress_success;
   }
 
-  if ((!recompress_success) && (precomp_mgr.switches.use_packjpg_fallback)) {
+  if ((!recompress_success) && (precomp_switches.use_packjpg_fallback)) {
     print_to_log(PRECOMP_DEBUG_LOG, "packJPG error: %s\n", recompress_msg);
   }
 
@@ -303,7 +303,10 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Precomp& precomp_mg
   return result;
 }
 
-std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long jpg_start_pos) {
+std::unique_ptr<precompression_result>
+JpegFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
+                                          std::span<unsigned char> checkbuf_span,
+                                          long long jpg_start_pos, const Switches &precomp_switches) {
   bool done = false, found = false;
   bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
   bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);
@@ -312,9 +315,9 @@ std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression
 
   unsigned char in_buf[5];
   do {
-    precomp_mgr.ctx->fin->seekg(jpg_end_pos, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf), 5);
-    if ((precomp_mgr.ctx->fin->gcount() != 5) || (in_buf[0] != 0xFF))
+    input.seekg(jpg_end_pos, std::ios_base::beg);
+    input.read(reinterpret_cast<char*>(in_buf), 5);
+    if ((input.gcount() != 5) || (in_buf[0] != 0xFF))
       break;
     int length = (int)in_buf[2] * 256 + (int)in_buf[3];
     switch (in_buf[1]) {
@@ -355,8 +358,8 @@ std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression
     in_buf_chunk.resize(CHUNK);
     for (;;) {
       if (done) break;
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf_chunk.data()), CHUNK);
-      bytesRead = precomp_mgr.ctx->fin->gcount();
+      input.read(reinterpret_cast<char*>(in_buf_chunk.data()), CHUNK);
+      bytesRead = input.gcount();
       if (!bytesRead) break;
       for (size_t i = 0; !done && (i < bytesRead); i++) {
         jpg_end_pos++;
@@ -373,8 +376,8 @@ std::unique_ptr<precompression_result> JpegFormatHandler::attempt_precompression
   }
 
   if (found) {
-    long long jpg_length = jpg_end_pos - jpg_start_pos;
-    return try_decompression_jpg(precomp_mgr, jpg_start_pos, jpg_length, progressive_flag);
+    const long long jpg_length = jpg_end_pos - jpg_start_pos;
+    return try_decompression_jpg(*precomp_tools, precomp_switches, input, jpg_start_pos, jpg_length, progressive_flag);
   }
   return std::unique_ptr<precompression_result>{};
 }
@@ -391,20 +394,20 @@ public:
   bool brunsli_used = false;
 };
 
-std::unique_ptr<PrecompFormatHeaderData> JpegFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> JpegFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<JpegFormatHeaderData>();
 
   fmt_hdr->mjpg_dht_used = (precomp_hdr_flags & std::byte{ 0b100 }) == std::byte{ 0b100 };
   fmt_hdr->brunsli_used = (precomp_hdr_flags & std::byte{ 0b1000 }) == std::byte{ 0b1000 };
   {
-    bool brotli_used = (precomp_hdr_flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
+    const bool brotli_used = (precomp_hdr_flags & std::byte{ 0b10000 }) == std::byte{ 0b10000 };
     if (brotli_used) {
       throw PrecompError(ERR_BROTLI_NO_LONGER_SUPPORTED);
     }
   }
 
-  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
-  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(input);
+  fmt_hdr->precompressed_size = fin_fget_vlint(input);
 
   return fmt_hdr;
 }

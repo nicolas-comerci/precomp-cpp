@@ -103,36 +103,6 @@ constexpr auto COMP_CHUNK = 512;
 constexpr auto MAX_IO_BUFFER_SIZE = 64 * 1024 * 1024;
 
 class Precomp;
-class RecursionContext: public CRecursionContext {
-public:
-  Precomp& precomp;
-
-  explicit RecursionContext(float min_percent, float max_percent, Precomp& precomp_);
-
-  // Ignore offsets can be set for any Format handler, so that if for example, we failed to precompress a deflate stream inside a ZIP file, we don't attempt to precompress
-  // it again, which is destined to fail, by using the intense mode (ZLIB) format handler.
-  std::array<std::queue<long long>, 256> ignore_offsets;  // 256 is at least for now the maximum possible amount of format handlers, will most likely be enough for a while
-
-  std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
-  void set_input_stream(std::istream* istream, bool take_ownership = true);
-  void set_input_stream(FILE* fhandle, bool take_ownership = true);
-  std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
-  void set_output_stream(std::ostream* ostream, bool take_ownership = true);
-  void set_output_stream(FILE* fhandle, bool take_ownership = true);
-
-  float global_min_percent;
-  float global_max_percent;
-  int comp_decomp_state = P_NONE;
-
-  long long input_file_pos;
-  unsigned char in_buf[IN_BUF_SIZE];
-
-  // Uncompressed data info
-  long long uncompressed_pos;
-  std::optional<long long> uncompressed_length = std::nullopt;
-  long long uncompressed_bytes_total = 0;
-};
-
 
 // When Precomp detects and precompresses a stream, there is a header that is written before the precompressed data with information about the precompressed stream
 // such as the length, penalty bytes and if recursion was used.
@@ -158,17 +128,20 @@ public:
   std::function<std::string(const std::string& name, bool append_tag)> get_tempfile_name;
   std::function<void(std::string)> increase_detected_count;
   std::function<void(std::string)> increase_precompressed_count;
+  std::function<void(SupportedFormats, long long)> add_ignore_offset;
 
   Tools(
     std::function<void()>&& _progress_callback,
     std::function<std::string(const std::string& name, bool append_tag)>&& _get_tempfile_name,
     std::function<void(std::string)>&& _increase_detected_count,
-    std::function<void(std::string)>&& _increase_precompressed_count
+    std::function<void(std::string)>&& _increase_precompressed_count,
+    std::function<void(SupportedFormats, long long)>&& _add_ignore_offset
   ) :
     progress_callback(std::move(_progress_callback)),
     get_tempfile_name(std::move(_get_tempfile_name)),
     increase_detected_count(std::move(_increase_detected_count)),
-    increase_precompressed_count(std::move(_increase_precompressed_count)) {}
+    increase_precompressed_count(std::move(_increase_precompressed_count)),
+    add_ignore_offset(std::move(_add_ignore_offset)) {}
 };
 
 
@@ -232,15 +205,16 @@ public:
     // The main precompression entrypoint, you are given full access to Precomp instance which in turn gives you access to the current context and input/output streams.
     // You should however if possible not output anything to the output stream directly or otherwise mess with the Precomp instance or current context unless strictly necessary,
     // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
-    virtual std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) = 0;
+    virtual std::unique_ptr<precompression_result>
+    attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer, long long input_stream_pos, const Switches &precomp_switches) = 0;
 
-    virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
+    virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
     // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
     // with your extra format header data, provided you are using and returned such an instance from read_format_header()
     virtual void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) = 0;
     // Any data that must be written before the actual stream's data, where recursion can occur, must be written here as this is executed before recompress()
     // Such data should be things like Zip/ZLib or any other compression/container headers.
-    virtual void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {}
+    virtual void write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {}
 
     // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
     // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector
@@ -266,7 +240,6 @@ enum PrecompProcessorReturnCode {
 
 class PrecompFormatPrecompressor {
 protected:
-  std::function<void()> progress_callback;
   Tools* precomp_tools;
 
 public:
@@ -276,7 +249,7 @@ public:
   std::byte* next_out = nullptr;
   uint64_t original_stream_size = 0;
 
-  PrecompFormatPrecompressor(const std::function<void()>& _progress_callback, Tools* _precomp_tools) : progress_callback(_progress_callback), precomp_tools(_precomp_tools) {}
+  PrecompFormatPrecompressor(Tools* _precomp_tools) : precomp_tools(_precomp_tools) {}
   virtual ~PrecompFormatPrecompressor() = default;
 
   virtual PrecompProcessorReturnCode process(bool input_eof) = 0;
@@ -533,15 +506,15 @@ public:
   // might have already seen part of the data on the buffer_chunk, like insane/brute deflate handlers that use an histogram to detect false positives.
   virtual bool quick_check(const std::span<unsigned char> buffer_chunk, uintptr_t current_input_id, const long long original_input_pos) = 0;
 
-  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) = 0;
+  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) = 0;
 
-  virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
+  virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike& input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
   // make_recompressor method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
   // with your extra format header data, provided you are using and returned such an instance from read_format_header()
   virtual std::unique_ptr<PrecompFormatRecompressor> make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) = 0;
   // Any data that must be written before the actual stream's data, where recursion can occur, must be written here as this is executed before recompress()
   // Such data should be things like Zip/ZLib or any other compression/container headers.
-  virtual void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {}
+  virtual void write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData &precomp_hdr_data) {}
 
   // Each format handler is associated with at least one header byte which is outputted to the PCF file when writting the precompressed data
   // If there is more than one supported header byte for the handler, keep in mind that the handler will still be identified by the first one on the vector
@@ -573,20 +546,20 @@ public:
   Switches switches;
   ResultStatistics statistics;
   Tools format_handler_tools;
-  std::unique_ptr<RecursionContext> ctx = std::make_unique<RecursionContext>(0, 100, *this);
-  std::vector<std::unique_ptr<RecursionContext>> recursion_contexts_stack;
 
+  long long input_file_pos;
   std::string input_file_name;
   std::string output_file_name;
-  // Useful so we can easily get (for example) info on the original input/output streams at any time
-  std::unique_ptr<RecursionContext>& get_original_context();
+
+  std::unique_ptr<IStreamLike> fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);  
   void set_input_stream(std::istream* istream, bool take_ownership = true);
   void set_input_stream(FILE* fhandle, bool take_ownership = true);
+  std::unique_ptr<ObservableOStream> fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(new std::ofstream(), true));
   void set_output_stream(std::ostream* ostream, bool take_ownership = true);
   void set_output_stream(FILE* fhandle, bool take_ownership = true);
 
   void set_progress_callback(std::function<void(float)> callback);
-  void call_progress_callback();
+  void call_progress_callback() const;
 
   std::string get_tempfile_name(const std::string& name, bool prepend_random_tag = true) const;
 
@@ -597,6 +570,9 @@ public:
   const std::vector<std::unique_ptr<PrecompFormatHandler2>>& get_format_handlers2() const;
   bool is_format_handler_active(SupportedFormats format_id) const;
 
+  // Ignore offsets can be set for any Format handler, so that if for example, we failed to precompress a deflate stream inside a ZIP file, we don't attempt to precompress
+  // it again, which is destined to fail, by using the intense mode (ZLIB) format handler.
+  std::vector<std::array<std::queue<long long>, 256>> ignore_offsets { {} };  // 256 is at least for now the maximum possible amount of format handlers, will most likely be enough for a while
   int recursion_depth = 0;
   
 };
@@ -610,6 +586,6 @@ void fout_fput32_little_endian(OStreamLike& output, unsigned int v);
 void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
 
-std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(Precomp& precomp_mgr, IStreamLike& original, IStreamLike& candidate, long long original_size);
+std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(const std::function<void()>& progress_callback, IStreamLike& original, IStreamLike& candidate, long long original_size);
 
 #endif // PRECOMP_DLL_H

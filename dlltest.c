@@ -80,8 +80,8 @@ bool set_precomp_output(Precomp* precomp_mgr, char* filename, bool use_generic_s
 int precompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   Precomp* precomp_mgr = PrecompCreate();
   int filesize_err = 0;
-  CRecursionContext* context = PrecompGetRecursionContext(precomp_mgr);
-  context->fin_length = fileSize64(in_file, &filesize_err);
+  CSwitches* switches = PrecompGetSwitches(precomp_mgr);
+  switches->fin_length = fileSize64(in_file, &filesize_err);
 
   bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams, false);
   if (!input_success) return 1;
@@ -97,7 +97,7 @@ int precompress_file(char* in_file, char* out_file, bool use_generic_streams) {
 int recompress_file(char* in_file, char* out_file, bool use_generic_streams) {
   Precomp* precomp_mgr = PrecompCreate();
   int filesize_err = 0;
-  PrecompGetRecursionContext(precomp_mgr)->fin_length = fileSize64(in_file, &filesize_err);
+  PrecompGetSwitches(precomp_mgr)->fin_length = fileSize64(in_file, &filesize_err);
 
   bool input_success = set_precomp_input(precomp_mgr, in_file, use_generic_streams, true);
   if (!input_success) return 1;

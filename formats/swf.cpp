@@ -14,10 +14,10 @@ class SwfPrecompressor: public DeflateWithHeaderPrecompressor {
   std::array<unsigned char, 3> cws{ 'C', 'W', 'S' };
   unsigned int cws_bytes_skipped = 0;
 public:
-  SwfPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, const std::function<void()>& _progress_callback, Tools* _precomp_tools) :
-    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _progress_callback, _precomp_tools) {}
+  SwfPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools) :
+    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _precomp_tools) {}
 
-  PrecompProcessorReturnCode process(bool input_eof) {
+  PrecompProcessorReturnCode process(bool input_eof) override {
     while (cws_bytes_skipped < cws.size() && avail_in > 0) {
       // TODO: maybe check that the bytes are the same?
       avail_in -= 1;
@@ -33,17 +33,15 @@ public:
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("SWF"); }
 };
 
-std::unique_ptr<PrecompFormatPrecompressor> SwfFormatHandler::make_precompressor(Precomp& precomp_mgr, const std::span<unsigned char>& buffer) {
+std::unique_ptr<PrecompFormatPrecompressor> SwfFormatHandler::make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) {
   return std::make_unique<SwfPrecompressor>(
     std::vector(buffer.data() + 3, buffer.data() + 10),
-    [&precomp_mgr]() { precomp_mgr.call_progress_callback(); },
-    &precomp_mgr.format_handler_tools);
+    &precomp_tools);
 }
 
-void SwfFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
-  context.fout->put('C');
-  context.fout->put('W');
-  context.fout->put('S');
-  ZlibFormatHandler::write_pre_recursion_data(context, precomp_hdr_data);
-  
+void SwfFormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData &precomp_hdr_data) {
+  output.put('C');
+  output.put('W');
+  output.put('S');
+  ZlibFormatHandler::write_pre_recursion_data(output, precomp_hdr_data);
 }

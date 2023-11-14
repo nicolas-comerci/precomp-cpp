@@ -33,37 +33,38 @@ public:
   void increase_precompressed_count() override { tools->increase_precompressed_count("ZIP"); }
 };
 
-std::unique_ptr<precompression_result> ZipFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<zip_precompression_result>(&precomp_mgr.format_handler_tools);
+std::unique_ptr<precompression_result>
+ZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf_span, long long input_stream_pos, const Switches &precomp_switches) {
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<zip_precompression_result>(precomp_tools);
   unsigned char* checkbuf = checkbuf_span.data();
-  unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
-  unsigned int extra_field_length = (*(checkbuf + 29) << 8) + *(checkbuf + 28);
-  auto header_length = 30 + filename_length + extra_field_length;
+  const unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
+  const unsigned int extra_field_length = (*(checkbuf + 29) << 8) + *(checkbuf + 28);
+  const auto header_length = 30 + filename_length + extra_field_length;
 
-  auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
+  const auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
 
-  try_decompression_deflate_type(result, precomp_mgr,
-    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_mgr.get_tempfile_name("decomp_zip"));
+  try_decompression_deflate_type(result, *precomp_tools, input, output,
+    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_tools->get_tempfile_name("decomp_zip", true));
 
   result->original_size_extra += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
   return result;
 }
 
-std::unique_ptr<PrecompFormatHeaderData> ZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> ZipFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  fmt_hdr->read_data(input, precomp_hdr_flags, false);
   return fmt_hdr;
 }
 
-void ZipFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+void ZipFormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {
   auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
   // ZIP header
-  context.fout->put('P');
-  context.fout->put('K');
-  context.fout->put(3);
-  context.fout->put(4);
+  output.put('P');
+  output.put('K');
+  output.put(3);
+  output.put(4);
   // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
+  output.write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 }
 
 void ZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {

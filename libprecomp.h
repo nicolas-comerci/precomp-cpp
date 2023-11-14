@@ -86,6 +86,7 @@ typedef struct {
 
   // This string will be freed when Precomp is destroyed so don't double free it afterwards
   char* working_dir;
+  uintmax_t fin_length;
 
   //(p)recompression types to use (default: all)
   bool use_pdf;
@@ -108,10 +109,6 @@ typedef struct {
 } CSwitches;
 
 typedef struct {
-  uintmax_t fin_length;
-} CRecursionContext;
-
-typedef struct {
   unsigned int precompressed_streams_count;
   unsigned int decompressed_streams_count;
   // recursion
@@ -131,7 +128,6 @@ ExternC LIBPRECOMP void PrecompSetProgressCallback(Precomp* precomp_mgr, void(*c
 ExternC LIBPRECOMP CSwitches* PrecompGetSwitches(Precomp* precomp_mgr);
 // This COPIES the list into the Switches structure, so you are free to well, free the ignore_pos_list memory after setting it
 ExternC LIBPRECOMP void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* ignore_pos_list, size_t ignore_post_list_count);
-ExternC LIBPRECOMP CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr);
 ExternC LIBPRECOMP CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr);
 
 // This is not really a realistic interface to access the results, but works for Precomp CLI for now

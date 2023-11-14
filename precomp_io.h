@@ -509,7 +509,7 @@ class PasstroughStream : public IStreamLike, public OStreamLike {
 public:
     std::optional<std::exception> thread_error = std::nullopt;
 
-    PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size = CHUNK);
+    explicit PasstroughStream(std::function<void(OStreamLike&)> func, unsigned int _buffer_size = CHUNK);
     virtual ~PasstroughStream() override;
     // Kicks off the execution of passthrough_func on a thread. We don't start execution immediately on construction to avoid pesky errors with construction/initialization
     // order with derived subclasses and it's members, especially problematic when passthrough_func references such members from derived classes/instances

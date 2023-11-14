@@ -96,23 +96,23 @@ bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
   return memcmp(buffer.data() + 4, "IDAT", 4) == 0;
 }
 
-std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mgr, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
+std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tools, IStreamLike& input, OStreamLike& output, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
-  std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>(&precomp_mgr.format_handler_tools);
+  std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>(&precomp_tools);
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(precomp_mgr.get_tempfile_name("precompressed_png"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_tools.get_tempfile_name("precompressed_png", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, fpng, fpng_deflate_stream_pos, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, fpng, fpng_deflate_stream_pos, *tmpfile);
 
   result->original_size = rdres.compressed_stream_size;
   result->precompressed_size = rdres.uncompressed_stream_size;
   if (result->precompressed_size > 0) { // seems to be a zLib-Stream
-    debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PNG", deflate_stream_original_pos);
+    debug_deflate_detected(rdres, "in PNG", deflate_stream_original_pos);
 
     if (rdres.accepted) {
-      debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
+      debug_sums(input, output, rdres);
 
       result->success = true;
       result->format = idat_count > 1 ? D_MULTIPNG : D_PNG;
@@ -137,15 +137,17 @@ std::unique_ptr<precompression_result> try_decompression_png(Precomp& precomp_mg
       result->inc_last_hdr_byte = true;
     }
     else {
-      if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_original_pos - 2);
-      if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_original_pos);
+      precomp_tools.add_ignore_offset(D_RAW, deflate_stream_original_pos - 2);
+      precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_original_pos);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
   return result;
 }
 
-std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf, long long original_input_pos) {
+std::unique_ptr<precompression_result>
+PngFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf,
+                                         long long original_input_pos, const Switches &precomp_switches) {
   // space for length and crc parts of IDAT chunks
   std::vector<unsigned int> idat_lengths {};
   idat_lengths.reserve(100 * sizeof(unsigned int));
@@ -168,14 +170,14 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
   // get preceding length bytes
   std::array<unsigned char, 12> in_buf{};
   while (true) {
-    precomp_mgr.ctx->fin->seekg(idat_magic_pos - 4, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf.data()), 4);
-    if (precomp_mgr.ctx->fin->gcount() != 4) break;
+    input.seekg(idat_magic_pos - 4, std::ios_base::beg);
+    input.read(reinterpret_cast<char*>(in_buf.data()), 4);
+    if (input.gcount() != 4) break;
     auto cur_pos = idat_magic_pos;
 
-    if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(in_buf.data() + 4), 6, cur_pos)) break;
+    if (!read_with_memstream_buffer(input, memstream, reinterpret_cast<char*>(in_buf.data() + 4), 6, cur_pos)) break;
     cur_pos -= 2;
-    precomp_mgr.ctx->fin->seekg(cur_pos, std::ios_base::beg);
+    input.seekg(cur_pos, std::ios_base::beg);
     memstream->seekg(-2, std::ios_base::cur);
 
     idat_lengths[0] = (in_buf[0] << 24) + (in_buf[1] << 16) + (in_buf[2] << 8) + in_buf[3];
@@ -196,12 +198,12 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
 
     // go through additional IDATs
     for (;;) {
-      precomp_mgr.ctx->fin->seekg(idat_lengths.back(), std::ios_base::cur);
+      input.seekg(idat_lengths.back(), std::ios_base::cur);
       memstream->seekg(idat_lengths.back(), std::ios_base::cur);
       cur_pos += idat_lengths.back();
 
       // Read 4bytes (CRC32) of PREVIOUS! PNG chunk
-      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(in_buf.data()), 4, cur_pos)) {
+      if (!read_with_memstream_buffer(input, memstream, reinterpret_cast<char*>(in_buf.data()), 4, cur_pos)) {
         if (idat_count > 0) {
           // We had started reading a PNG IDAT Chunk but it appears its not complete, we will stop at the previous IDAT chunk
           idat_lengths.pop_back();
@@ -215,7 +217,7 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
       idat_count++;
 
       // 8 = 4 bytes length, 4 bytes "IDAT"
-      if (!read_with_memstream_buffer(*precomp_mgr.ctx->fin, memstream, reinterpret_cast<char*>(in_buf.data()), 8, cur_pos)) {
+      if (!read_with_memstream_buffer(input, memstream, reinterpret_cast<char*>(in_buf.data()), 8, cur_pos)) {
         // If we reached EOF, no problem, we will just process as many IDAT chunks as we were able to find so far
         break;
       }
@@ -243,22 +245,22 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
   uint64_t png_input_deflate_stream_pos;
   std::unique_ptr<IStreamLike> temp_png;
   if (idat_count == 1) {
-    png_input = precomp_mgr.ctx->fin.get();
+    png_input = &input;
     png_input_deflate_stream_pos = deflate_stream_pos;
   }
   else {
     // copy to tempfile before trying to recompress
-    std::string png_tmp_filename = precomp_mgr.get_tempfile_name("original_png");
+    std::string png_tmp_filename = precomp_tools->get_tempfile_name("original_png", true);
     remove(png_tmp_filename.c_str());
 
-    precomp_mgr.ctx->fin->seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
+    input.seekg(deflate_stream_pos, std::ios_base::beg); // start after zLib header
 
     auto png_length = idat_lengths[0] - 2; // 2 = zLib header length
     for (int i = 1; i < idat_count; i++) {
       png_length += idat_lengths[i];
     }
 
-    auto copy_to_temp = [&idat_lengths, &idat_count, &precomp_mgr](IStreamLike& src, OStreamLike& dst)  {
+    auto copy_to_temp = [&idat_lengths, &idat_count](IStreamLike& src, OStreamLike& dst)  {
       idat_lengths[0] -= 2; // zLib header length
       for (int i = 0; i < idat_count; i++) {
         fast_copy(src, dst, idat_lengths[i]);
@@ -269,7 +271,7 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
 
     temp_png = make_temporary_stream(
       deflate_stream_pos, png_length, checkbuf_at_idat, 
-      *precomp_mgr.ctx->fin, idat_magic_pos, png_tmp_filename,
+      input, idat_magic_pos, png_tmp_filename,
       copy_to_temp, 50 * 1024 * 1024  // 50mb
     );
 
@@ -277,7 +279,7 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
     png_input_deflate_stream_pos = 0;
   }
 
-  auto result = try_decompression_png(precomp_mgr, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
+  auto result = try_decompression_png(*precomp_tools, input, output, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
 
   if (result->format == D_MULTIPNG) {
     result->original_size_extra = 6;  // add header length to the deflate stream size for full input size
@@ -289,11 +291,11 @@ std::unique_ptr<precompression_result> PngFormatHandler::attempt_precompression(
     if (deflate_and_hdr_size < png_result->idat_lengths[0]) {
       // The whole PNG IDAT chunk layout
       // 4 Len | 4 IDAT | deflate_and_hdr_size DEFLATE STREAM with Zlib header | Trailing data | 4 bytes CRC
-      precomp_mgr.ctx->fin->seekg(original_input_pos + 4 + 4 + deflate_and_hdr_size, std::ios_base::beg);
+      input.seekg(original_input_pos + 4 + 4 + deflate_and_hdr_size, std::ios_base::beg);
       const auto trailing_data_size = png_result->idat_lengths[0] - deflate_and_hdr_size;
       std::vector<std::byte> trailing_data;
       trailing_data.resize(trailing_data_size);
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(trailing_data.data()), trailing_data_size);
+      input.read(reinterpret_cast<char*>(trailing_data.data()), trailing_data_size);
       for (const auto& byte : trailing_data) {
         png_result->trailing_data.push_back(byte);
       }
@@ -402,30 +404,30 @@ void recompress_multipng(IStreamLike& precompressed_input, OStreamLike& recompre
   }
 }
 
-std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> PngFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   const bool is_multi_idat = (precomp_hdr_flags & std::byte{ 0b01000000 }) == std::byte{ 0b01000000 };
   auto fmt_hdr = std::make_unique<MultiPngFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, true);
+  fmt_hdr->read_data(input, precomp_hdr_flags, true);
 
   // get first IDAT length
-  fmt_hdr->idat_lengths.push_back(fin_fget_vlint(*context.fin));
+  fmt_hdr->idat_lengths.push_back(fin_fget_vlint(input));
   if (!is_multi_idat) {
     fmt_hdr->idat_count = 1;
-    const auto trailing_data_size = fin_fget_vlint(*context.fin);
+    const auto trailing_data_size = fin_fget_vlint(input);
     fmt_hdr->trailing_data.resize(trailing_data_size);
-    context.fin->read(reinterpret_cast<char*>(fmt_hdr->trailing_data.data()), trailing_data_size);
+    input.read(reinterpret_cast<char*>(fmt_hdr->trailing_data.data()), trailing_data_size);
   }
   else {
     // get IDAT count
-    fmt_hdr->idat_count = fin_fget_vlint(*context.fin) + 1;
+    fmt_hdr->idat_count = fin_fget_vlint(input) + 1;
     if (is_multi_idat) {
       fmt_hdr->idat_crcs.resize(fmt_hdr->idat_count * sizeof(unsigned int));
       fmt_hdr->idat_lengths.resize(fmt_hdr->idat_count * sizeof(unsigned int));
 
       // get IDAT chunk lengths and CRCs
       for (int i = 1; i < fmt_hdr->idat_count; i++) {
-        fmt_hdr->idat_crcs[i] = fin_fget32(*context.fin);
-        fmt_hdr->idat_lengths[i] = fin_fget_vlint(*context.fin);
+        fmt_hdr->idat_crcs[i] = fin_fget32(input);
+        fmt_hdr->idat_lengths[i] = fin_fget_vlint(input);
       }
     }
   }

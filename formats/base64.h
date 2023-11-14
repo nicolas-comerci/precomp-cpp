@@ -11,12 +11,14 @@ public:
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
 
-	std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_instance, std::span<unsigned char> buffer, long long input_stream_pos) override;
+	std::unique_ptr<precompression_result>
+    attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer,
+                           long long input_stream_pos, const Switches &precomp_switches) override;
 
-	std::unique_ptr<PrecompFormatHeaderData> read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
+	std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 
 	void recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) override;
-	void write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) override;
+	void write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) override;
 
 	static Base64FormatHandler* create(Tools* tools) {
 		return new Base64FormatHandler({ D_BASE64 }, tools);

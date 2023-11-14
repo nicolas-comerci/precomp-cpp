@@ -381,7 +381,7 @@ public:
   bool recompress_success_needed;
 };
 
-std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<GifFormatHeaderData>();
 
   bool penalty_bytes_stored = (precomp_hdr_flags & std::byte{ 0b10 }) == std::byte{ 0b10 };
@@ -390,9 +390,9 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
   fmt_hdr->recompress_success_needed = ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 });
 
   // read diff bytes
-  fmt_hdr->gDiff.GIFDiffIndex = fin_fget_vlint(*context.fin);
+  fmt_hdr->gDiff.GIFDiffIndex = fin_fget_vlint(input);
   fmt_hdr->gDiff.GIFDiff = (unsigned char*)malloc(fmt_hdr->gDiff.GIFDiffIndex * sizeof(unsigned char));
-  context.fin->read(reinterpret_cast<char*>(fmt_hdr->gDiff.GIFDiff), fmt_hdr->gDiff.GIFDiffIndex);
+  input.read(reinterpret_cast<char*>(fmt_hdr->gDiff.GIFDiff), fmt_hdr->gDiff.GIFDiffIndex);
   print_to_log(PRECOMP_DEBUG_LOG, "Diff bytes were used: %i bytes\n", fmt_hdr->gDiff.GIFDiffIndex);
   fmt_hdr->gDiff.GIFDiffSize = fmt_hdr->gDiff.GIFDiffIndex;
   fmt_hdr->gDiff.GIFDiffIndex = 0;
@@ -400,10 +400,10 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
 
   // read penalty bytes
   if (penalty_bytes_stored) {
-    auto penalty_bytes_len = fin_fget_vlint(*context.fin);
+    auto penalty_bytes_len = fin_fget_vlint(input);
     while (penalty_bytes_len > 0) {
       unsigned char pb_data[5];
-      context.fin->read(reinterpret_cast<char*>(pb_data), 5);
+      input.read(reinterpret_cast<char*>(pb_data), 5);
       penalty_bytes_len -= 5;
 
       uint32_t next_pb_pos = pb_data[0] << 24;
@@ -415,8 +415,8 @@ std::unique_ptr<PrecompFormatHeaderData> GifFormatHandler::read_format_header(Re
     }
   }
 
-  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
-  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(input);
+  fmt_hdr->precompressed_size = fin_fget_vlint(input);
 
   return fmt_hdr;
 }
@@ -451,10 +451,13 @@ void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
   GifDiffFree(&gif_precomp_hdr_format.gDiff);
 }
 
-std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
-  std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>(&precomp_mgr.format_handler_tools);
+std::unique_ptr<precompression_result>
+GifFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
+                                         std::span<unsigned char> checkbuf_span,
+                                         long long original_input_pos, const Switches &precomp_switches) {
+  std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>(precomp_tools);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_gif"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_tools->get_tempfile_name("decomp_gif", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
   tmpfile->close();
   unsigned char version[5];
 
@@ -475,12 +478,12 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
 
   print_to_log(PRECOMP_DEBUG_LOG, "Possible GIF found at position %lli\n", original_input_pos);
 
-  precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
+  input.seekg(original_input_pos, std::ios_base::beg);
 
   // read GIF file
   {
     tmpfile->open(tmpfile->file_path, std::ios_base::in | std::ios_base::out | std::ios_base::binary);
-    if (!decompress_gif(*precomp_mgr.ctx->fin, *tmpfile, original_input_pos, gif_length, decomp_length, block_size, &gCode)) {
+    if (!decompress_gif(input, *tmpfile, original_input_pos, gif_length, decomp_length, block_size, &gCode)) {
       tmpfile->close();
       GifDiffFree(&gDiff);
       GifCodeFree(&gCode);
@@ -501,8 +504,8 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
 
     WrappedFStream frecomp2;
     frecomp2.open(tempfile2, std::ios_base::in | std::ios_base::binary);
-    precomp_mgr.ctx->fin->seekg(original_input_pos, std::ios_base::beg);
-    auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_mgr, *precomp_mgr.ctx->fin, frecomp2, gif_length);
+    input.seekg(original_input_pos, std::ios_base::beg);
+    auto [identical_bytes, penalty_bytes] = compare_files_penalty(precomp_tools->progress_callback, input, frecomp2, gif_length);
     frecomp2.close();
     result->original_size = identical_bytes;
     result->precompressed_size = decomp_length;
@@ -514,7 +517,7 @@ std::unique_ptr<precompression_result> GifFormatHandler::attempt_precompression(
       print_to_log(PRECOMP_DEBUG_LOG, "Recompression successful\n");
       recompress_success_needed = true;
 
-      if (result->original_size > precomp_mgr.switches.min_ident_size) {
+      if (result->original_size > precomp_switches.min_ident_size) {
         result->success = true;
 
         // write compressed data header (GIF)

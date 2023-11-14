@@ -137,7 +137,7 @@ void base64_reencode(IStreamLike& file_in, OStreamLike& file_out, const std::vec
   } while ((remaining_bytes > 0) && (avail_in > 0));
 }
 
-unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
+unsigned long long compare_files(const std::function<void()> progress_callback, IStreamLike& file1, IStreamLike& file2, unsigned int pos1, unsigned int pos2) {
     unsigned char input_bytes1[COMP_CHUNK];
     unsigned char input_bytes2[COMP_CHUNK];
     long long same_byte_count = 0;
@@ -149,7 +149,7 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
     file2.seekg(pos2, std::ios_base::beg);
 
     do {
-        precomp_mgr.call_progress_callback();
+        progress_callback();
 
         file1.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
         size1 = file1.gcount();
@@ -169,16 +169,16 @@ unsigned long long compare_files(Precomp& precomp_mgr, IStreamLike& file1, IStre
     return same_byte_count;
 }
 
-std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp_mgr, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
+std::unique_ptr<precompression_result> try_decompression_base64(Tools& precomp_tools, const Switches& precomp_switches, IStreamLike& input, long long original_input_pos, int base64_header_length, const std::span<unsigned char> checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<base64_precompression_result> result = std::make_unique<base64_precompression_result>(&precomp_mgr.format_handler_tools);
+  std::unique_ptr<base64_precompression_result> result = std::make_unique<base64_precompression_result>(&precomp_tools);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_base64"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_tools.get_tempfile_name("decomp_base64", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   auto base64_stream_pos = original_input_pos + base64_header_length;
 
   // try to decode at current position
-  precomp_mgr.ctx->fin->seekg(base64_stream_pos, std::ios_base::beg);
+  input.seekg(base64_stream_pos, std::ios_base::beg);
 
   unsigned char base64_data[CHUNK >> 2];
 
@@ -194,8 +194,8 @@ std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp
   std::vector<unsigned char> in_buf{};
   in_buf.resize(CHUNK);
   do {
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
-    avail_in = precomp_mgr.ctx->fin->gcount();
+    input.read(reinterpret_cast<char*>(in_buf.data()), CHUNK);
+    avail_in = input.gcount();
     for (auto i = 0; i < (avail_in >> 2); i++) {
       // are these valid base64 chars?
       for (auto j = (i << 2); j < ((i << 2) + 4); j++) {
@@ -304,9 +304,9 @@ std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp
   frecomp.open(frecomp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
   base64_reencode(*tmpfile, frecomp, result->base64_line_len);
 
-  auto compressed_size = compare_files(precomp_mgr, *precomp_mgr.ctx->fin, frecomp, base64_stream_pos, 0);
+  auto compressed_size = compare_files(precomp_tools.progress_callback, input, frecomp, base64_stream_pos, 0);
 
-  if (compressed_size > precomp_mgr.switches.min_ident_size) {
+  if (compressed_size > precomp_switches.min_ident_size) {
     print_to_log(PRECOMP_DEBUG_LOG, "Match: encoded to %lli bytes\n");
 
     result->success = true;
@@ -328,9 +328,12 @@ std::unique_ptr<precompression_result> try_decompression_base64(Precomp& precomp
   return result;
 }
 
-std::unique_ptr<precompression_result> Base64FormatHandler::attempt_precompression(Precomp& precomp_mgr, const std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+std::unique_ptr<precompression_result>
+Base64FormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
+                                            std::span<unsigned char> checkbuf_span,
+                                            long long original_input_pos, const Switches &precomp_switches) {
   auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<precompression_result> result = std::make_unique<base64_precompression_result>(&precomp_mgr.format_handler_tools);
+  std::unique_ptr<precompression_result> result = std::make_unique<base64_precompression_result>(precomp_tools);
   // search for double CRLF, all between is "header"
   int base64_header_length = 33;
   bool found_double_crlf = false;
@@ -350,7 +353,7 @@ std::unique_ptr<precompression_result> Base64FormatHandler::attempt_precompressi
   } while (base64_header_length < (CHECKBUF_SIZE - 2));
 
   if (found_double_crlf) {
-    result = try_decompression_base64(precomp_mgr, original_input_pos, base64_header_length, checkbuf_span);
+    result = try_decompression_base64(*precomp_tools, precomp_switches , input, original_input_pos, base64_header_length, checkbuf_span);
 
     result->original_size_extra += base64_header_length;
   }
@@ -363,51 +366,51 @@ public:
   std::vector<unsigned int> base64_line_len;
 };
 
-std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<Base64FormatHeaderData>();
 
   int line_case = static_cast<int>(precomp_hdr_flags & std::byte{ 0b1100 });
 
   // restore Base64 "header"
-  auto base64_header_length = fin_fget_vlint(*context.fin);
+  auto base64_header_length = fin_fget_vlint(input);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Base64 header length: %i\n", base64_header_length);
   fmt_hdr->base64_stream_hdr.resize(base64_header_length);
-  context.fin->read(reinterpret_cast<char*>(fmt_hdr->base64_stream_hdr.data()), base64_header_length);
+  input.read(reinterpret_cast<char*>(fmt_hdr->base64_stream_hdr.data()), base64_header_length);
 
   // read line length list
-  auto line_count = fin_fget_vlint(*context.fin);
+  auto line_count = fin_fget_vlint(input);
 
   fmt_hdr->base64_line_len.resize(line_count);
 
   if (line_case == 2) {
     for (int i = 0; i < line_count; i++) {
-      fmt_hdr->base64_line_len[i] = context.fin->get();
+      fmt_hdr->base64_line_len[i] = input.get();
     }
   }
   else {
-    fmt_hdr->base64_line_len[0] = context.fin->get();
+    fmt_hdr->base64_line_len[0] = input.get();
     for (int i = 1; i < line_count; i++) {
       fmt_hdr->base64_line_len[i] = fmt_hdr->base64_line_len[0];
     }
-    if (line_case == 1) fmt_hdr->base64_line_len[line_count - 1] = context.fin->get();
+    if (line_case == 1) fmt_hdr->base64_line_len[line_count - 1] = input.get();
   }
 
-  fmt_hdr->original_size = fin_fget_vlint(*context.fin);
-  fmt_hdr->precompressed_size = fin_fget_vlint(*context.fin);
+  fmt_hdr->original_size = fin_fget_vlint(input);
+  fmt_hdr->precompressed_size = fin_fget_vlint(input);
 
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
-    fmt_hdr->recursion_data_size = fin_fget_vlint(*context.fin);
+    fmt_hdr->recursion_data_size = fin_fget_vlint(input);
   }
   
   return fmt_hdr;
 }
 
-void Base64FormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+void Base64FormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {
   auto precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
   // Write Base64 header
-  context.fout->put(precomp_b64_hdr_data.base64_stream_hdr[0] + 1); // first char was decreased
-  context.fout->write(reinterpret_cast<char*>(precomp_b64_hdr_data.base64_stream_hdr.data() + 1), precomp_b64_hdr_data.base64_stream_hdr.size() - 1);
+  output.put(precomp_b64_hdr_data.base64_stream_hdr[0] + 1); // first char was decreased
+  output.write(reinterpret_cast<char*>(precomp_b64_hdr_data.base64_stream_hdr.data() + 1), precomp_b64_hdr_data.base64_stream_hdr.size() - 1);
 }
 
 void Base64FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {

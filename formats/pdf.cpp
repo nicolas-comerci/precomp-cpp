@@ -137,28 +137,28 @@ bool PdfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
   return memcmp(buffer.data(), "/FlateDecode", 12) == 0;
 }
 
-std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mgr, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
+std::unique_ptr<precompression_result> try_decompression_pdf(Tools& precomp_tools, IStreamLike& input, OStreamLike& output, unsigned char* checkbuf, long long original_input_pos, unsigned int pdf_header_length, unsigned int img_width, unsigned int img_height, int img_bpc) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
-  tmpfile->open(precomp_mgr.get_tempfile_name("decomp_pdf"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+  tmpfile->open(precomp_tools.get_tempfile_name("decomp_pdf", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   auto deflate_stream_pos = original_input_pos + pdf_header_length;
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_mgr, *precomp_mgr.ctx->fin, deflate_stream_pos, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, input, deflate_stream_pos, *tmpfile);
 
   if (rdres.uncompressed_stream_size <= 0) return std::unique_ptr<precompression_result>{};
 
   // seems to be a zLib-Stream
-  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(&precomp_mgr.format_handler_tools, img_width, img_height);
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(&precomp_tools, img_width, img_height);
   if (img_bpc == 8) {
     result->bmp_header_type = BMP_HEADER_8BPP;
   }
 
-  debug_deflate_detected(*precomp_mgr.ctx, rdres, "in PDF", deflate_stream_pos);
+  debug_deflate_detected(rdres, "in PDF", deflate_stream_pos);
 
   if (!rdres.accepted) {
-    if (precomp_mgr.is_format_handler_active(D_RAW)) precomp_mgr.ctx->ignore_offsets[D_RAW].emplace(deflate_stream_pos - 2);
-    if (precomp_mgr.is_format_handler_active(D_BRUTE)) precomp_mgr.ctx->ignore_offsets[D_BRUTE].emplace(deflate_stream_pos);
+    precomp_tools.add_ignore_offset(D_RAW, deflate_stream_pos - 2);
+    precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_pos);
     print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
   }
   else {
@@ -167,7 +167,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
     result->original_size = rdres.compressed_stream_size;
     result->precompressed_size = rdres.uncompressed_stream_size;
 
-    debug_sums(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, rdres);
+    debug_sums(input, output, rdres);
 
     if (img_bpc == 8) {
       if (rdres.uncompressed_stream_size == (img_width * img_height)) {
@@ -216,9 +216,10 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Precomp& precomp_mg
   return result;
 }
 
-std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long original_input_pos) {
+std::unique_ptr<precompression_result>
+PdfFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf_span, long long original_input_pos, const Switches &precomp_switches) {
   auto checkbuf = checkbuf_span.data();
-  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(&precomp_mgr.format_handler_tools, 0, 0);
+  std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(precomp_tools, 0, 0);
   long long act_search_pos = 12;
   bool found_stream = false;
   do {
@@ -242,13 +243,13 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
   type_buf[4096] = 0;
 
   if ((original_input_pos + act_search_pos) >= 4096) {
-    precomp_mgr.ctx->fin->seekg((original_input_pos + act_search_pos) - 4096, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), 4096);
+    input.seekg((original_input_pos + act_search_pos) - 4096, std::ios_base::beg);
+    input.read(reinterpret_cast<char*>(type_buf), 4096);
     type_buf_length = 4096;
   }
   else {
-    precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
-    precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(type_buf), original_input_pos + act_search_pos);
+    input.seekg(0, std::ios_base::beg);
+    input.read(reinterpret_cast<char*>(type_buf), original_input_pos + act_search_pos);
     type_buf_length = original_input_pos + act_search_pos;
   }
 
@@ -265,7 +266,7 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
 
   int width_val = 0, height_val = 0, bpc_val = 0;
 
-  if ((start_pos > -1) && (precomp_mgr.switches.pdf_bmp_mode)) {
+  if ((start_pos > -1) && (precomp_switches.pdf_bmp_mode)) {
 
     unsigned int width_pos, height_pos, bpc_pos;
 
@@ -326,7 +327,7 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
         ((*(checkbuf + act_search_pos + 9) & 32) == 0)) { // FDICT must not be set
         int compression_method = (*(checkbuf + act_search_pos + 8) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, checkbuf, original_input_pos, act_search_pos + 10, width_val, height_val, bpc_val);
+          return try_decompression_pdf(*precomp_tools, input, output, checkbuf, original_input_pos, act_search_pos + 10, width_val, height_val, bpc_val);
         }
       }
     }
@@ -335,7 +336,7 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
       if ((((*(checkbuf + act_search_pos + 7) << 8) + *(checkbuf + act_search_pos + 8)) % 31) == 0) {
         int compression_method = (*(checkbuf + act_search_pos + 7) & 15);
         if (compression_method == 8) {
-          return try_decompression_pdf(precomp_mgr, checkbuf, original_input_pos, act_search_pos + 9, width_val, height_val, bpc_val);
+          return try_decompression_pdf(*precomp_tools, input, output, checkbuf, original_input_pos, act_search_pos + 9, width_val, height_val, bpc_val);
         }
       }
     }
@@ -344,9 +345,9 @@ std::unique_ptr<precompression_result> PdfFormatHandler::attempt_precompression(
   return result;
 }
 
-std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> PdfFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  fmt_hdr->read_data(input, precomp_hdr_flags, false);
   return fmt_hdr;
 }
 

@@ -183,15 +183,14 @@ void PrecompSetGenericInputStream(
   void (*clear_func)(void*)
 ) {
   precomp_mgr->input_file_name = input_file_name;
-  precomp_mgr->get_original_context()->fin = std::make_unique<GenericIStreamLike>(
+  precomp_mgr->fin = std::make_unique<GenericIStreamLike>(
     backing_structure, read_func, get_func, seekg_func, tellg_func, eof_func, bad_func, clear_func);
 }
 
 #ifdef DEBUG
 void PrecompSetDebugCompareInputFile(Precomp* precomp_mgr, FILE* fhandle) {
   auto known_good = std::make_unique<FILEIStream>(fhandle, true);
-  const auto& orig_context = precomp_mgr->get_original_context();
-  orig_context->fin = std::make_unique<DebugComparatorIStreamLike>(std::move(known_good), std::move(orig_context->fin));
+  precomp_mgr->fin = std::make_unique<DebugComparatorIStreamLike>(std::move(known_good), std::move(precomp_mgr->fin));
 }
 #endif
 
@@ -207,7 +206,7 @@ void PrecompSetGenericOutputStream(
 ) {
   precomp_mgr->output_file_name = output_file_name;
   auto gen_ostream = std::make_unique<GenericOStreamLike>(backing_structure, write_func, put_func, tellp_func, seekp_func, eof_func, bad_func, clear_func);
-  precomp_mgr->get_original_context()->fout = std::unique_ptr<ObservableOStream>(new ObservableOStreamWrapper(gen_ostream.release(), true));
+  precomp_mgr->fout = std::unique_ptr<ObservableOStream>(new ObservableOStreamWrapper(gen_ostream.release(), true));
   
 }
 
@@ -258,37 +257,15 @@ Switches::~Switches() {
   }
 }
 
-RecursionContext::RecursionContext(float min_percent, float max_percent, Precomp& precomp_):
-    CRecursionContext(), precomp(precomp_), global_min_percent(min_percent), global_max_percent(max_percent) {}
-
-
-void RecursionContext::set_input_stream(std::istream* istream, bool take_ownership) {
-  this->fin = std::make_unique<WrappedIStream>(istream, take_ownership);
-}
-
-void RecursionContext::set_input_stream(FILE* fhandle, bool take_ownership) {
-  this->fin = std::make_unique<FILEIStream>(fhandle, take_ownership);
-}
-
-void RecursionContext::set_output_stream(std::ostream* ostream, bool take_ownership) {
-  this->fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(ostream, take_ownership));
-}
-
-void RecursionContext::set_output_stream(FILE* fhandle, bool take_ownership) {
-  this->fout = std::unique_ptr<ObservableOStream>(new ObservableFILEOStream(fhandle, take_ownership));
-}
-
-std::unique_ptr<RecursionContext>&  Precomp::get_original_context() {
-  if (recursion_contexts_stack.empty()) return ctx;
-  return recursion_contexts_stack[0];
-}
-
 Precomp::Precomp():
   format_handler_tools(
     [this]() { this->call_progress_callback(); },
     [this](std::string name, bool append_tag) { return this->get_tempfile_name(name, append_tag); },
     [this](std::string name) { return this->statistics.increase_detected_count(name); },
-    [this](std::string name) { return this->statistics.increase_precompressed_count(name); }
+    [this](std::string name) { return this->statistics.increase_precompressed_count(name); },
+    [this](SupportedFormats format, long long pos) {
+      if (this->is_format_handler_active(format)) this->ignore_offsets[this->recursion_depth][format].emplace(pos);
+    }
   )
 {
   recursion_depth = 0;
@@ -299,19 +276,19 @@ void Precomp::set_input_stdin() {
   set_std_handle_binary_mode(StdHandles::STDIN_HANDLE);
   auto new_fin = std::make_unique<WrappedIStream>(new std::ifstream(), true);
   new_fin->rdbuf(std::cin.rdbuf());
-  this->get_original_context()->fin = std::move(new_fin);
+  this->fin = std::move(new_fin);
 }
 
 void Precomp::set_input_stream(std::istream* istream, bool take_ownership) {
   if (istream == &std::cin) { set_input_stdin(); }
   else {
-    this->get_original_context()->set_input_stream(istream, take_ownership);
+    this->fin = std::make_unique<WrappedIStream>(istream, take_ownership);
   }
 }
 void Precomp::set_input_stream(FILE* fhandle, bool take_ownership) {
   if (fhandle == stdin) { set_input_stdin(); }
   else {
-    this->get_original_context()->set_input_stream(fhandle, take_ownership);
+    this->fin = std::make_unique<FILEIStream>(fhandle, take_ownership);
   }
 }
 
@@ -321,43 +298,39 @@ void Precomp::set_output_stdout() {
   set_std_handle_binary_mode(StdHandles::STDOUT_HANDLE);
   auto new_fout = std::make_unique<ObservableWrappedOStream>(new std::ofstream(), true);
   new_fout->rdbuf(std::cout.rdbuf());
-  this->get_original_context()->fout = std::move(new_fout);
+  this->fout = std::move(new_fout);
 }
 
 void Precomp::register_output_observer_callbacks() {
   // Set write observer to update progress when writing to output file, based on how much of the input file we have read
-  this->get_original_context()->fout->register_observer(ObservableOStream::observable_methods::write_method, [this]()
+  this->fout->register_observer(ObservableOStream::observable_methods::write_method, [this]()
   {
     this->call_progress_callback();
   });
 }
 
 void Precomp::set_output_stream(std::ostream* ostream, bool take_ownership) {
-  auto& orig_context = this->get_original_context();
   if (ostream == &std::cout) { set_output_stdout(); }
   else {
-    orig_context->set_output_stream(ostream, take_ownership);
+    this->fout = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(ostream, take_ownership));
   }
   register_output_observer_callbacks();
 }
 
 void Precomp::set_output_stream(FILE* fhandle, bool take_ownership) {
-  auto& orig_context = this->get_original_context();
   if (fhandle == stdout) { set_output_stdout(); }
   else {
-    orig_context->set_output_stream(fhandle, take_ownership);
+    this->fout = std::unique_ptr<ObservableOStream>(new ObservableFILEOStream(fhandle, take_ownership));
   }
   register_output_observer_callbacks();
 }
 
 void Precomp::set_progress_callback(std::function<void(float)> callback) {
-  progress_callback = callback;
+  progress_callback = std::move(callback);
 }
-void Precomp::call_progress_callback() {
-  if (!this->progress_callback || !this->ctx) return;
-  auto context_progress_range = this->ctx->global_max_percent - this->ctx->global_min_percent;
-  auto inner_context_progress_percent = static_cast<float>(this->ctx->input_file_pos) / this->ctx->fin_length;
-  this->progress_callback(this->ctx->global_min_percent + (context_progress_range * inner_context_progress_percent));
+void Precomp::call_progress_callback() const {
+  if (!this->progress_callback) return;
+  this->progress_callback(static_cast<float>(this->input_file_pos) / this->switches.fin_length);
 }
 
 std::string Precomp::get_tempfile_name(const std::string& name, bool prepend_random_tag) const {
@@ -441,31 +414,31 @@ LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   }
 }
 
-void end_uncompressed_data(Precomp& precomp_mgr) {
-  if (!precomp_mgr.ctx->uncompressed_length.has_value()) return;
+void end_uncompressed_data(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, const long long& uncompressed_pos, std::optional<long long>& uncompressed_length) {
+  if (!uncompressed_length.has_value()) return;
 
-  fout_fput_vlint(*precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length);
+  fout_fput_vlint(output, *uncompressed_length);
 
   // fast copy of uncompressed data
-  precomp_mgr.ctx->fin->seekg(precomp_mgr.ctx->uncompressed_pos, std::ios_base::beg);
-  fast_copy(*precomp_mgr.ctx->fin, *precomp_mgr.ctx->fout, *precomp_mgr.ctx->uncompressed_length);
+  input.seekg(uncompressed_pos, std::ios_base::beg);
+  fast_copy(input, output, *uncompressed_length);
 
-  precomp_mgr.ctx->uncompressed_length = std::nullopt;
+  uncompressed_length = std::nullopt;
 }
 
 void write_header(Precomp& precomp_mgr) {
   // write the PCF file header, beware that this needs to be done before wrapping the output file with a CompressedOStreamBuffer
   char* input_file_name_without_path = new char[precomp_mgr.input_file_name.length() + 1];
 
-  ostream_printf(*precomp_mgr.ctx->fout, "PCF");
+  ostream_printf(*precomp_mgr.fout, "PCF");
 
   // version number
-  precomp_mgr.ctx->fout->put(V_MAJOR);
-  precomp_mgr.ctx->fout->put(V_MINOR);
-  precomp_mgr.ctx->fout->put(V_MINOR2);
+  precomp_mgr.fout->put(V_MAJOR);
+  precomp_mgr.fout->put(V_MINOR);
+  precomp_mgr.fout->put(V_MINOR2);
 
   // compression-on-the-fly method used, 0, as OTF compression no longer supported
-  precomp_mgr.ctx->fout->put(0);
+  precomp_mgr.fout->put(0);
 
   // write input file name without path
   const char* last_backslash = strrchr(precomp_mgr.input_file_name.c_str(), PATH_DELIM);
@@ -476,24 +449,23 @@ void write_header(Precomp& precomp_mgr) {
     strcpy(input_file_name_without_path, precomp_mgr.input_file_name.c_str());
   }
 
-  ostream_printf(*precomp_mgr.ctx->fout, input_file_name_without_path);
-  precomp_mgr.ctx->fout->put(0);
+  ostream_printf(*precomp_mgr.fout, input_file_name_without_path);
+  precomp_mgr.fout->put(0);
 
   delete[] input_file_name_without_path;
 }
 
-bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
-bool verify_precompressed_result2(Precomp& precomp_mgr, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
+bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
+bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
 struct recursion_result {
   bool success;
   std::string file_name;
   long long file_length;
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
+recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
 
-int compress_file_impl(Precomp& precomp_mgr) {
-  precomp_mgr.ctx->comp_decomp_state = P_PRECOMPRESS;
+int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output) {
   if (precomp_mgr.recursion_depth == 0) {
       write_header(precomp_mgr);
       precomp_mgr.init_format_handlers();
@@ -501,32 +473,36 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
   const auto& format_handlers = precomp_mgr.get_format_handlers();
   const auto& format_handlers2 = precomp_mgr.get_format_handlers2();
-  precomp_mgr.ctx->uncompressed_bytes_total = 0;
 
-  std::vector<std::byte> in_buf{};
-  std::vector<std::byte> out_buf{};
+  long long uncompressed_pos = 0;
+  std::optional<long long> uncompressed_length = std::nullopt;
 
-  precomp_mgr.ctx->fin->seekg(0, std::ios_base::beg);
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
+  std::vector<std::byte> precompressor_in_buf{};
+  std::vector<std::byte> precompressor_out_buf{};
+
+  unsigned char in_buf[IN_BUF_SIZE];
+
+  input.seekg(0, std::ios_base::beg);
+  input.read(reinterpret_cast<char*>(in_buf), IN_BUF_SIZE);
   long long in_buf_pos = 0;
   // This buffer will be fed to the format handlers so they can confirm if the current position is the beggining of a stream they support
   std::span<unsigned char> checkbuf;
 
   bool anything_was_used = false;
 
-  for (long long input_file_pos = 0; input_file_pos < precomp_mgr.ctx->fin_length; input_file_pos++) {
-    precomp_mgr.ctx->input_file_pos = input_file_pos;
+  for (long long input_file_pos = 0; input_file_pos < input_length; input_file_pos++) {
+    if (precomp_mgr.recursion_depth == 0) precomp_mgr.input_file_pos = input_file_pos;
     bool compressed_data_found = false;
 
     bool ignore_this_pos = false;
 
     if ((in_buf_pos + IN_BUF_SIZE) <= (input_file_pos + CHECKBUF_SIZE)) {
-      precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
-      precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(precomp_mgr.ctx->in_buf), IN_BUF_SIZE);
+      input.seekg(input_file_pos, std::ios_base::beg);
+      input.read(reinterpret_cast<char*>(in_buf), IN_BUF_SIZE);
       in_buf_pos = input_file_pos;
     }
     auto cb_pos = input_file_pos - in_buf_pos;
-    checkbuf = std::span(&precomp_mgr.ctx->in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
+    checkbuf = std::span(&in_buf[cb_pos], IN_BUF_SIZE - cb_pos);
 
     ignore_this_pos = !precomp_mgr.switches.ignore_pos_queue.empty() && input_file_pos == precomp_mgr.switches.ignore_pos_queue.front();
 
@@ -537,10 +513,10 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
 
         // Position blacklist check
-        bool ignore_this_position = false;
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        std::queue<long long>& ignoreList = precomp_mgr.ctx->ignore_offsets[formatTag];
+        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[precomp_mgr.recursion_depth][formatTag];
         if (!ignoreList.empty()) {
+          bool ignore_this_position = false;
           auto& first = ignoreList.front();
           while (first < input_file_pos) {
             ignoreList.pop();
@@ -559,7 +535,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         bool quick_check_result = false;
         try {
-          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
+          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(&input), input_file_pos);
         }
         catch (...) {}  // TODO: print/record/report handler failed
         if (!quick_check_result) continue;
@@ -577,21 +553,21 @@ int compress_file_impl(Precomp& precomp_mgr) {
         const auto output_chunk_size = 1 * 1024 * 1024; // TODO: make this configurable
 
         try {
-          precompressor = formatHandler->make_precompressor(precomp_mgr, checkbuf);
+          precompressor = formatHandler->make_precompressor(precomp_mgr.format_handler_tools, checkbuf);
 
           precomp_mgr.call_progress_callback();
 
-          precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
+          input.seekg(input_file_pos, std::ios_base::beg);
 
           std::unique_ptr<PrecompTmpFile> precompressed_tmp = std::make_unique<PrecompTmpFile>();
           precompressed_tmp->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
           PrecompProcessorReturnCode ret;
-          out_buf.resize(output_chunk_size);
-          precompressor->next_out = out_buf.data();
+          precompressor_out_buf.resize(output_chunk_size);
+          precompressor->next_out = precompressor_out_buf.data();
           precompressor->avail_out = output_chunk_size;
-          in_buf.resize(CHUNK);
-          precompressor->next_in = in_buf.data();
+          precompressor_in_buf.resize(CHUNK);
+          precompressor->next_in = precompressor_in_buf.data();
           precompressor->avail_in = 0;
           uint64_t blockCount = 0;
           bool reached_eof = false;
@@ -599,19 +575,19 @@ int compress_file_impl(Precomp& precomp_mgr) {
             // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
             if (precompressor->avail_in > 0) {
               // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
-              std::memmove(in_buf.data(), precompressor->next_in, precompressor->avail_in);
+              std::memmove(precompressor_in_buf.data(), precompressor->next_in, precompressor->avail_in);
             }
-            const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + precompressor->avail_in);
+            const auto in_buf_ptr = reinterpret_cast<char*>(precompressor_in_buf.data() + precompressor->avail_in);
             const auto read_amt = CHUNK - precompressor->avail_in;
             std::streamsize gcount = 0;
             if (read_amt > 0) {
-              precomp_mgr.ctx->fin->read(in_buf_ptr, read_amt);
-              gcount = precomp_mgr.ctx->fin->gcount();
+              input.read(in_buf_ptr, read_amt);
+              gcount = input.gcount();
             }
 
             precompressor->avail_in += gcount;
-            precompressor->next_in = in_buf.data();
-            if (precomp_mgr.ctx->fin->bad()) break;
+            precompressor->next_in = precompressor_in_buf.data();
+            if (input.bad()) break;
 
             const auto avail_in_before_process = precompressor->avail_in;
             ret = precompressor->process(reached_eof);
@@ -633,9 +609,9 @@ int compress_file_impl(Precomp& precomp_mgr) {
               precompressed_tmp->put(static_cast<char>(ret == PP_STREAM_END ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
               precompressor->dump_extra_block_header_data(*precompressed_tmp);
               fout_fput_vlint(*precompressed_tmp, decompressed_chunk_size);
-              precompressed_tmp->write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
+              precompressed_tmp->write(reinterpret_cast<char*>(precompressor_out_buf.data()), decompressed_chunk_size);
 
-              precompressor->next_out = out_buf.data();
+              precompressor->next_out = precompressor_out_buf.data();
               precompressor->avail_out = output_chunk_size;
             }
 
@@ -675,7 +651,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
           try {
-            verification_success = verify_precompressed_result2(precomp_mgr, precompressor->original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
+            verification_success = verify_precompressed_result2(precomp_mgr, input, precompressor->original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (!verification_success) continue;
@@ -689,14 +665,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
         // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
-        end_uncompressed_data(precomp_mgr);
+        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
 
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed && false) {
           auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
           recursion_result r{};
           try {
-            r = recursion_compress(precomp_mgr, precompressor->original_stream_size, precompressed_stream_size, *precompressed, recurse_tempfile_name);
+            r = recursion_compress(precomp_mgr, precompressed_stream_size, *precompressed, recurse_tempfile_name);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (r.success) {
@@ -712,7 +688,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           }
         }
 
-        fast_copy(*precompressed, *precomp_mgr.ctx->fout, precompressed_stream_size);
+        fast_copy(*precompressed, output, precompressed_stream_size);
 
         // set input file pointer after recompressed data
         input_file_pos += precompressor->original_stream_size - 1;
@@ -725,10 +701,10 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
 
         // Position blacklist check
-        bool ignore_this_position = false;
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        std::queue<long long>& ignoreList = precomp_mgr.ctx->ignore_offsets[formatTag];
+        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[precomp_mgr.recursion_depth][formatTag];
         if (!ignoreList.empty()) {
+          bool ignore_this_position = false;
           auto& first = ignoreList.front();
           while (first < input_file_pos) {
             ignoreList.pop();
@@ -747,14 +723,15 @@ int compress_file_impl(Precomp& precomp_mgr) {
 
         bool quick_check_result = false;
         try {
-          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(precomp_mgr.ctx->fin.get()), input_file_pos);
+          quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(&input), input_file_pos);
         }
         catch (...) {}  // TODO: print/record/report handler failed
         if (!quick_check_result) continue;
 
         std::unique_ptr<precompression_result> result {};
         try {
-          result = formatHandler->attempt_precompression(precomp_mgr, checkbuf, input_file_pos);
+          result = formatHandler->attempt_precompression(input, output, checkbuf,
+                                                         input_file_pos, precomp_mgr.switches);
         }
         catch (...) {}  // TODO: print/record/report handler failed
 
@@ -769,7 +746,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
         if (precomp_mgr.switches.verify_precompressed) {
           bool verification_success = false;
           try {
-            verification_success = verify_precompressed_result(precomp_mgr, result, input_file_pos);
+            verification_success = verify_precompressed_result(precomp_mgr, input, result, input_file_pos);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (!verification_success) continue;
@@ -782,14 +759,14 @@ int compress_file_impl(Precomp& precomp_mgr) {
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
         // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
-        end_uncompressed_data(precomp_mgr);
+        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
 
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed) {
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
             recursion_result r{};
             try {
-              r = recursion_compress(precomp_mgr, result->original_size, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+              r = recursion_compress(precomp_mgr, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
             }
             catch (...) {}  // TODO: print/record/report handler failed
             if (r.success) {
@@ -805,7 +782,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
             }
         }
         
-        result->dump_to_outfile(*precomp_mgr.ctx->fout);
+        result->dump_to_outfile(output);
 
         // start new uncompressed data
 
@@ -817,26 +794,27 @@ int compress_file_impl(Precomp& precomp_mgr) {
     }
 
     if (!compressed_data_found) {
-      if (!precomp_mgr.ctx->uncompressed_length.has_value()) {
-        precomp_mgr.ctx->uncompressed_length = 0;
-        precomp_mgr.ctx->uncompressed_pos = input_file_pos;
+      if (!uncompressed_length.has_value()) {
+        uncompressed_length = 0;
+        uncompressed_pos = input_file_pos;
 
         // uncompressed data
-        precomp_mgr.ctx->fout->put(0);
+        output.put(0);
       }
-      (*precomp_mgr.ctx->uncompressed_length)++;
-      precomp_mgr.ctx->uncompressed_bytes_total++;
+      (*uncompressed_length)++;
       // If there is a maximum uncompressed_block_length we dump the current uncompressed data as a single block, this makes it so anything waiting on data from Precomp
       // can get some data to possibly process earlier
-      if (precomp_mgr.switches.uncompressed_block_length != 0 && precomp_mgr.ctx->uncompressed_length >= precomp_mgr.switches.uncompressed_block_length) {
-        end_uncompressed_data(precomp_mgr);
+      if (precomp_mgr.switches.uncompressed_block_length != 0 && uncompressed_length >= precomp_mgr.switches.uncompressed_block_length) {
+        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
       }
     }
   }
 
-  end_uncompressed_data(precomp_mgr);
+  // Dump any trailing uncompressed data in case nothing was detected at the end of the stream
+  end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
 
-  precomp_mgr.ctx->fout = nullptr; // To close the outfile TODO: maybe we should just make sure the whole last context gets destroyed if at recursion_depth == 0?
+  // TODO: maybe we should just make sure the whole last context gets destroyed if at recursion_depth == 0?
+  if (precomp_mgr.recursion_depth == 0) precomp_mgr.fout = nullptr; // To close the outfile
 
   return anything_was_used ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
 }
@@ -858,22 +836,30 @@ int wrap_with_exception_catch(std::function<int()> func)
   }
 }
 
-int compress_file(Precomp& precomp_mgr)
+int compress_file(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output)
 {
-  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr); });
+  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, input_length, output); });
 }
 
 class RecursionPasstroughStream : public PasstroughStream {
   int recompression_code;
 public:
-  std::unique_ptr<RecursionContext> ctx;
-
-  RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_);
-  ~RecursionPasstroughStream() override {}
+  explicit RecursionPasstroughStream(IStreamLike& input,
+    OStreamLike& output,
+    Tools& precomp_tools,
+    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2);
+  ~RecursionPasstroughStream() override = default;
 
   int get_recursion_return_code(bool throw_on_failure = true);
 };
-std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length);
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2,
+  long long recursion_data_length
+);
 
 class PenaltyBytesPatchedOStream : public OStreamLike {
   OStreamLike* ostream = nullptr;
@@ -925,56 +911,57 @@ public:
   void clear() override { ostream->clear(); }
 };
 
-int decompress_file_impl(RecursionContext& precomp_ctx) {
-  precomp_ctx.comp_decomp_state = P_RECOMPRESS;
-  const auto& format_handlers = precomp_ctx.precomp.get_format_handlers();
-  const auto& format_handlers2 = precomp_ctx.precomp.get_format_handlers2();
-  
+int decompress_file_impl(
+  IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2
+) {  
   std::array<unsigned char, CHUNK> in_buf{};
   std::array<unsigned char, CHUNK> out_buf{};
 
-  long long fin_pos = precomp_ctx.fin->tellg();
+  long long fin_pos = input.tellg();
 
-  while (precomp_ctx.fin->good()) {
-    const std::byte header1 = static_cast<std::byte>(precomp_ctx.fin->get());
-    if (!precomp_ctx.fin->good()) break;
+  while (input.good()) {
+    const auto header1 = static_cast<std::byte>(input.get());
+    if (!input.good()) break;
 
     bool handlerFound = false;
     if (header1 == std::byte{ 0 }) { // uncompressed data
       handlerFound = true;
-      long long uncompressed_data_length;
-      uncompressed_data_length = fin_fget_vlint(*precomp_ctx.fin);
+      const long long uncompressed_data_length = fin_fget_vlint(input);
   
       if (uncompressed_data_length == 0) break; // end of PCF file, used by bZip2 compress-on-the-fly
   
       print_to_log(PRECOMP_DEBUG_LOG, "Uncompressed data, length=%lli\n");
-      fast_copy(*precomp_ctx.fin, *precomp_ctx.fout, uncompressed_data_length);
+      fast_copy(input, output, uncompressed_data_length);
   
     }
     else { // decompressed data, recompress
-      const unsigned char headertype = precomp_ctx.fin->get();
+      const unsigned char headertype = input.get();
   
       for (const auto& formatHandler : format_handlers2) {
         for (const auto& formatHandlerHeaderByte : formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
-            auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
-            formatHandler->write_pre_recursion_data(precomp_ctx, *format_hdr_data);
+            auto format_hdr_data = formatHandler->read_format_header(input, header1, formatHandlerHeaderByte);
+              formatHandler->write_pre_recursion_data(output, *format_hdr_data);
 
-            OStreamLike* output = precomp_ctx.fout.get();
+            OStreamLike* patched_output = &output;
             // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
             std::unique_ptr<PenaltyBytesPatchedOStream> patched_ostream{};
             if (!format_hdr_data->penalty_bytes.empty()) {
-              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(precomp_ctx.fout.get(), &format_hdr_data->penalty_bytes);
-              output = patched_ostream.get();
+              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(&output, &format_hdr_data->penalty_bytes);
+              patched_output = patched_ostream.get();
             }
 
-            IStreamLike* precompressed_input = precomp_ctx.fin.get();
+            IStreamLike* precompressed_input = &input;
             std::unique_ptr<RecursionPasstroughStream> recurse_passthrough_input;
             if (format_hdr_data->recursion_data_size > 0) {
-              recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
+              recurse_passthrough_input = recursion_decompress(input, *patched_ostream, precomp_tools, format_handlers, format_handlers2, format_hdr_data->recursion_data_size);
               precompressed_input = recurse_passthrough_input.get();
             }
-            auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, precomp_ctx.precomp.format_handler_tools);
+            auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, precomp_tools);
 
             while (true) {
               const auto data_hdr = static_cast<std::byte>(precompressed_input->get());
@@ -1021,7 +1008,7 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
                 }
 
                 if (recompressor->avail_out != CHUNK) {
-                  output->write(reinterpret_cast<char*>(out_buf.data()), CHUNK - recompressor->avail_out);
+                  patched_output->write(reinterpret_cast<char*>(out_buf.data()), CHUNK - recompressor->avail_out);
                 }
 
                 if (retval == PP_STREAM_END) break;
@@ -1043,24 +1030,24 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
         if (handlerFound) break;
         for (const auto& formatHandlerHeaderByte: formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
-            auto format_hdr_data = formatHandler->read_format_header(precomp_ctx, header1, formatHandlerHeaderByte);
-            formatHandler->write_pre_recursion_data(precomp_ctx, *format_hdr_data);
+            auto format_hdr_data = formatHandler->read_format_header(input, header1, formatHandlerHeaderByte);
+            formatHandler->write_pre_recursion_data(output, *format_hdr_data);
 
-            OStreamLike* output = precomp_ctx.fout.get();
+            OStreamLike* patched_output = &output;
             // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
             std::unique_ptr<PenaltyBytesPatchedOStream> patched_ostream{};
             if (!format_hdr_data->penalty_bytes.empty()) {
-              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(precomp_ctx.fout.get(), &format_hdr_data->penalty_bytes);
-              output = patched_ostream.get();
+              patched_ostream = std::make_unique<PenaltyBytesPatchedOStream>(&output, &format_hdr_data->penalty_bytes);
+              patched_output = patched_ostream.get();
             }
 
             if (format_hdr_data->recursion_data_size > 0) {
-              auto recurse_passthrough_input = recursion_decompress(precomp_ctx, format_hdr_data->recursion_data_size);
-              formatHandler->recompress(*recurse_passthrough_input, *output, *format_hdr_data, formatHandlerHeaderByte);
+              auto recurse_passthrough_input = recursion_decompress(input, *patched_ostream, precomp_tools, format_handlers, format_handlers2, format_hdr_data->recursion_data_size);
+              formatHandler->recompress(*recurse_passthrough_input, *patched_output, *format_hdr_data, formatHandlerHeaderByte);
               recurse_passthrough_input->get_recursion_return_code();
             }
             else {
-              formatHandler->recompress(*precomp_ctx.fin, *output, *format_hdr_data, formatHandlerHeaderByte);
+              formatHandler->recompress(input, *patched_output, *format_hdr_data, formatHandlerHeaderByte);
             }
             handlerFound = true;
             break;
@@ -1071,27 +1058,33 @@ int decompress_file_impl(RecursionContext& precomp_ctx) {
     }
     if (!handlerFound) throw PrecompError(ERR_DURING_RECOMPRESSION);
   
-    fin_pos = precomp_ctx.fin->tellg();
+    fin_pos = input.tellg();
   }
 
   return RETURN_SUCCESS;
 }
 
-int decompress_file(RecursionContext& precomp_ctx)
+int decompress_file(
+  IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2
+)
 {
-  return wrap_with_exception_catch([&]() { return decompress_file_impl(precomp_ctx); });
+  return wrap_with_exception_catch([&]() { return decompress_file_impl(input, output, precomp_tools, format_handlers, format_handlers2); });
 }
 
 void read_header(Precomp& precomp_mgr) {
   if (precomp_mgr.statistics.header_already_read) throw std::runtime_error("Attempted to read the input stream header twice");
   unsigned char hdr[3];
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  precomp_mgr.fin->read(reinterpret_cast<char*>(hdr), 3);
   if ((hdr[0] == 'P') && (hdr[1] == 'C') && (hdr[2] == 'F')) {
   } else {
     throw PrecompError(ERR_NO_PCF_HEADER);
   }
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 3);
+  precomp_mgr.fin->read(reinterpret_cast<char*>(hdr), 3);
   if ((hdr[0] == V_MAJOR) && (hdr[1] == V_MINOR) && (hdr[2] == V_MINOR2)) {
   } else {
     throw PrecompError(
@@ -1100,7 +1093,7 @@ void read_header(Precomp& precomp_mgr) {
     );
   }
 
-  precomp_mgr.ctx->fin->read(reinterpret_cast<char*>(hdr), 1);
+  precomp_mgr.fin->read(reinterpret_cast<char*>(hdr), 1);
   if (hdr[0] != 0) throw PrecompError(
     ERR_PCF_HEADER_INCOMPATIBLE_VERSION,
     "OTF compression no longer supported, use original Precomp and use the -nn conversion option to get an uncompressed Precomp stream that should work here"
@@ -1109,7 +1102,7 @@ void read_header(Precomp& precomp_mgr) {
   std::string header_filename;
   char c;
   do {
-    c = precomp_mgr.ctx->fin->get();
+    c = precomp_mgr.fin->get();
     if (c != 0) header_filename += c;
   } while (c != 0);
 
@@ -1151,31 +1144,7 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
-RecursionContext& recursion_push(RecursionContext& precomp_ctx, long long recurse_stream_length) {
-  auto context_progress_range = precomp_ctx.global_max_percent - precomp_ctx.global_min_percent;
-  auto current_context_progress_percent = static_cast<float>(precomp_ctx.input_file_pos) / precomp_ctx.fin_length;
-  auto recursion_end_progress_percent = static_cast<float>(precomp_ctx.input_file_pos + recurse_stream_length) / precomp_ctx.fin_length;
-
-  auto new_minimum = precomp_ctx.global_min_percent + (context_progress_range * current_context_progress_percent);
-  auto new_maximum = precomp_ctx.global_min_percent + (context_progress_range * recursion_end_progress_percent);
-
-  Precomp& precomp_mgr = precomp_ctx.precomp;
-  precomp_mgr.recursion_contexts_stack.push_back(std::move(precomp_mgr.ctx));
-  precomp_mgr.ctx = std::make_unique<RecursionContext>(new_minimum, new_maximum, precomp_mgr);
-  return *precomp_mgr.ctx;
-}
-
-void recursion_pop(Precomp& precomp_mgr) {
-  precomp_mgr.ctx = std::move(precomp_mgr.recursion_contexts_stack.back());
-  precomp_mgr.recursion_contexts_stack.pop_back();
-}
-
-bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
-    // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
-    recursion_push(*precomp_mgr.ctx, 0);
-    auto new_ctx = std::move(precomp_mgr.ctx);
-    recursion_pop(precomp_mgr);
-
+bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
     // Dump precompressed data including format headers
     // TODO: We should be able to use a PassthroughStream here to avoid having to dump a temporary file, I tried it and it failed, didn't want to spend more
     // time on it right now, but might be worth it to do this optimization later.
@@ -1184,19 +1153,18 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     verify_tmp_precompressed->open(verify_precompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
     result->dump_to_outfile(*verify_tmp_precompressed);
 
-    // Set it as the input on the context, we will do what ammounts essentially to run Precomp -r on it as it's on its own pretty much
+    // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
     // a PCf file without the PCF header, if that makes sense
     verify_tmp_precompressed->close();
     auto precompressed_size = std::filesystem::file_size(verify_precompressed_filename.c_str());
-    new_ctx->fin_length = precompressed_size;
     verify_tmp_precompressed->reopen();
-    new_ctx->fin = std::make_unique<IStreamLikeView>(verify_tmp_precompressed.get(), precompressed_size);
+    auto input_verify_view = std::make_unique<IStreamLikeView>(verify_tmp_precompressed.get(), precompressed_size);
 
-    // Set output to a stream that calculates it's SHA1 sum without actually writting anything anywhere
+    // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
     auto sha1_ostream = Sha1Ostream();
-    new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
+    auto output_verify_sha1 = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
 
-    int verify_result = decompress_file(*new_ctx);
+    int verify_result = decompress_file(*input_verify_view, *output_verify_sha1, precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
     if (verify_result != RETURN_SUCCESS) return false;
 
     // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
@@ -1206,30 +1174,24 @@ bool verify_precompressed_result(Precomp& precomp_mgr, const std::unique_ptr<pre
     // Validate that the recompressed_size is what we expect
     if (recompressed_size != result->complete_original_size()) return false;
 
-    precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
-    auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);
-    auto original_data_sha1 = calculate_sha1(original_data_view, 0);
+    input.seekg(input_file_pos, std::ios_base::beg);
+    auto original_data_view = IStreamLikeView(&input, recompressed_size + input_file_pos);
+    const auto original_data_sha1 = calculate_sha1(original_data_view, 0);
 
     if (original_data_sha1 != recompressed_data_sha1) return false;
     return true;
 }
 
-bool verify_precompressed_result2(Precomp& precomp_mgr, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
-  // Stupid way to have a new RecursionContext for verification, will probably make progress percentages freak out even more than they already do
-  recursion_push(*precomp_mgr.ctx, 0);
-  auto new_ctx = std::move(precomp_mgr.ctx);
-  recursion_pop(precomp_mgr);
-
+bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
   // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
   // a PCf file without the PCF header, if that makes sense));
-  new_ctx->fin_length = precompressed_size;
-  new_ctx->fin = std::make_unique<IStreamLikeView>(tmp_file.get(), precompressed_size);
+  auto input_verify_view = std::make_unique<IStreamLikeView>(tmp_file.get(), precompressed_size);
 
   // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
   auto sha1_ostream = Sha1Ostream();
-  new_ctx->fout = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
+  auto output_verify_sha1 = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
 
-  int verify_result = decompress_file(*new_ctx);
+  int verify_result = decompress_file(*input_verify_view, *output_verify_sha1, precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
   if (verify_result != RETURN_SUCCESS) return false;
 
   // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
@@ -1239,15 +1201,15 @@ bool verify_precompressed_result2(Precomp& precomp_mgr, const uint64_t original_
   // Validate that the recompressed_size is what we expect
   if (recompressed_size != original_stream_size) return false;
 
-  precomp_mgr.ctx->fin->seekg(input_file_pos, std::ios_base::beg);
-  auto original_data_view = IStreamLikeView(precomp_mgr.ctx->fin.get(), recompressed_size + input_file_pos);
-  auto original_data_sha1 = calculate_sha1(original_data_view, 0);
+  input.seekg(input_file_pos, std::ios_base::beg);
+  auto original_data_view = IStreamLikeView(&input, recompressed_size + input_file_pos);
+  const auto original_data_sha1 = calculate_sha1(original_data_view, 0);
 
   if (original_data_sha1 != recompressed_data_sha1) return false;
   return true;
 }
 
-recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_bytes, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {
+recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {
   recursion_result tmp_r;
   tmp_r.success = false;
 
@@ -1256,27 +1218,26 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
     return tmp_r;
   }
 
-  recursion_push(*precomp_mgr.ctx, compressed_bytes);
-
-  precomp_mgr.ctx->fin_length = decompressed_bytes;
-  precomp_mgr.ctx->fin = std::make_unique<IStreamLikeView>(&tmpfile, decompressed_bytes);
+  auto recursion_input = std::make_unique<IStreamLikeView>(&tmpfile, decompressed_bytes);
   //precomp_mgr.ctx->set_input_stream(fin);
 
   tmp_r.file_name = out_filename;
   auto fout = new std::ofstream();
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
-  precomp_mgr.ctx->set_output_stream(fout, true);
+  auto recursion_output = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(fout, true));
 
   precomp_mgr.recursion_depth++;
+  precomp_mgr.ignore_offsets.resize(precomp_mgr.ignore_offsets.size() + 1);
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
-  const auto ret_code = compress_file(precomp_mgr);
+  const auto ret_code = compress_file(precomp_mgr, *recursion_input, decompressed_bytes, *recursion_output);
   if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
   tmp_r.success = ret_code == RETURN_SUCCESS;
 
   // TODO CHECK: Delete ctx?
 
   precomp_mgr.recursion_depth--;
-  recursion_pop(precomp_mgr);
+  precomp_mgr.ignore_offsets.pop_back();
+  fout->close();
 
   if (tmp_r.success) {
     print_to_log(PRECOMP_DEBUG_LOG, "Recursion streams found\n");
@@ -1299,13 +1260,15 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long compressed_b
 }
 
 
-RecursionPasstroughStream::RecursionPasstroughStream(std::unique_ptr<RecursionContext>&& ctx_)
-    : PasstroughStream([this](OStreamLike& passthrough)
+RecursionPasstroughStream::RecursionPasstroughStream(IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2)
+    : PasstroughStream([this, &input, &output, &precomp_tools, &format_handlers, &format_handlers2](OStreamLike& passthrough)
       {
-        ctx->fout = std::make_unique<ObservableOStreamWrapper>(&passthrough, false);
-        recompression_code = decompress_file(*ctx);
-      }),
-      ctx(std::move(ctx_)) {}
+        recompression_code = decompress_file(input, output, precomp_tools, format_handlers, format_handlers2);
+      }) {}
 
 int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) {
     wait_thread_completed();
@@ -1313,30 +1276,21 @@ int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) 
     return recompression_code;
 }
 
-std::unique_ptr<RecursionPasstroughStream> recursion_decompress(RecursionContext& context, long long recursion_data_length) {
-  auto original_pos = context.fin->tellg();
-  auto& precomp_mgr = context.precomp;
-
-  // This is just a way for getting a new context, as we are not going to really use our context stack for decompression.
-  // Is pretty dumb, could be made more straightforward but works for now
-  recursion_push(context, recursion_data_length);
-  auto new_ctx = std::move(precomp_mgr.ctx);
-  recursion_pop(precomp_mgr);
+std::unique_ptr<RecursionPasstroughStream> recursion_decompress(IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2,
+  long long recursion_data_length
+) {
+  const auto original_pos = input.tellg();
 
   long long recursion_end_pos = original_pos + recursion_data_length;
-  new_ctx->fin_length = recursion_data_length;
   // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
   // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
-  auto fin_view = std::make_unique<IStreamLikeView>(context.fin.get(), recursion_end_pos);
-  new_ctx->fin = std::move(fin_view);
-
-  std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(std::move(new_ctx));
+  auto fin_view = std::make_unique<IStreamLikeView>(&input, recursion_end_pos);
+  std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(*fin_view, output, precomp_tools, format_handlers, format_handlers2);
   passthrough->start_thread();
-
-  //print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
-
-  //print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
-
   return passthrough;
 }
 
@@ -1381,7 +1335,7 @@ long long fin_fget_vlint(IStreamLike& input) {
   return v + o + (((long long)c) << s);
 }
 
-std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(Precomp& precomp_mgr, IStreamLike& original, IStreamLike& candidate, long long original_size) {
+std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(const std::function<void()>& progress_callback, IStreamLike& original, IStreamLike& candidate, long long original_size) {
   unsigned char input_bytes1[COMP_CHUNK];
   unsigned char input_bytes2[COMP_CHUNK];
   uint32_t pos = 0;
@@ -1390,7 +1344,7 @@ std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_pen
   std::vector<std::tuple<uint32_t, char>> penalty_bytes;
 
   do {
-    precomp_mgr.call_progress_callback();
+    progress_callback();
 
     original.read(reinterpret_cast<char*>(input_bytes1), COMP_CHUNK);
     long long original_chunk_size = original.gcount();
@@ -1438,7 +1392,6 @@ void PrecompSwitchesSetIgnoreList(CSwitches* precomp_switches, const long long* 
     ignore_pos_queue.emplace(ignore_pos);
   }
 }
-CRecursionContext* PrecompGetRecursionContext(Precomp* precomp_mgr) { return precomp_mgr->ctx.get(); }
 CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
   // update counts in a CResultStatistics accessible way before returning it
   precomp_mgr->statistics.decompressed_streams_count = precomp_mgr->statistics.get_total_detected_count();
@@ -1449,17 +1402,17 @@ CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
 void PrecompPrintResults(Precomp* precomp_mgr) { precomp_mgr->statistics.print_results(); }
 
 int PrecompPrecompress(Precomp* precomp_mgr) {
-  return compress_file(*precomp_mgr);
+  return compress_file(*precomp_mgr, *precomp_mgr->fin, precomp_mgr->switches.fin_length, *precomp_mgr->fout);
 }
 
 int PrecompRecompress(Precomp* precomp_mgr) {
   if (!precomp_mgr->statistics.header_already_read) read_header(*precomp_mgr);
   precomp_mgr->init_format_handlers(true);
-  return decompress_file(*precomp_mgr->ctx);
+  return decompress_file(*precomp_mgr->fin, *precomp_mgr->fout, precomp_mgr->format_handler_tools, precomp_mgr->get_format_handlers(), precomp_mgr->get_format_handlers2());
 }
 
 int PrecompReadHeader(Precomp* precomp_mgr, bool seek_to_beg) {
-  if (seek_to_beg) precomp_mgr->ctx->fin->seekg(0, std::ios_base::beg);
+  if (seek_to_beg) precomp_mgr->fin->seekg(0, std::ios_base::beg);
   try {
     read_header(*precomp_mgr);
   }

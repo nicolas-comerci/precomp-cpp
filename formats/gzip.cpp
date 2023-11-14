@@ -20,7 +20,10 @@ public:
   void increase_precompressed_count() override { tools->increase_precompressed_count("GZip"); }
 };
 
-std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression(Precomp& precomp_mgr, std::span<unsigned char> checkbuf_span, long long input_stream_pos) {
+std::unique_ptr<precompression_result>
+GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
+                                          std::span<unsigned char> checkbuf_span,
+                                          long long input_stream_pos, const Switches &precomp_switches) {
   auto checkbuf = checkbuf_span.data();
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
@@ -75,28 +78,28 @@ std::unique_ptr<precompression_result> GZipFormatHandler::attempt_precompression
   }
   if (dont_compress) return std::unique_ptr<precompression_result>{};
 
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<gzip_precompression_result>(&precomp_mgr.format_handler_tools);
-  try_decompression_deflate_type(result, precomp_mgr,
+  std::unique_ptr<deflate_precompression_result> result = std::make_unique<gzip_precompression_result>(precomp_tools);
+  try_decompression_deflate_type(result, *precomp_tools, input, output,
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
-    "in GZIP", precomp_mgr.get_tempfile_name("precomp_gzip"));
+    "in GZIP", precomp_tools->get_tempfile_name("precomp_gzip", true));
 
   result->original_size_extra += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
   return result;
 }
 
-std::unique_ptr<PrecompFormatHeaderData> GZipFormatHandler::read_format_header(RecursionContext& context, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
+std::unique_ptr<PrecompFormatHeaderData> GZipFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(*context.fin, precomp_hdr_flags, false);
+  fmt_hdr->read_data(input, precomp_hdr_flags, false);
   return fmt_hdr;
 }
 
-void GZipFormatHandler::write_pre_recursion_data(RecursionContext& context, PrecompFormatHeaderData& precomp_hdr_data) {
+void GZipFormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {
   auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
   // GZIP header
-  context.fout->put(31);
-  context.fout->put(139);
+  output.put(31);
+  output.put(139);
   // Write zlib_header
-  context.fout->write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
+  output.write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
 }
 
 void GZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
