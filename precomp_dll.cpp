@@ -777,6 +777,7 @@ int compress_file_impl(Precomp& precomp_mgr) {
           result->precompressed_stream->seekg(0, std::ios_base::beg);
         }
         result->increase_precompressed_count();
+        anything_was_used = true;
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
