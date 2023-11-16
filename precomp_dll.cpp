@@ -465,6 +465,37 @@ struct recursion_result {
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
 
+template <class> inline constexpr bool is_smart_pointer_v = false;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::unique_ptr<_Ty>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::shared_ptr<_Ty>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::unique_ptr<_Ty const>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::shared_ptr<_Ty const>> = true;
+// No volatile ones, don't expect we will run into those.
+
+// Moves any remaining data to the front of the buffer, reads from IStreamLike to fill the buffer, so the processor is ready to process() for another iteration
+// Returns a tuple [how much was missing on the buffer, how much it was actually read]
+template <typename T, typename R>
+[[nodiscard]] std::tuple<std::streamsize, std::streamsize> fill_processor_in_buffer(T& processor, std::vector<R>& in_buf, IStreamLike& input) {
+  static_assert(!std::is_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  static_assert(!is_smart_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
+  if (processor.avail_in > 0) {
+    // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
+    std::memmove(in_buf.data(), processor.next_in, processor.avail_in);
+  }
+  const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + processor.avail_in);
+  const std::streamsize read_amt = in_buf.size() - processor.avail_in;
+  std::streamsize gcount = 0;
+  if (read_amt > 0) {
+    input.read(in_buf_ptr, read_amt);
+    gcount = input.gcount();
+  }
+
+  processor.avail_in += gcount;
+  processor.next_in = in_buf.data();
+  return { read_amt, gcount };
+}
+
 int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output) {
   if (precomp_mgr.recursion_depth == 0) {
       write_header(precomp_mgr);
@@ -572,24 +603,9 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           uint64_t blockCount = 0;
           bool reached_eof = false;
           while (true) {
-            // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
-            if (precompressor->avail_in > 0) {
-              // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
-              std::memmove(precompressor_in_buf.data(), precompressor->next_in, precompressor->avail_in);
-            }
-            const auto in_buf_ptr = reinterpret_cast<char*>(precompressor_in_buf.data() + precompressor->avail_in);
-            const auto read_amt = CHUNK - precompressor->avail_in;
-            std::streamsize gcount = 0;
-            if (read_amt > 0) {
-              input.read(in_buf_ptr, read_amt);
-              gcount = input.gcount();
-            }
-
-            precompressor->avail_in += gcount;
-            precompressor->next_in = precompressor_in_buf.data();
+            auto [read_amt, gcount] = fill_processor_in_buffer(*precompressor, precompressor_in_buf, input);
             if (input.bad()) break;
 
-            const auto avail_in_before_process = precompressor->avail_in;
             ret = precompressor->process(reached_eof);
             if (ret != PP_OK && ret != PP_STREAM_END) break;
 
@@ -619,7 +635,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
 
             if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
-              // No more data will ever come and we already flushed all the output data processed, notify processor so it can finish
+              // No more data will ever come, and we already flushed all the output data processed, notify processor so it can finish
               reached_eof = true;
             }
             // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
@@ -1144,6 +1160,27 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
+class PrecompPcfRecompressor: public ProcessorAdapter {
+public:
+  uint32_t avail_in = 0;
+  std::byte* next_in = nullptr;
+  uint32_t avail_out = 0;
+  std::byte* next_out = nullptr;
+
+  explicit PrecompPcfRecompressor(
+    Tools& precomp_tools,
+    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2):
+      ProcessorAdapter(
+        &avail_in, &next_in, &avail_out, &next_out,
+        [&]() -> bool
+        {
+          const auto result =  decompress_file(*input_stream, *output_stream, precomp_tools, format_handlers, format_handlers2);
+          return result == RETURN_SUCCESS;
+        }
+      ) {}
+};
+
 bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
     // Dump precompressed data including format headers
     // TODO: We should be able to use a PassthroughStream here to avoid having to dump a temporary file, I tried it and it failed, didn't want to spend more
@@ -1152,24 +1189,46 @@ bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const
     auto verify_precompressed_filename = precomp_mgr.get_tempfile_name("verify_precompressed");
     verify_tmp_precompressed->open(verify_precompressed_filename, std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
     result->dump_to_outfile(*verify_tmp_precompressed);
-
-    // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
-    // a PCf file without the PCF header, if that makes sense
-    verify_tmp_precompressed->close();
-    auto precompressed_size = std::filesystem::file_size(verify_precompressed_filename.c_str());
     verify_tmp_precompressed->reopen();
-    auto input_verify_view = std::make_unique<IStreamLikeView>(verify_tmp_precompressed.get(), precompressed_size);
 
-    // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
+    std::vector<std::byte> in_buf{};
+    in_buf.resize(CHUNK);
+    std::vector<std::byte> out_buf{};
+    out_buf.resize(CHUNK);
+    auto recompressor = PrecompPcfRecompressor(precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
+    recompressor.next_in = in_buf.data();
+    recompressor.next_out = out_buf.data();
+    recompressor.avail_out = CHUNK;
     auto sha1_ostream = Sha1Ostream();
-    auto output_verify_sha1 = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
 
-    int verify_result = decompress_file(*input_verify_view, *output_verify_sha1, precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
-    if (verify_result != RETURN_SUCCESS) return false;
+    auto processor_result = PP_OK;
+    bool reached_eof = false;
+    // TODO: reuse code from working with PrecompFormatProcessors, maybe some template helper functions or whatever
+    while (processor_result == PP_OK) {
+      auto [read_amt, gcount] = fill_processor_in_buffer(recompressor, in_buf, *verify_tmp_precompressed);
+      if (verify_tmp_precompressed->bad()) break;
+
+      processor_result = recompressor.process(reached_eof);
+      if (processor_result != PP_OK && processor_result != PP_STREAM_END) break;
+
+      const auto recompressed_chunk_size = CHUNK - recompressor.avail_out;
+      if (processor_result == PP_STREAM_END || recompressed_chunk_size > 0) {
+        sha1_ostream.write(reinterpret_cast<char*>(out_buf.data()), recompressed_chunk_size);
+
+        recompressor.next_out = out_buf.data();
+        recompressor.avail_out = CHUNK;
+      }
+
+      if (read_amt > 0 && gcount == 0 && recompressed_chunk_size == 0) {
+        // No more data will ever come, and we already flushed all the output data processed, notify processor so it can finish
+        reached_eof = true;
+      }
+    }
+    if (processor_result != PP_STREAM_END) return false;
 
     // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
-    auto recompressed_size = sha1_ostream.tellp();
-    auto recompressed_data_sha1 = sha1_ostream.get_digest();
+    const auto recompressed_size = sha1_ostream.tellp();
+    const auto recompressed_data_sha1 = sha1_ostream.get_digest();
 
     // Validate that the recompressed_size is what we expect
     if (recompressed_size != result->complete_original_size()) return false;

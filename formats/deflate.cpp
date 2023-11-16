@@ -125,6 +125,7 @@ DeflatePrecompressor::DeflatePrecompressor(Tools* _precomp_tools):
         original_stream_size,
         preflate_processor->preflate_input,
         []() {},
+        // TODO: ACTUALLY USE THE METABLOCK PARAMETER
         1 << 21
       );
       return result.accepted;
