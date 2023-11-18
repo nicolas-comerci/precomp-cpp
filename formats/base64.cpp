@@ -331,7 +331,7 @@ std::unique_ptr<precompression_result> try_decompression_base64(Tools& precomp_t
 std::unique_ptr<precompression_result>
 Base64FormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
                                             std::span<unsigned char> checkbuf_span,
-                                            long long original_input_pos, const Switches &precomp_switches) {
+                                            long long original_input_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   auto checkbuf = checkbuf_span.data();
   std::unique_ptr<precompression_result> result = std::make_unique<base64_precompression_result>(precomp_tools);
   // search for double CRLF, all between is "header"

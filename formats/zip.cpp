@@ -34,7 +34,7 @@ public:
 };
 
 std::unique_ptr<precompression_result>
-ZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf_span, long long input_stream_pos, const Switches &precomp_switches) {
+ZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf_span, long long input_stream_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   std::unique_ptr<deflate_precompression_result> result = std::make_unique<zip_precompression_result>(precomp_tools);
   unsigned char* checkbuf = checkbuf_span.data();
   const unsigned int filename_length = (*(checkbuf + 27) << 8) + *(checkbuf + 26);
@@ -44,7 +44,7 @@ ZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
   const auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
 
   try_decompression_deflate_type(result, *precomp_tools, input, output,
-    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_tools->get_tempfile_name("decomp_zip", true));
+    D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_tools->get_tempfile_name("decomp_zip", true), recursion_depth);
 
   result->original_size_extra += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size
   return result;

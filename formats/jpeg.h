@@ -15,7 +15,7 @@ public:
 
 	std::unique_ptr<precompression_result>
     attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer,
-                           long long input_stream_pos, const Switches &precomp_switches) override;
+                           long long input_stream_pos, const Switches &precomp_switches, unsigned int recursion_depth) override;
 
 	std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 

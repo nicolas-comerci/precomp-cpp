@@ -306,7 +306,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Tools& precomp_tool
 std::unique_ptr<precompression_result>
 JpegFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
                                           std::span<unsigned char> checkbuf_span,
-                                          long long jpg_start_pos, const Switches &precomp_switches) {
+                                          long long jpg_start_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   bool done = false, found = false;
   bool hasQuantTable = (*(checkbuf_span.data() + 3) == 0xDB);
   bool progressive_flag = (*(checkbuf_span.data() + 3) == 0xC2);

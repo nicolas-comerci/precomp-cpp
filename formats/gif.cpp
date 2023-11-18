@@ -454,7 +454,7 @@ void GifFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
 std::unique_ptr<precompression_result>
 GifFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
                                          std::span<unsigned char> checkbuf_span,
-                                         long long original_input_pos, const Switches &precomp_switches) {
+                                         long long original_input_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   std::unique_ptr<gif_precompression_result> result = std::make_unique<gif_precompression_result>(precomp_tools);
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(precomp_tools->get_tempfile_name("decomp_gif", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);

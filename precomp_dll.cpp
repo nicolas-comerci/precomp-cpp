@@ -263,13 +263,11 @@ Precomp::Precomp():
     [this](std::string name, bool append_tag) { return this->get_tempfile_name(name, append_tag); },
     [this](std::string name) { return this->statistics.increase_detected_count(name); },
     [this](std::string name) { return this->statistics.increase_precompressed_count(name); },
-    [this](SupportedFormats format, long long pos) {
-      if (this->is_format_handler_active(format)) this->ignore_offsets[this->recursion_depth][format].emplace(pos);
+    [this](SupportedFormats format, long long pos, unsigned int recursion_depth) {
+      if (this->is_format_handler_active(format, recursion_depth)) this->ignore_offsets[recursion_depth][format].emplace(pos);
     }
   )
-{
-  recursion_depth = 0;
-}
+{}
 
 void Precomp::set_input_stdin() {
   // Read binary from stdin
@@ -393,7 +391,7 @@ const std::vector<std::unique_ptr<PrecompFormatHandler2>>& Precomp::get_format_h
   return format_handlers2;
 }
 
-bool Precomp::is_format_handler_active(SupportedFormats format_id) const {
+bool Precomp::is_format_handler_active(SupportedFormats format_id, unsigned int recursion_depth) const {
     const auto itemIt = std::find_if(
         format_handlers.cbegin(), format_handlers.cend(),
         [&format_id](const std::unique_ptr<PrecompFormatHandler>& handler) { return handler->get_header_bytes()[0] == format_id; }
@@ -460,10 +458,10 @@ bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, cons
 struct recursion_result {
   bool success;
   std::string file_name;
-  long long file_length;
+  long long file_length = 0;
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
-recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename);
+recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename, unsigned int recursion_depth);
 
 template <class> inline constexpr bool is_smart_pointer_v = false;
 template <class _Ty> inline constexpr bool is_smart_pointer_v<std::unique_ptr<_Ty>> = true;
@@ -496,8 +494,8 @@ template <typename T, typename R>
   return { read_amt, gcount };
 }
 
-int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output) {
-  if (precomp_mgr.recursion_depth == 0) {
+int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output, unsigned int recursion_depth) {
+  if (recursion_depth == 0) {
       write_header(precomp_mgr);
       precomp_mgr.init_format_handlers();
   }
@@ -522,7 +520,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
   bool anything_was_used = false;
 
   for (long long input_file_pos = 0; input_file_pos < input_length; input_file_pos++) {
-    if (precomp_mgr.recursion_depth == 0) precomp_mgr.input_file_pos = input_file_pos;
+    if (recursion_depth == 0) precomp_mgr.input_file_pos = input_file_pos;
     bool compressed_data_found = false;
 
     bool ignore_this_pos = false;
@@ -541,11 +539,11 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
     else {
       for (const auto& formatHandler : format_handlers2) {
         // Recursion depth check
-        if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
+        if (formatHandler->depth_limit && recursion_depth > formatHandler->depth_limit) continue;
 
         // Position blacklist check
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[precomp_mgr.recursion_depth][formatTag];
+        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[recursion_depth][formatTag];
         if (!ignoreList.empty()) {
           bool ignore_this_position = false;
           auto& first = ignoreList.front();
@@ -688,7 +686,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
           recursion_result r{};
           try {
-            r = recursion_compress(precomp_mgr, precompressed_stream_size, *precompressed, recurse_tempfile_name);
+            r = recursion_compress(precomp_mgr, precompressed_stream_size, *precompressed, recurse_tempfile_name, recursion_depth);
           }
           catch (...) {}  // TODO: print/record/report handler failed
           if (r.success) {
@@ -714,11 +712,11 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
       for (const auto& formatHandler : format_handlers) {
         if (compressed_data_found) break;
         // Recursion depth check
-        if (formatHandler->depth_limit && precomp_mgr.recursion_depth > formatHandler->depth_limit) continue;
+        if (formatHandler->depth_limit && recursion_depth > formatHandler->depth_limit) continue;
 
         // Position blacklist check
         const SupportedFormats& formatTag = formatHandler->get_header_bytes()[0];
-        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[precomp_mgr.recursion_depth][formatTag];
+        std::queue<long long>& ignoreList = precomp_mgr.ignore_offsets[recursion_depth][formatTag];
         if (!ignoreList.empty()) {
           bool ignore_this_position = false;
           auto& first = ignoreList.front();
@@ -746,8 +744,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
         std::unique_ptr<precompression_result> result {};
         try {
-          result = formatHandler->attempt_precompression(input, output, checkbuf,
-                                                         input_file_pos, precomp_mgr.switches);
+          result = formatHandler->attempt_precompression(input, output, checkbuf, input_file_pos, precomp_mgr.switches, recursion_depth);
         }
         catch (...) {}  // TODO: print/record/report handler failed
 
@@ -782,7 +779,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
             recursion_result r{};
             try {
-              r = recursion_compress(precomp_mgr, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name);
+              r = recursion_compress(precomp_mgr, result->precompressed_size, *result->precompressed_stream, recurse_tempfile_name, recursion_depth);
             }
             catch (...) {}  // TODO: print/record/report handler failed
             if (r.success) {
@@ -830,7 +827,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
   end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
 
   // TODO: maybe we should just make sure the whole last context gets destroyed if at recursion_depth == 0?
-  if (precomp_mgr.recursion_depth == 0) precomp_mgr.fout = nullptr; // To close the outfile
+  if (recursion_depth == 0) precomp_mgr.fout = nullptr; // To close the outfile
 
   return anything_was_used ? RETURN_SUCCESS : RETURN_NOTHING_DECOMPRESSED;
 }
@@ -852,9 +849,9 @@ int wrap_with_exception_catch(std::function<int()> func)
   }
 }
 
-int compress_file(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output)
+int compress_file(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output, unsigned int recursion_depth)
 {
-  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, input_length, output); });
+  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, input_length, output, recursion_depth); });
 }
 
 class RecursionPasstroughStream : public PasstroughStream {
@@ -1268,33 +1265,31 @@ bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, cons
   return true;
 }
 
-recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename) {
+recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename, unsigned int recursion_depth) {
   recursion_result tmp_r;
   tmp_r.success = false;
 
-  if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.switches.max_recursion_depth) {
+  const auto new_recursion_depth = recursion_depth + 1;
+  if (new_recursion_depth > precomp_mgr.switches.max_recursion_depth) {
     precomp_mgr.statistics.max_recursion_depth_reached = true;
     return tmp_r;
   }
 
   auto recursion_input = std::make_unique<IStreamLikeView>(&tmpfile, decompressed_bytes);
-  //precomp_mgr.ctx->set_input_stream(fin);
 
   tmp_r.file_name = out_filename;
   auto fout = new std::ofstream();
   fout->open(tmp_r.file_name.c_str(), std::ios_base::out | std::ios_base::binary);
   auto recursion_output = std::unique_ptr<ObservableOStream>(new ObservableWrappedOStream(fout, true));
 
-  precomp_mgr.recursion_depth++;
   precomp_mgr.ignore_offsets.resize(precomp_mgr.ignore_offsets.size() + 1);
-  print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", precomp_mgr.recursion_depth);
-  const auto ret_code = compress_file(precomp_mgr, *recursion_input, decompressed_bytes, *recursion_output);
+  print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", new_recursion_depth);
+  const auto ret_code = compress_file(precomp_mgr, *recursion_input, decompressed_bytes, *recursion_output, new_recursion_depth);
   if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
   tmp_r.success = ret_code == RETURN_SUCCESS;
 
   // TODO CHECK: Delete ctx?
 
-  precomp_mgr.recursion_depth--;
   precomp_mgr.ignore_offsets.pop_back();
   fout->close();
 
@@ -1303,14 +1298,15 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed
   } else {
     print_to_log(PRECOMP_DEBUG_LOG, "No recursion streams found\n");
   }
-  print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", precomp_mgr.recursion_depth);
+  print_to_log(PRECOMP_DEBUG_LOG, "Recursion end - back to recursion depth %i\n", recursion_depth);
 
   if (!tmp_r.success) {
     remove(tmp_r.file_name.c_str());
     tmp_r.file_name = "";
   } else {
-    if ((precomp_mgr.recursion_depth + 1) > precomp_mgr.statistics.max_recursion_depth_used)
-      precomp_mgr.statistics.max_recursion_depth_used = (precomp_mgr.recursion_depth + 1);
+    if (new_recursion_depth > precomp_mgr.statistics.max_recursion_depth_used) {
+      precomp_mgr.statistics.max_recursion_depth_used = new_recursion_depth;
+    }
     // get recursion file size
     tmp_r.file_length = std::filesystem::file_size(tmp_r.file_name.c_str());
   }
@@ -1461,7 +1457,7 @@ CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
 void PrecompPrintResults(Precomp* precomp_mgr) { precomp_mgr->statistics.print_results(); }
 
 int PrecompPrecompress(Precomp* precomp_mgr) {
-  return compress_file(*precomp_mgr, *precomp_mgr->fin, precomp_mgr->switches.fin_length, *precomp_mgr->fout);
+  return compress_file(*precomp_mgr, *precomp_mgr->fin, precomp_mgr->switches.fin_length, *precomp_mgr->fout, 0);
 }
 
 int PrecompRecompress(Precomp* precomp_mgr) {

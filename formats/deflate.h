@@ -48,7 +48,7 @@ void debug_deflate_detected(const recompress_deflate_result& rdres, const char* 
 void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, const recompress_deflate_result& rdres);
 
 void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, IStreamLike& input, OStreamLike& output, SupportedFormats type,
-  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename);
+  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename, unsigned int recursion_depth);
 
 bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDetector, uintptr_t current_input_id, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters = false);
 

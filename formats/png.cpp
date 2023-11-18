@@ -97,7 +97,7 @@ bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
 }
 
 std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tools, IStreamLike& input, OStreamLike& output, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
-  std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header) {
+  std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header, unsigned int recursion_depth) {
   std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>(&precomp_tools);
 
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
@@ -137,8 +137,8 @@ std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tool
       result->inc_last_hdr_byte = true;
     }
     else {
-      precomp_tools.add_ignore_offset(D_RAW, deflate_stream_original_pos - 2);
-      precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_original_pos);
+      precomp_tools.add_ignore_offset(D_RAW, deflate_stream_original_pos - 2, recursion_depth);
+      precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_original_pos, recursion_depth);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
@@ -147,7 +147,7 @@ std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tool
 
 std::unique_ptr<precompression_result>
 PngFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> checkbuf,
-                                         long long original_input_pos, const Switches &precomp_switches) {
+                                         long long original_input_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   // space for length and crc parts of IDAT chunks
   std::vector<unsigned int> idat_lengths {};
   idat_lengths.reserve(100 * sizeof(unsigned int));
@@ -279,7 +279,7 @@ PngFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
     png_input_deflate_stream_pos = 0;
   }
 
-  auto result = try_decompression_png(*precomp_tools, input, output, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header);
+  auto result = try_decompression_png(*precomp_tools, input, output, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header, recursion_depth);
 
   if (result->format == D_MULTIPNG) {
     result->original_size_extra = 6;  // add header length to the deflate stream size for full input size

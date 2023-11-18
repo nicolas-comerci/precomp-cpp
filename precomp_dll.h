@@ -128,14 +128,14 @@ public:
   std::function<std::string(const std::string& name, bool append_tag)> get_tempfile_name;
   std::function<void(std::string)> increase_detected_count;
   std::function<void(std::string)> increase_precompressed_count;
-  std::function<void(SupportedFormats, long long)> add_ignore_offset;
+  std::function<void(SupportedFormats, long long, unsigned int)> add_ignore_offset;
 
   Tools(
     std::function<void()>&& _progress_callback,
     std::function<std::string(const std::string& name, bool append_tag)>&& _get_tempfile_name,
     std::function<void(std::string)>&& _increase_detected_count,
     std::function<void(std::string)>&& _increase_precompressed_count,
-    std::function<void(SupportedFormats, long long)>&& _add_ignore_offset
+    std::function<void(SupportedFormats, long long, unsigned int)>&& _add_ignore_offset
   ) :
     progress_callback(std::move(_progress_callback)),
     get_tempfile_name(std::move(_get_tempfile_name)),
@@ -206,7 +206,7 @@ public:
     // You should however if possible not output anything to the output stream directly or otherwise mess with the Precomp instance or current context unless strictly necessary,
     // ideally the format handler should just read from the context's input stream, precompress the data, and return a precompression_result, without touching much else.
     virtual std::unique_ptr<precompression_result>
-    attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer, long long input_stream_pos, const Switches &precomp_switches) = 0;
+    attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer, long long input_stream_pos, const Switches &precomp_switches, unsigned int recursion_depth) = 0;
 
     virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
     // recompress method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
@@ -568,12 +568,11 @@ public:
   void init_format_handlers(bool is_recompressing = false);
   const std::vector<std::unique_ptr<PrecompFormatHandler>>& get_format_handlers() const;
   const std::vector<std::unique_ptr<PrecompFormatHandler2>>& get_format_handlers2() const;
-  bool is_format_handler_active(SupportedFormats format_id) const;
+  bool is_format_handler_active(SupportedFormats format_id, unsigned int recursion_depth) const;
 
   // Ignore offsets can be set for any Format handler, so that if for example, we failed to precompress a deflate stream inside a ZIP file, we don't attempt to precompress
   // it again, which is destined to fail, by using the intense mode (ZLIB) format handler.
   std::vector<std::array<std::queue<long long>, 256>> ignore_offsets { {} };  // 256 is at least for now the maximum possible amount of format handlers, will most likely be enough for a while
-  int recursion_depth = 0;
   
 };
 

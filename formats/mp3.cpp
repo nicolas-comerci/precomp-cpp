@@ -240,7 +240,7 @@ bool is_valid_mp3_frame(unsigned char* frame_data, unsigned char header2, unsign
 
 std::unique_ptr<precompression_result>
 Mp3FormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output, std::span<unsigned char> buffer,
-                                         long long input_stream_pos, const Switches &precomp_switches) {
+                                         long long input_stream_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
   mp3_suppression_vars suppression;
   int mpeg = -1;
   int layer = -1;

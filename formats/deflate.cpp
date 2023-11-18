@@ -273,7 +273,7 @@ void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stre
 }
 
 void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, IStreamLike& input, OStreamLike& output, SupportedFormats type,
-  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename) {
+  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename, unsigned int recursion_depth) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
@@ -316,8 +316,8 @@ void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_resul
       result->rdres = std::move(rdres);
     }
     else {
-      if (type == D_SWF) precomp_tools.add_ignore_offset(D_RAW, deflate_stream_pos - 2);
-      if (type != D_BRUTE) precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_pos);
+      if (type == D_SWF) precomp_tools.add_ignore_offset(D_RAW, deflate_stream_pos - 2, recursion_depth);
+      if (type != D_BRUTE) precomp_tools.add_ignore_offset(D_BRUTE, deflate_stream_pos, recursion_depth);
       print_to_log(PRECOMP_DEBUG_LOG, "No matches\n");
     }
   }
