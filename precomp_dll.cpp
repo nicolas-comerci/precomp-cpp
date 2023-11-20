@@ -882,18 +882,103 @@ int compress_file(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_leng
   return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, input_length, output, recursion_depth); });
 }
 
-class RecursionPasstroughStream : public PasstroughStream {
-  int recompression_code;
-public:
-  explicit RecursionPasstroughStream(IStreamLike& input,
-    OStreamLike& output,
-    Tools& precomp_tools,
-    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
-    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2);
-  ~RecursionPasstroughStream() override = default;
+class RecursionPasstroughStream: public PrecompPcfRecompressor, public IStreamLike {
+  std::vector<std::byte> in_buf;
+  std::vector<std::byte> out_buf;
+  std::unique_ptr<IStreamLike> input;
 
-  int get_recursion_return_code(bool throw_on_failure = true);
+  PrecompProcessorReturnCode processor_return = PP_OK;
+  std::vector<std::byte> output_pending_data;
+
+  uint64_t pos = 0;
+  uint64_t _gcount = 0;
+
+public:
+  explicit RecursionPasstroughStream(
+    Tools& precomp_tools,
+    std::unique_ptr<IStreamLike>&& _input,
+    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2)
+    : PrecompPcfRecompressor(precomp_tools, format_handlers, format_handlers2), input(std::move(_input))
+  {
+    in_buf.resize(CHUNK);
+    out_buf.resize(CHUNK);
+    next_in = in_buf.data();
+    avail_in = 0;
+    next_out = out_buf.data();
+    avail_out = CHUNK;
+  }
+
+  RecursionPasstroughStream& read(char* buff, std::streamsize count) override {
+    auto remainingCount = count;
+    auto currentBuffPos = buff;
+    bool reached_eof = false;
+
+    while (remainingCount > 0) {
+      // there is some remaining output data on the buffer, get it from there
+      if (!output_pending_data.empty()) {
+        const auto to_read = std::min<std::streamsize>(output_pending_data.size(), remainingCount);
+        std::copy_n(reinterpret_cast<char*>(output_pending_data.data()), to_read, currentBuffPos);
+        currentBuffPos += to_read;
+        remainingCount -= to_read;
+        // TODO: This incurs reallocation, find a better way?
+        output_pending_data.erase(output_pending_data.begin(), output_pending_data.begin() + to_read);
+      }
+      // no more output data available, need to process to get more
+      else {
+        // Processor already finished or error'd out, can't process anymore 
+        if (processor_return != PP_OK) break;
+        const auto [read_amt, gcount] = fill_processor_input_buffer(*this, in_buf, *input);
+        if (input->bad()) break;
+
+        //const auto avail_in_before_process = avail_in;
+        processor_return = this->process(reached_eof);
+        if (processor_return != PP_OK && processor_return != PP_STREAM_END) break;
+
+        const uint32_t decompressed_chunk_size = CHUNK - avail_out;
+        const bool is_last_block = processor_return == PP_STREAM_END;
+        if (is_last_block || decompressed_chunk_size == CHUNK) {
+          output_pending_data.insert(output_pending_data.end(), out_buf.data(), out_buf.data() + decompressed_chunk_size);
+
+          // All outputted data handled by output_callback, reset processor's output so we can get another chunk
+          next_out = out_buf.data();
+          avail_out = CHUNK;
+        }
+
+        //if (processor_return == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+
+        if (read_amt > 0 && gcount == 0 && decompressed_chunk_size < CHUNK) {
+          // No more data will ever come, and we already flushed all the output data processed, notify processor so it can finish
+          reached_eof = true;
+        }
+      }
+    }
+    _gcount = count - remainingCount;
+    pos += _gcount;
+    return *this;
+  }
+
+  std::istream::int_type get() override {
+    char buf[1];
+    read(buf, 1);
+    return _gcount == 1 ? buf[0] : EOF;
+  }
+
+  std::streamsize gcount() override {
+    return _gcount;
+  }
+  std::istream::pos_type tellg() override { return pos; }
+
+  IStreamLike& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    throw std::runtime_error("CAN'T SEEK ON RecursionPasstroughStream");
+  }
+
+  bool eof() override { return processor_return != PP_OK; }
+  bool bad() override { return processor_return == PP_ERROR; }
+  bool good() override { return !bad(); }
+  void clear() override { processor_return = PP_OK; } // doubt this is ever useful, maybe should just throw an exception
 };
+
 std::unique_ptr<RecursionPasstroughStream> recursion_decompress(IStreamLike& input,
   OStreamLike& output,
   Tools& precomp_tools,
@@ -1059,7 +1144,7 @@ int decompress_file_impl(
             }
 
             if (format_hdr_data->recursion_data_size > 0) {
-              recurse_passthrough_input->get_recursion_return_code();
+              //recurse_passthrough_input->get_recursion_return_code();
             }
             handlerFound = true;
             break;
@@ -1085,7 +1170,7 @@ int decompress_file_impl(
             if (format_hdr_data->recursion_data_size > 0) {
               auto recurse_passthrough_input = recursion_decompress(input, *patched_ostream, precomp_tools, format_handlers, format_handlers2, format_hdr_data->recursion_data_size);
               formatHandler->recompress(*recurse_passthrough_input, *patched_output, *format_hdr_data, formatHandlerHeaderByte);
-              recurse_passthrough_input->get_recursion_return_code();
+              //recurse_passthrough_input->get_recursion_return_code();
             }
             else {
               formatHandler->recompress(input, *patched_output, *format_hdr_data, formatHandlerHeaderByte);
@@ -1271,23 +1356,6 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed
   return tmp_r;
 }
 
-
-RecursionPasstroughStream::RecursionPasstroughStream(IStreamLike& input,
-  OStreamLike& output,
-  Tools& precomp_tools,
-  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
-  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2)
-    : PasstroughStream([this, &input, &output, &precomp_tools, &format_handlers, &format_handlers2](OStreamLike& passthrough)
-      {
-        recompression_code = decompress_file(input, output, precomp_tools, format_handlers, format_handlers2);
-      }) {}
-
-int RecursionPasstroughStream::get_recursion_return_code(bool throw_on_failure) {
-    wait_thread_completed();
-    if (throw_on_failure && recompression_code != RETURN_SUCCESS) throw PrecompError(recompression_code);
-    return recompression_code;
-}
-
 std::unique_ptr<RecursionPasstroughStream> recursion_decompress(IStreamLike& input,
   OStreamLike& output,
   Tools& precomp_tools,
@@ -1301,8 +1369,7 @@ std::unique_ptr<RecursionPasstroughStream> recursion_decompress(IStreamLike& inp
   // We create a view of the recursion data from the input stream, this way the recursive call to decompress can work as if it were working with a copy of the data
   // on a temporary file, processing it from pos 0 to EOF, while actually only reading from original_pos to recursion_end_pos
   auto fin_view = std::make_unique<IStreamLikeView>(&input, recursion_end_pos);
-  std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(*fin_view, output, precomp_tools, format_handlers, format_handlers2);
-  passthrough->start_thread();
+  std::unique_ptr<RecursionPasstroughStream> passthrough = std::make_unique<RecursionPasstroughStream>(precomp_tools, std::move(fin_view), format_handlers, format_handlers2);
   return passthrough;
 }
 
