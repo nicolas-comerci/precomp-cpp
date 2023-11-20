@@ -256,7 +256,7 @@ public:
 
   // Precompressors are allowed to not drop any data at the start of the entire stream or block, not sure how you would make
   // that work, but didn't want to impose it as a restriction
-  virtual void dump_extra_stream_header_data(OStreamLike& output) {}
+  virtual void dump_extra_stream_header_data(OStreamLike& output) const {}
   virtual void dump_extra_block_header_data(OStreamLike& output) {}
 
   virtual void increase_detected_count() = 0;
@@ -308,11 +308,6 @@ protected:
       : _eof(false), mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
 
     ProcessorIStreamLike& read(char* buff, std::streamsize count) override {
-      if (force_eof) {
-        _eof = true;
-        _gcount = 0;
-        return *this;
-      }
       std::unique_lock lock(*mtx);
       auto remainingSize = count;
       auto currBufferPos = buff;
@@ -325,15 +320,17 @@ protected:
           remainingSize -= iterationSize;
           currBufferPos += iterationSize;
         }
-
-        if (force_eof) {
-          _eof = true;
-          _gcount = count - remainingSize;
-          _tellg += _gcount;
-          return *this;
-        }
+        
         // If we couldn't read all the data from our input buffer we need to block the thread until the consumer gives us more memory in
         if (remainingSize > 0) {
+          // No more data is coming, just return with was done so far
+          if (force_eof) {
+            _eof = true;
+            _gcount = count - remainingSize;
+            _tellg += _gcount;
+            return *this;
+          }
+
           data_needed_cv->notify_one();
           sleeping = true;
           data_available_cv.wait(lock);
@@ -375,10 +372,6 @@ protected:
       : mtx(_mtx), avail_out(_avail_out), next_out(_next_out), data_full_cv(_data_full_cv) {}
 
     ProcessorOStreamLike& write(const char* buf, std::streamsize count) override {
-      if (force_eof) {
-        _eof = true;
-        return *this;
-      }
       std::unique_lock lock(*mtx);
       auto remainingSize = count;
       auto currBufferPos = buf;
@@ -391,14 +384,16 @@ protected:
           remainingSize -= iterationSize;
           currBufferPos += iterationSize;
         }
-
-        if (force_eof) {
-          _eof = true;
-          _tellp += count - remainingSize;
-          return *this;
-        }
+        
         // If we couldn't write all the data to our output buffer we need to block the thread until the consumer takes that data and gives us more memory
         if (remainingSize > 0) {
+          // No more data is coming, just return with was done so far
+          if (force_eof) {
+            _eof = true;
+            _tellp += count - remainingSize;
+            return *this;
+          }
+
           data_full_cv->notify_one();
           sleeping = true;
           data_freed_cv.wait(lock);

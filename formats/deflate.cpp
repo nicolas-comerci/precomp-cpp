@@ -130,7 +130,7 @@ PrecompProcessorReturnCode DeflatePrecompressor::process(bool input_eof) {
   return preflate_processor->process(input_eof);
 }
 
-void DeflatePrecompressor::dump_extra_stream_header_data(OStreamLike& output) {
+void DeflatePrecompressor::dump_extra_stream_header_data(OStreamLike& output) const {
   fout_fput_vlint(output, 0);  // No Zlib header
 }
 void DeflatePrecompressor::dump_extra_block_header_data(OStreamLike& output) {

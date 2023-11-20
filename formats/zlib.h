@@ -14,7 +14,7 @@ public:
   DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches);
 
   PrecompProcessorReturnCode process(bool input_eof) override;
-  void dump_extra_stream_header_data(OStreamLike& output) override;
+  void dump_extra_stream_header_data(OStreamLike& output) const override;
   void dump_extra_block_header_data(OStreamLike& output) override;
 };
 

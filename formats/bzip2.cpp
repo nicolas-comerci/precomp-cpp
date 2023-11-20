@@ -67,7 +67,7 @@ public:
     return ret == BZ_OK ? PrecompProcessorReturnCode::PP_OK : PrecompProcessorReturnCode::PP_STREAM_END;
   }
 
-  void dump_extra_stream_header_data(OStreamLike& output) override {
+  void dump_extra_stream_header_data(OStreamLike& output) const override{
     output.put(compression_level);
   }
 

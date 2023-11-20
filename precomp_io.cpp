@@ -375,10 +375,6 @@ PrecompTmpFile::~PrecompTmpFile() {
   std::remove(file_path.c_str());
 }
 
-memiostream::membuf::membuf(std::vector<char>&& memvector_): memvector(std::move(memvector_)) {
-  this->setg(memvector.data(), memvector.data(), memvector.data() + memvector.size());
-  this->setp(memvector.data(), memvector.data() + memvector.size());
-}
 memiostream::membuf::membuf(std::vector<unsigned char>&& memvector_) : memvector_unsigned(std::move(memvector_)) {
   auto data_ptr = reinterpret_cast<char*>(memvector_unsigned.data());
   this->setg(data_ptr, data_ptr, data_ptr + memvector_unsigned.size());
@@ -426,10 +422,6 @@ std::streambuf::pos_type memiostream::membuf::seekpos(std::streambuf::pos_type s
 }
 
 memiostream::memiostream(membuf* buf): WrappedIOStream(buf), m_buf(std::unique_ptr<membuf>(buf)) {}
-std::unique_ptr<memiostream> memiostream::make(std::vector<char>&& memvector) {
-  auto membuf_ptr = new membuf(std::move(memvector));
-  return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
-}
 std::unique_ptr<memiostream> memiostream::make(std::vector<unsigned char>&& memvector) {
   auto membuf_ptr = new membuf(std::move(memvector));
   return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
@@ -474,9 +466,9 @@ bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiost
 
   // if we couldn't read as much as we wanted from the memstream we attempt to read more from the input stream and reattempt
   orig_input.seekg(cur_pos, std::ios_base::beg);
-  std::vector<char> new_read_data{};
+  std::vector<unsigned char> new_read_data{};
   new_read_data.resize(CHUNK);
-  orig_input.read(new_read_data.data(), CHUNK);
+  orig_input.read(reinterpret_cast<char*>(new_read_data.data()), CHUNK);
   auto read_amt = orig_input.gcount();
   if (read_amt < minimum_gcount) return false;
   if (read_amt < CHUNK) new_read_data.resize(read_amt);  // shrink to fit data, needed because memiostream relies on the vector's size
@@ -494,7 +486,7 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
 ) {
   std::unique_ptr<IStreamLike> temp_png;
   if (stream_size < max_memory_size) {  // File small enough, will use it from memory
-    std::vector<char> mem{};
+    std::vector<unsigned char> mem{};
     mem.resize(stream_size);
     auto mem_png = memiostream::make(std::move(mem));
     if (!checkbuf.empty() && stream_size < checkbuf.size()) {  // The whole file did fit the checkbuf, we can copy it from there

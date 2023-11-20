@@ -48,9 +48,9 @@ PrecompProcessorReturnCode DeflateWithHeaderPrecompressor::process(bool input_eo
   return retval;
 }
 
-void DeflateWithHeaderPrecompressor::dump_extra_stream_header_data(OStreamLike& output) {
+void DeflateWithHeaderPrecompressor::dump_extra_stream_header_data(OStreamLike& output) const {
   fout_fput_vlint(output, pre_deflate_header.size());
-  output.write(reinterpret_cast<char*>(pre_deflate_header.data()), pre_deflate_header.size() - 1);
+  output.write(reinterpret_cast<const char*>(pre_deflate_header.data()), pre_deflate_header.size() - 1);
   output.put(pre_deflate_header[pre_deflate_header.size() - 1] + 1);
 }
 void DeflateWithHeaderPrecompressor::dump_extra_block_header_data(OStreamLike& output) { return deflate_precompressor->dump_extra_block_header_data(output); }

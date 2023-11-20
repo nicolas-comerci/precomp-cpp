@@ -454,7 +454,6 @@ void write_header(Precomp& precomp_mgr) {
 }
 
 bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const std::unique_ptr<precompression_result>& result, long long& input_file_pos);
-bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos);
 struct recursion_result {
   bool success;
   std::string file_name;
@@ -462,6 +461,34 @@ struct recursion_result {
   std::unique_ptr<std::ifstream> frecurse = std::make_unique<std::ifstream>();
 };
 recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename, unsigned int recursion_depth);
+int decompress_file(
+  IStreamLike& input,
+  OStreamLike& output,
+  Tools& precomp_tools,
+  const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+  const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2
+);
+
+class PrecompPcfRecompressor : public ProcessorAdapter {
+public:
+  uint32_t avail_in = 0;
+  std::byte* next_in = nullptr;
+  uint32_t avail_out = 0;
+  std::byte* next_out = nullptr;
+
+  explicit PrecompPcfRecompressor(
+    Tools& precomp_tools,
+    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
+    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2) :
+    ProcessorAdapter(
+      &avail_in, &next_in, &avail_out, &next_out,
+      [&](IStreamLike& input, OStreamLike& output) -> bool
+      {
+        const auto result = decompress_file(input, output, precomp_tools, format_handlers, format_handlers2);
+        return result == RETURN_SUCCESS;
+      }
+    ) {}
+};
 
 int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output, unsigned int recursion_depth) {
   if (recursion_depth == 0) {
@@ -562,22 +589,81 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           //header_byte |= result->recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 };
           uint64_t blockCount = 0;
 
-          std::function output_chunk_callback = [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
-              precompressed_stream_size += current_chunk_size;
-              if (blockCount == 0) {
-                  // Output Precomp format header
-                  precompressed_tmp->put(static_cast<char>(header_byte));
-                  precompressed_tmp->put(formatTag);
-                  precompressor->dump_extra_stream_header_data(*precompressed_tmp);
-              }
-              blockCount += 1;
+          // For verification, we will run recompression and calculate SHA1 of recompressed data as we write each block.
+          // We can use that SHA1 at the end to compare against the input read data's SHA1 hash.
+          auto verify_recompressor = PrecompPcfRecompressor(precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
+          auto verify_sha1_ostream = Sha1Ostream();
+          std::vector<std::byte> verification_vec_in{};
+          std::vector<std::byte> verification_vec_out{};
+          verification_vec_out.resize(CHUNK);
 
-              // Block chunk header
-              precompressed_tmp->put(static_cast<char>(is_last_block ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
-              precompressor->dump_extra_block_header_data(*precompressed_tmp);
-              fout_fput_vlint(*precompressed_tmp, current_chunk_size);
-              precompressed_tmp->write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
-              return precompressed_tmp->bad() ? false : true;
+          static auto output_chunk = [](
+            PrecompFormatPrecompressor& precompressor, OStreamLike& output, uint32_t current_chunk_size, std::vector<std::byte>& out_buf,
+            uint64_t blockCount, std::byte header_byte, SupportedFormats formatTag, bool is_last_block
+          ) {
+            if (blockCount == 0) {
+              // Output Precomp format header
+              output.put(static_cast<char>(header_byte));
+              output.put(formatTag);
+              precompressor.dump_extra_stream_header_data(output);
+            }
+
+            // Block chunk header
+            output.put(static_cast<char>(is_last_block ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
+            precompressor.dump_extra_block_header_data(output);
+            fout_fput_vlint(output, current_chunk_size);
+            output.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
+          };
+
+          std::function output_chunk_callback = [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
+            precompressed_stream_size += current_chunk_size;
+
+            if (!precomp_mgr.switches.verify_precompressed) {
+              output_chunk(*precompressor, *precompressed_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
+              if (precompressed_tmp->bad()) return false;
+            }
+            else {
+              PrecompTmpFile chunk_tmp;
+              chunk_tmp.open(precomp_mgr.get_tempfile_name("verify_chunk"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+              output_chunk(*precompressor, chunk_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
+              const uint32_t written = chunk_tmp.tellp();
+              chunk_tmp.reopen();
+
+              verification_vec_in.resize(written);
+              chunk_tmp.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
+              chunk_tmp.close();
+
+              // Recompress using PrecompPcfRecompressor reading from verification_vec, dump output to verify_sha1_ostream
+              verify_recompressor.avail_in = written;
+              verify_recompressor.next_in = verification_vec_in.data();
+              verify_recompressor.avail_out = CHUNK;
+              verify_recompressor.next_out = verification_vec_out.data();
+              PrecompProcessorReturnCode verification_ret = PP_OK;
+              while (verification_ret == PP_OK) {
+                verification_ret = verify_recompressor.process(is_last_block);
+
+                // if there is any recompressed data we output it to verify_sha1_ostream
+                if (verify_recompressor.avail_out < CHUNK) {
+                  verify_sha1_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), CHUNK - verify_recompressor.avail_out);
+                  verify_recompressor.avail_out = CHUNK;
+                  verify_recompressor.next_out = verification_vec_out.data();
+                }
+                else if (verify_recompressor.avail_in == 0) {
+                  // all input consumed and yet no new data outputted, we are done with what can be done for recompression up to this chunk
+                  break;
+                }
+              }
+              if (verification_ret == PP_ERROR || verification_ret == PP_STREAM_END && !is_last_block) {
+                // something went wrong here
+                return false;
+              }
+
+              chunk_tmp.reopen();
+              fast_copy(chunk_tmp, *precompressed_tmp, written);
+              if (precompressed_tmp->bad()) return false;
+            }
+            blockCount += 1;
+            return true;
           };
 
           const auto [ret, _] = process_from_input_and_output_chunks(
@@ -587,6 +673,17 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           );
           // TODO: set reasonable lower limit for precompressed_stream_size
           if (ret == PP_ERROR || precompressed_stream_size <= 0) continue;
+
+          // If verification did run, check that the hashes of original data and recompressed data match
+          if (precomp_mgr.switches.verify_precompressed) {
+            const auto verified_sha1 = verify_sha1_ostream.get_digest();
+            input.seekg(input_file_pos, std::ios_base::beg);
+            auto original_data_view = IStreamLikeView(&input, precompressor->original_stream_size + input_file_pos);
+            const auto original_data_sha1 = calculate_sha1(original_data_view, 0);
+
+            const auto verification_success = original_data_sha1 == verified_sha1;
+            if (!verification_success) continue;
+          }
 
           precompressor->increase_detected_count();
 
@@ -603,21 +700,6 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           precompressed = std::move(precompressed_tmp);
         }
         catch (...) { continue; }  // TODO: print/record/report handler failed
-
-        // If verification is enabled, we attempt to recompress the stream right now, and reject it if anything fails or data doesn't match
-        // Note that this is done before recursion for 2 reasons:
-        //  1) why bother recursing a stream we might reject
-        //  2) verification would be much more complicated as we would need to prevent recursing on recompression which would lead to verifying some streams MANY times
-        if (precomp_mgr.switches.verify_precompressed) {
-          bool verification_success = false;
-          try {
-            verification_success = verify_precompressed_result2(precomp_mgr, input, precompressor->original_stream_size, precompressed, precompressed_stream_size, input_file_pos);
-          }
-          catch (...) {}  // TODO: print/record/report handler failed
-          if (!verification_success) continue;
-          // ensure that the precompressed stream is ready to read from the start, as if verification never happened
-          precompressed->seekg(0, std::ios_base::beg);
-        }
 
         precompressor->increase_precompressed_count();
         anything_was_used = true;
@@ -1103,27 +1185,6 @@ void print_to_terminal(const char* fmt, ...) {
   print_to_console(str);
 }
 
-class PrecompPcfRecompressor: public ProcessorAdapter {
-public:
-  uint32_t avail_in = 0;
-  std::byte* next_in = nullptr;
-  uint32_t avail_out = 0;
-  std::byte* next_out = nullptr;
-
-  explicit PrecompPcfRecompressor(
-    Tools& precomp_tools,
-    const std::vector<std::unique_ptr<PrecompFormatHandler>>& format_handlers,
-    const std::vector<std::unique_ptr<PrecompFormatHandler2>>& format_handlers2):
-      ProcessorAdapter(
-        &avail_in, &next_in, &avail_out, &next_out,
-        [&](IStreamLike& input, OStreamLike& output) -> bool
-        {
-          const auto result =  decompress_file(input, output, precomp_tools, format_handlers, format_handlers2);
-          return result == RETURN_SUCCESS;
-        }
-      ) {}
-};
-
 bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const std::unique_ptr<precompression_result>& result, long long& input_file_pos) {
     // Dump precompressed data including format headers
     // TODO: We should be able to use a PassthroughStream here to avoid having to dump a temporary file, I tried it and it failed, didn't want to spend more
@@ -1159,33 +1220,6 @@ bool verify_precompressed_result(Precomp& precomp_mgr, IStreamLike& input, const
 
     if (original_data_sha1 != recompressed_data_sha1) return false;
     return true;
-}
-
-bool verify_precompressed_result2(Precomp& precomp_mgr, IStreamLike& input, const uint64_t original_stream_size, const std::unique_ptr<IStreamLike>& tmp_file, std::streamsize precompressed_size, long long& input_file_pos) {
-  // Set it as the input on the context, we will do what amounts essentially to run Precomp -r on it as it's on its own pretty much
-  // a PCf file without the PCF header, if that makes sense));
-  auto input_verify_view = std::make_unique<IStreamLikeView>(tmp_file.get(), precompressed_size);
-
-  // Set output to a stream that calculates it's SHA1 sum without actually writing anything anywhere
-  auto sha1_ostream = Sha1Ostream();
-  auto output_verify_sha1 = std::make_unique<ObservableOStreamWrapper>(&sha1_ostream, false);
-
-  int verify_result = decompress_file(*input_verify_view, *output_verify_sha1, precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
-  if (verify_result != RETURN_SUCCESS) return false;
-
-  // Okay at this point we supposedly recompressed the input data successfully, verify data exactly matches original
-  auto recompressed_size = sha1_ostream.tellp();
-  auto recompressed_data_sha1 = sha1_ostream.get_digest();
-
-  // Validate that the recompressed_size is what we expect
-  if (recompressed_size != original_stream_size) return false;
-
-  input.seekg(input_file_pos, std::ios_base::beg);
-  auto original_data_view = IStreamLikeView(&input, recompressed_size + input_file_pos);
-  const auto original_data_sha1 = calculate_sha1(original_data_view, 0);
-
-  if (original_data_sha1 != recompressed_data_sha1) return false;
-  return true;
 }
 
 recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed_bytes, IStreamLike& tmpfile, std::string out_filename, unsigned int recursion_depth) {
