@@ -41,14 +41,18 @@ struct DeflateHistogramFalsePositiveDetector {
 	int prev_i;
 };
 
-recompress_deflate_result try_recompression_deflate(Tools& precomp_tools, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile);
+recompress_deflate_result try_recompression_deflate(Tools& precomp_tools, const Switches& precomp_switches, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile);
 
 void debug_deflate_detected(const recompress_deflate_result& rdres, const char* type, long long deflate_stream_pos);
 
 void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, const recompress_deflate_result& rdres);
 
-void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, IStreamLike& input, OStreamLike& output, SupportedFormats type,
-  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename, unsigned int recursion_depth);
+void try_decompression_deflate_type(
+  std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, const Switches& precomp_switches,
+  IStreamLike& input, OStreamLike& output, SupportedFormats type,
+  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname,
+  std::string tmp_filename, unsigned int recursion_depth
+);
 
 bool check_inflate_result(DeflateHistogramFalsePositiveDetector& falsePositiveDetector, uintptr_t current_input_id, const std::span<unsigned char> checkbuf_span, int windowbits, const long long deflate_stream_pos, bool use_brute_parameters = false);
 
@@ -73,7 +77,7 @@ public:
   recompress_deflate_result result{};
   size_t recon_data_written = 0;
 
-  explicit DeflatePrecompressor(Tools* _precomp_tools);
+  explicit DeflatePrecompressor(Tools* _precomp_tools, const Switches& precomp_switches);
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) override;
@@ -103,7 +107,7 @@ public:
 
 	bool quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) override;
 
-	std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) override;
+	std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) override;
 
 	std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike& input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) override;
 

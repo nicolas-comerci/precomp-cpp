@@ -43,7 +43,7 @@ ZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
 
   const auto deflate_stream_pos = input_stream_pos + header_length;  // skip ZIP header, get in position for deflate stream
 
-  try_decompression_deflate_type(result, *precomp_tools, input, output,
+  try_decompression_deflate_type(result, *precomp_tools, precomp_switches, input, output,
     D_ZIP, checkbuf + 4, header_length - 4, deflate_stream_pos, false, "in ZIP", precomp_tools->get_tempfile_name("decomp_zip", true), recursion_depth);
 
   result->original_size_extra += header_length;  // the deflate result only count the original deflate stream size, need to add the ZIP header size for full ZIP stream size

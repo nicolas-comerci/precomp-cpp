@@ -282,6 +282,11 @@ public:
   virtual void read_extra_block_header_data(IStreamLike& input) {}
 };
 
+/*
+ProcessorAdapter allows you to adapt an operation that has an IStreamLike input, and an OStreamLike output so that it has the "Processor" interface of having
+an next_in, avail_in, next_out, avail_out, ZLib/BZip2/etc style deal which we also use for our PrecompFormatPrecompressor and PrecompFormatRecompressor.
+This of course allows you to develop these Precomp processor in a much simpler way by just making such a function and then inheriting from this.
+ */
 class ProcessorAdapter {
 protected:
   class ProcessorIStreamLike : public IStreamLike {
@@ -367,7 +372,7 @@ protected:
     bool force_eof = false;
 
     explicit ProcessorOStreamLike(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
-      : mtx(_mtx), data_full_cv(_data_full_cv), avail_out(_avail_out), next_out(_next_out) {}
+      : mtx(_mtx), avail_out(_avail_out), next_out(_next_out), data_full_cv(_data_full_cv) {}
 
     ProcessorOStreamLike& write(const char* buf, std::streamsize count) override {
       if (force_eof) {
@@ -416,35 +421,28 @@ protected:
     void clear() override {};
   };
 
-  std::function<bool()> process_func;
+  std::function<bool(IStreamLike&, OStreamLike&)> process_func;
   std::thread execution_thread;
   bool started = false;
   bool success = false;
   bool finished = false;
   std::mutex mtx;
 
-  std::unique_ptr<ProcessorIStreamLike> input_stream;
-  std::unique_ptr<ProcessorOStreamLike> output_stream;
+  ProcessorIStreamLike input_stream;
+  ProcessorOStreamLike output_stream;
   std::condition_variable data_flush_needed_cv;
+
 public:
   bool force_input_eof = false;
 
-  ProcessorAdapter(
-    uint32_t* avail_in, std::byte** next_in,
-    uint32_t* avail_out, std::byte** next_out
-  ) {
-    input_stream = std::make_unique<ProcessorIStreamLike>(&mtx, &data_flush_needed_cv, avail_in, next_in);
-    output_stream = std::make_unique<ProcessorOStreamLike>(&mtx, &data_flush_needed_cv, avail_out, next_out);
-  }
-  ProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool()> process_func_)
-    : ProcessorAdapter(avail_in, next_in, avail_out, next_out) {
-    process_func = process_func_;
+  ProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool(IStreamLike&, OStreamLike&)> process_func_)
+    : process_func(std::move(process_func_)), input_stream(&mtx, &data_flush_needed_cv, avail_in, next_in), output_stream(&mtx, &data_flush_needed_cv, avail_out, next_out) {
   }
   virtual ~ProcessorAdapter() {
-    input_stream->force_eof = true;
-    output_stream->force_eof = true;
-    input_stream->data_available_cv.notify_all();
-    output_stream->data_freed_cv.notify_all();
+    input_stream.force_eof = true;
+    output_stream.force_eof = true;
+    input_stream.data_available_cv.notify_all();
+    output_stream.data_freed_cv.notify_all();
     if (execution_thread.joinable()) execution_thread.join();
   }
 
@@ -457,7 +455,7 @@ public:
     if (!started) {
       execution_thread = std::thread([&]() {
         try {
-          success = process_func();
+          success = process_func(input_stream, output_stream);
         }
         catch (...) {
           success = false;
@@ -468,12 +466,12 @@ public:
       started = true;
     }
     else {  // The thread was already started on a previous run of process() and got locked because it ran out of space on the in or out buffers
-      if (force_input_eof) { input_stream->force_eof = true; }
-      if (output_stream->sleeping) {
-        output_stream->data_freed_cv.notify_one();
+      if (force_input_eof) { input_stream.force_eof = true; }
+      if (output_stream.sleeping) {
+        output_stream.data_freed_cv.notify_one();
       }
       else {
-        input_stream->data_available_cv.notify_one();
+        input_stream.data_available_cv.notify_one();
       }
     }
 
@@ -506,7 +504,7 @@ public:
   // might have already seen part of the data on the buffer_chunk, like insane/brute deflate handlers that use an histogram to detect false positives.
   virtual bool quick_check(const std::span<unsigned char> buffer_chunk, uintptr_t current_input_id, const long long original_input_pos) = 0;
 
-  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) = 0;
+  virtual std::unique_ptr<PrecompFormatPrecompressor> make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) = 0;
 
   virtual std::unique_ptr<PrecompFormatHeaderData> read_format_header(IStreamLike& input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) = 0;
   // make_recompressor method is guaranteed to get the PrecompFormatHeaderData gotten from read_format_header(), so you can, and probably should, downcast to a derived class
@@ -586,5 +584,106 @@ void fout_fput32(OStreamLike& output, unsigned int v);
 void fout_fput_vlint(OStreamLike& output, unsigned long long v);
 
 std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_penalty(const std::function<void()>& progress_callback, IStreamLike& original, IStreamLike& candidate, long long original_size);
+
+template <class> inline constexpr bool is_smart_pointer_v = false;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::unique_ptr<_Ty>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::shared_ptr<_Ty>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::unique_ptr<_Ty const>> = true;
+template <class _Ty> inline constexpr bool is_smart_pointer_v<std::shared_ptr<_Ty const>> = true;
+// No volatile ones, don't expect we will run into those.
+
+// Moves any remaining data to the front of the buffer, reads from IStreamLike to fill the buffer, so the processor is ready to process() for another iteration
+// Returns a tuple [how much was missing on the buffer, how much it was actually read]
+template <typename T, typename R>
+[[nodiscard]] std::tuple<std::streamsize, std::streamsize> fill_processor_input_buffer(T& processor, std::vector<R>& in_buf, IStreamLike& input) {
+  static_assert(!std::is_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  static_assert(!is_smart_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
+  if (processor.avail_in > 0) {
+    // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
+    std::memmove(in_buf.data(), processor.next_in, processor.avail_in);
+  }
+  const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + processor.avail_in);
+  const std::streamsize read_amt = in_buf.size() - processor.avail_in;
+  std::streamsize gcount = 0;
+  if (read_amt > 0) {
+    input.read(in_buf_ptr, read_amt);
+    gcount = input.gcount();
+  }
+
+  processor.avail_in += gcount;
+  processor.next_in = in_buf.data();
+  return { read_amt, gcount };
+}
+
+/*
+Runs the whole processing with a processor, reading from an IStreamLike so you can then output chunks of a given size.
+Returns the last PrecompProcessorReturnCode so that you can know if it errored out midway or reached the end of the stream,
+and the size of input read.
+The actual output of chunks is left to you by running a callback, so you can customize it however you need.
+The output_callback assumes you are done with all avail_out data after it runs and loses it, so plan accordingly.
+The callback receives the actual size of the data available, a boolean indicating if its the last block of the stream,
+and has to return a success boolean, if return is false then the whole process is terminated with an error.
+*/
+template <typename T, typename R>
+[[nodiscard]] std::tuple<PrecompProcessorReturnCode, uint64_t> process_from_input_and_output_chunks(
+  T& processor, std::vector<R>& in_buf, IStreamLike& input, std::vector<R>& out_buf, uint32_t output_chunk_size, std::function<bool(std::vector<R>&, uint32_t, bool)> output_callback
+) {
+  static_assert(!std::is_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  static_assert(!is_smart_pointer_v<T>, "No processor pointers, dereference it yourself!");
+
+  in_buf.resize(CHUNK);
+  processor.next_in = in_buf.data();
+  processor.avail_in = 0;
+  out_buf.resize(output_chunk_size);
+  processor.next_out = out_buf.data();
+  processor.avail_out = output_chunk_size;
+
+  bool reached_eof = false;
+  auto ret = PP_OK;
+  uint64_t input_stream_size = 0;
+
+  while (true) {
+    const auto [read_amt, gcount] = fill_processor_input_buffer(processor, in_buf, input);
+    if (input.bad()) break;
+
+    const auto avail_in_before_process = processor.avail_in;
+    ret = processor.process(reached_eof);
+    if (ret != PP_OK && ret != PP_STREAM_END) break;
+    input_stream_size += (avail_in_before_process - processor.avail_in);
+
+    const uint32_t decompressed_chunk_size = output_chunk_size - processor.avail_out;
+    const bool is_last_block = ret == PP_STREAM_END;
+    if (is_last_block || decompressed_chunk_size == output_chunk_size) {
+      const bool output_success = output_callback(out_buf, decompressed_chunk_size, is_last_block);
+      if (!output_success) return { PP_ERROR, input_stream_size };
+
+      // All outputted data handled by output_callback, reset processor's output so we can get another chunk
+      processor.next_out = out_buf.data();
+      processor.avail_out = output_chunk_size;
+    }
+
+    if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
+
+    if (read_amt > 0 && gcount == 0 && decompressed_chunk_size < output_chunk_size) {
+      // No more data will ever come, and we already flushed all the output data processed, notify processor so it can finish
+      reached_eof = true;
+    }
+    // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
+  }
+  return { ret, input_stream_size };
+}
+// Convenience overload of process_from_input_and_output_chunks which allocates its own in_buf and out_buf
+template <typename T>
+[[nodiscard]] std::tuple<PrecompProcessorReturnCode, uint64_t> process_from_input_and_output_chunks(
+  T& processor, IStreamLike& input, std::function<bool(std::vector<std::byte>&, uint32_t, bool)> output_callback, uint32_t output_chunk_size = CHUNK
+) {
+  static_assert(!std::is_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  static_assert(!is_smart_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  std::vector<std::byte> out_buf{};  
+  std::vector<std::byte> in_buf{};
+
+  return process_from_input_and_output_chunks(processor, in_buf, input, out_buf, output_chunk_size, std::move(output_callback));
+}
 
 #endif // PRECOMP_DLL_H

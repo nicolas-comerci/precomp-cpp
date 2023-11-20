@@ -23,7 +23,7 @@ public:
 std::unique_ptr<precompression_result>
 GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
                                           std::span<unsigned char> checkbuf_span,
-                                          long long input_stream_pos, const Switches &precomp_switches, unsigned int recursion_depth) {
+                                          long long input_stream_pos, const Switches& precomp_switches, unsigned int recursion_depth) {
   auto checkbuf = checkbuf_span.data();
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
@@ -79,7 +79,7 @@ GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &outpu
   if (dont_compress) return std::unique_ptr<precompression_result>{};
 
   std::unique_ptr<deflate_precompression_result> result = std::make_unique<gzip_precompression_result>(precomp_tools);
-  try_decompression_deflate_type(result, *precomp_tools, input, output,
+  try_decompression_deflate_type(result, *precomp_tools, precomp_switches, input, output,
     D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
     "in GZIP", precomp_tools->get_tempfile_name("precomp_gzip", true), recursion_depth);
 

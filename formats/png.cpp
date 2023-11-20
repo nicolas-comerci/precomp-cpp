@@ -96,7 +96,7 @@ bool PngFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
   return memcmp(buffer.data() + 4, "IDAT", 4) == 0;
 }
 
-std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tools, IStreamLike& input, OStreamLike& output, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
+std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tools, const Switches& precomp_switches, IStreamLike& input, OStreamLike& output, IStreamLike& fpng, long long fpng_deflate_stream_pos, long long deflate_stream_original_pos, int idat_count,
   std::vector<unsigned int>& idat_lengths, std::vector<unsigned int>& idat_crcs, std::array<unsigned char, 2>& zlib_header, unsigned int recursion_depth) {
   std::unique_ptr<png_precompression_result> result = std::make_unique<png_precompression_result>(&precomp_tools);
 
@@ -104,7 +104,7 @@ std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tool
   tmpfile->open(precomp_tools.get_tempfile_name("precompressed_png", true), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, fpng, fpng_deflate_stream_pos, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, precomp_switches, fpng, fpng_deflate_stream_pos, *tmpfile);
 
   result->original_size = rdres.compressed_stream_size;
   result->precompressed_size = rdres.uncompressed_stream_size;
@@ -279,7 +279,7 @@ PngFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
     png_input_deflate_stream_pos = 0;
   }
 
-  auto result = try_decompression_png(*precomp_tools, input, output, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header, recursion_depth);
+  auto result = try_decompression_png(*precomp_tools, precomp_switches, input, output, *png_input, png_input_deflate_stream_pos, deflate_stream_pos, idat_count, idat_lengths, idat_crcs, zlib_header, recursion_depth);
 
   if (result->format == D_MULTIPNG) {
     result->original_size_extra = 6;  // add header length to the deflate stream size for full input size

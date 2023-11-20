@@ -76,7 +76,7 @@ private:
 };
 
 class PreflateProcessorAdapter : public ProcessorAdapter {
-protected:
+public:
   class ProcessorInputStream : public InputStream {
   private:
     IStreamLike* istream;
@@ -104,29 +104,24 @@ protected:
       return size;
     }
   };
-  
-public:
-  ProcessorInputStream preflate_input;
-  ProcessorOutStream preflate_output;
 
-  PreflateProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out)
-    : ProcessorAdapter(avail_in, next_in, avail_out, next_out), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
-  PreflateProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool()> process_func_)
-    : ProcessorAdapter(avail_in, next_in, avail_out, next_out, std::move(process_func_)), preflate_input(input_stream.get()), preflate_output(output_stream.get()) {}
+  PreflateProcessorAdapter(uint32_t* avail_in, std::byte** next_in, uint32_t* avail_out, std::byte** next_out, std::function<bool(IStreamLike&, OStreamLike&)> process_func_)
+    : ProcessorAdapter(avail_in, next_in, avail_out, next_out, std::move(process_func_)) {}
 };
 
-DeflatePrecompressor::DeflatePrecompressor(Tools* _precomp_tools):
+DeflatePrecompressor::DeflatePrecompressor(Tools* _precomp_tools, const Switches& precomp_switches):
   PrecompFormatPrecompressor(_precomp_tools),
   preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
-    [this]() -> bool {
+    [this, &precomp_switches](IStreamLike& input, OStreamLike& output) -> bool {
+      PreflateProcessorAdapter::ProcessorInputStream preflate_input { &input };
+      PreflateProcessorAdapter::ProcessorOutStream preflate_output { &output };
       result.accepted = preflate_decode(
-        preflate_processor->preflate_output,
+        preflate_output,
         result.recon_data,
         original_stream_size,
-        preflate_processor->preflate_input,
+        preflate_input,
         []() {},
-        // TODO: ACTUALLY USE THE METABLOCK PARAMETER
-        1 << 21
+        precomp_switches.preflate_meta_block_size
       );
       return result.accepted;
     })) {}
@@ -149,8 +144,10 @@ DeflateRecompressor::DeflateRecompressor(const DeflateFormatHeaderData& precomp_
   : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback),
   recon_data(const_cast<std::vector<unsigned char>*>(&precomp_hdr_data.rdres.recon_data)),
   preflate_processor(std::make_unique<PreflateProcessorAdapter>(&avail_in, &next_in, &avail_out, &next_out,
-    [this]() -> bool {
-      return preflate_reencode(preflate_processor->preflate_output, *recon_data, preflate_processor->preflate_input, progress_callback);
+    [this](IStreamLike& input, OStreamLike& output) -> bool {
+      PreflateProcessorAdapter::ProcessorInputStream preflate_input{ &input };
+      PreflateProcessorAdapter::ProcessorOutStream preflate_output{ &output };
+      return preflate_reencode(preflate_output, *recon_data, preflate_input, progress_callback);
     }
   )) {}
 
@@ -166,72 +163,27 @@ void DeflateRecompressor::read_extra_block_header_data(IStreamLike& input) {
 }
 
 template <class T>
-PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStreamLike& istream, OStreamLike& ostream, long long& input_stream_size, long long& processed_stream_size) {
-  PrecompProcessorReturnCode ret = PP_OK;
-  std::vector<std::byte> out_buf{};
-  out_buf.resize(CHUNK);
-  processor.next_out = out_buf.data();
-  processor.avail_out = CHUNK;
-  std::vector<std::byte> in_buf{};
-  in_buf.resize(CHUNK);
-  processor.next_in = in_buf.data();
-  processor.avail_in = 0;
-  bool reached_eof = false;
-  while (true) {
-    // There might be some data remaining on the in_buf from a previous iteration that wasn't consumed yet, we ensure we don't lose it
-    if (processor.avail_in > 0) {
-      // The remaining data at the end is moved to the start of the array and we will complete it up so that a full CHUNK of data is available for the iteration
-      std::memmove(in_buf.data(), processor.next_in, processor.avail_in);
-    }
-    const auto in_buf_ptr = reinterpret_cast<char*>(in_buf.data() + processor.avail_in);
-    const auto read_amt = CHUNK - processor.avail_in;
-    std::streamsize gcount = 0;
-    if (read_amt > 0) {
-      istream.read(in_buf_ptr, read_amt);
-      gcount = istream.gcount();
-    }
+PrecompProcessorReturnCode preflate_processor_full_process(T& processor, IStreamLike& istream, OStreamLike& ostream, long long& processed_stream_size) {
+  std::function output_chunk_callback =
+    [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
+      processed_stream_size += current_chunk_size;
+      ostream.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
+      return !ostream.bad();
+    };
 
-    processor.avail_in += gcount;
-    processor.next_in = in_buf.data();
-    if (istream.bad()) break;
-
-    const auto avail_in_before_process = processor.avail_in;
-    ret = processor.process(reached_eof);
-    if (ret != PP_OK && ret != PP_STREAM_END) break;
-
-    // This should mostly be for when the stream ends, we might have read extra data beyond the end of it, which will not have been consumed by the process
-    // and shouldn't be counted towards the stream's size
-    input_stream_size += (avail_in_before_process - processor.avail_in);
-
-    const auto decompressed_chunk_size = CHUNK - processor.avail_out;
-    processed_stream_size += decompressed_chunk_size;
-    ostream.write(reinterpret_cast<char*>(out_buf.data()), decompressed_chunk_size);
-
-    if (ostream.bad()) break;
-    if (ret == PP_STREAM_END) break;  // maybe we should also check fin for eof? we could support partial/broken BZip2 streams
-
-    if (read_amt > 0 && gcount == 0 && decompressed_chunk_size == 0) {
-      // No more data will ever come and we already flushed all the output data processed, notify processor so it can finish
-      reached_eof = true;
-    }
-    // TODO: What if I feed the processor a full CHUNK and it outputs nothing? Should we quit? Should processors be able to advertise a chunk size they need?
-
-    processor.next_out = out_buf.data();
-    processor.avail_out = CHUNK;
-  }
+  const auto [ret, _] = process_from_input_and_output_chunks(processor, istream, std::move(output_chunk_callback));
   return ret;
 }
 
-recompress_deflate_result try_recompression_deflate(Tools& precomp_tools, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
+recompress_deflate_result try_recompression_deflate(Tools& precomp_tools, const Switches& precomp_switches, IStreamLike& file, long long file_deflate_stream_pos, OStreamLike& tmpfile) {
   file.seekg(file_deflate_stream_pos, std::ios_base::beg);
 
-  auto precompressor = std::make_unique<DeflatePrecompressor>(&precomp_tools);
+  auto precompressor = std::make_unique<DeflatePrecompressor>(&precomp_tools, precomp_switches);
 
-  long long compressed_stream_size = 0;
   long long decompressed_stream_size = 0;
   bool partial_stream = false;
 
-  auto ret = preflate_processor_full_process(*precompressor, file, tmpfile, compressed_stream_size, decompressed_stream_size);
+  auto ret = preflate_processor_full_process(*precompressor, file, tmpfile, decompressed_stream_size);
 
   if (ret == PP_ERROR) {
     // something here I guess?
@@ -272,13 +224,17 @@ void debug_sums(IStreamLike& precompressed_input, OStreamLike& recompressed_stre
     sum_compressed, sum_uncompressed, sum_expansion, sum_recon, (uint64_t)precompressed_input.tellg(), (uint64_t)recompressed_stream.tellp());
 }
 
-void try_decompression_deflate_type(std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, IStreamLike& input, OStreamLike& output, SupportedFormats type,
-  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname, std::string tmp_filename, unsigned int recursion_depth) {
+void try_decompression_deflate_type(
+  std::unique_ptr<deflate_precompression_result>& result, Tools& precomp_tools, const Switches& precomp_switches,
+  IStreamLike& input, OStreamLike& output, SupportedFormats type,
+  const unsigned char* hdr, const unsigned int hdr_length, long long deflate_stream_pos, const bool inc_last, const char* debugname,
+  std::string tmp_filename, unsigned int recursion_depth
+) {
   std::unique_ptr<PrecompTmpFile> tmpfile = std::make_unique<PrecompTmpFile>();
   tmpfile->open(tmp_filename, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
 
   // try to decompress at current position
-  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, input, deflate_stream_pos, *tmpfile);
+  recompress_deflate_result rdres = try_recompression_deflate(precomp_tools, precomp_switches, input, deflate_stream_pos, *tmpfile);
   tmpfile->close();
 
   if (rdres.uncompressed_stream_size > 0) { // seems to be a zLib-Stream
@@ -441,14 +397,13 @@ bool DeflateFormatHandler::quick_check(const std::span<unsigned char> buffer, ui
 }
 
 bool try_reconstructing_deflate(IStreamLike& fin, OStreamLike& fout, const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& progress_callback) {
-  long long precompressed_stream_size = 0;
   long long recompressed_stream_size = 0;
   auto recompressor = std::make_unique<DeflateRecompressor>(precomp_hdr_data, progress_callback);
   
   auto input_pos_before = fin.tellg();
   // Limit the input stream to the streams known size
   auto original_data_view = IStreamLikeView(&fin, input_pos_before + precomp_hdr_data.rdres.uncompressed_stream_size);
-  auto retval = preflate_processor_full_process(*recompressor, original_data_view, fout, precompressed_stream_size, recompressed_stream_size);
+  auto retval = preflate_processor_full_process(*recompressor, original_data_view, fout, recompressed_stream_size);
 
   return retval == PP_STREAM_END;
 }
@@ -549,8 +504,8 @@ void recompress_deflate(IStreamLike& precompressed_input, OStreamLike& recompres
   }
 }
 
-std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) {
-  return std::make_unique<DeflatePrecompressor>(&precomp_tools);
+std::unique_ptr<PrecompFormatPrecompressor> DeflateFormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {
+  return std::make_unique<DeflatePrecompressor>(&precomp_tools, precomp_switches);
 }
 
 std::unique_ptr<PrecompFormatRecompressor> DeflateFormatHandler::make_recompressor(PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format, const Tools& tools) {

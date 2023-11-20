@@ -215,7 +215,7 @@ int def_part_bzip2(IStreamLike& source, OStreamLike& dest, int level, unsigned l
   return BZ_OK;
 }
 
-std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) {
+std::unique_ptr<PrecompFormatPrecompressor> BZip2FormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {
   return std::make_unique<Bzip2Decompressor>(buffer, &precomp_tools);
 }
 

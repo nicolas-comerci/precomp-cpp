@@ -14,8 +14,8 @@ class SwfPrecompressor: public DeflateWithHeaderPrecompressor {
   std::array<unsigned char, 3> cws{ 'C', 'W', 'S' };
   unsigned int cws_bytes_skipped = 0;
 public:
-  SwfPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools) :
-    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _precomp_tools) {}
+  SwfPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches) :
+    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _precomp_tools, precomp_switches) {}
 
   PrecompProcessorReturnCode process(bool input_eof) override {
     while (cws_bytes_skipped < cws.size() && avail_in > 0) {
@@ -33,10 +33,10 @@ public:
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("SWF"); }
 };
 
-std::unique_ptr<PrecompFormatPrecompressor> SwfFormatHandler::make_precompressor(Tools& precomp_tools, const std::span<unsigned char>& buffer) {
+std::unique_ptr<PrecompFormatPrecompressor> SwfFormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {
   return std::make_unique<SwfPrecompressor>(
     std::vector(buffer.data() + 3, buffer.data() + 10),
-    &precomp_tools);
+    &precomp_tools, precomp_switches);
 }
 
 void SwfFormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData &precomp_hdr_data) {
