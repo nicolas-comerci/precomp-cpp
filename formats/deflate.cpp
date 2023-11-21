@@ -490,6 +490,7 @@ void DeflateFormatHeaderData::read_data(IStreamLike& precompressed_input, std::b
   fin_fget_deflate_rec(precompressed_input, rdres, precomp_hdr_flags, stream_hdr, hdr_length, inc_last_hdr_byte);
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     recursion_data_size = fin_fget_vlint(precompressed_input);
+    recursion_used = true;
   }
 }
 

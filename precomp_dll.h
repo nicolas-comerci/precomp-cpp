@@ -117,6 +117,7 @@ public:
   unsigned long long original_size = 0;
   unsigned long long precompressed_size = 0;
   unsigned long long recursion_data_size = 0;
+  bool recursion_used = false;
 };
 
 

@@ -401,6 +401,7 @@ std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header
 
   if ((precomp_hdr_flags & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 }) {
     fmt_hdr->recursion_data_size = fin_fget_vlint(input);
+    fmt_hdr->recursion_used = true;
   }
   
   return fmt_hdr;
@@ -417,8 +418,8 @@ void Base64FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLi
   print_to_log(PRECOMP_DEBUG_LOG, "Decompressed data - Base64\n");
   auto& precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
 
-  if (precomp_b64_hdr_data.recursion_data_size > 0) {
-    print_to_log(PRECOMP_DEBUG_LOG, "Recursion data length: %lli\n", precomp_b64_hdr_data.recursion_data_size);
+  if (precomp_b64_hdr_data.recursion_used) {
+    print_to_log(PRECOMP_DEBUG_LOG, "Recursion used for BZip2 stream\n");
   }
   else {
     print_to_log(PRECOMP_DEBUG_LOG, "Encoded length: %lli - decoded length: %lli\n", precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);

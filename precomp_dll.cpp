@@ -623,6 +623,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
               if (precompressed_tmp->bad()) return false;
             }
             else {
+              // TODO: Change this chunk_tmp to a memiostream or similar so we don't need to copy to a file
               PrecompTmpFile chunk_tmp;
               chunk_tmp.open(precomp_mgr.get_tempfile_name("verify_chunk"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
               output_chunk(*precompressor, chunk_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
@@ -854,6 +855,9 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
   // Dump any trailing uncompressed data in case nothing was detected at the end of the stream
   end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
 
+  // Stream end marker
+  output.put(0xFF);
+
   // TODO: maybe we should just make sure the whole last context gets destroyed if at recursion_depth == 0?
   if (recursion_depth == 0) precomp_mgr.fout = nullptr; // To close the outfile
 
@@ -1064,6 +1068,9 @@ int decompress_file_impl(
       fast_copy(input, output, uncompressed_data_length);
   
     }
+    else if (header1 == std::byte{ 0xFF }) { // stream finish marker
+      break;
+    }
     else { // decompressed data, recompress
       const unsigned char headertype = input.get();
   
@@ -1071,7 +1078,7 @@ int decompress_file_impl(
         for (const auto& formatHandlerHeaderByte : formatHandler->get_header_bytes()) {
           if (headertype == formatHandlerHeaderByte) {
             auto format_hdr_data = formatHandler->read_format_header(input, header1, formatHandlerHeaderByte);
-              formatHandler->write_pre_recursion_data(output, *format_hdr_data);
+            formatHandler->write_pre_recursion_data(output, *format_hdr_data);
 
             OStreamLike* patched_output = &output;
             // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
@@ -1083,7 +1090,7 @@ int decompress_file_impl(
 
             IStreamLike* precompressed_input = &input;
             std::unique_ptr<RecursionPasstroughStream> recurse_passthrough_input;
-            if (format_hdr_data->recursion_data_size > 0) {
+            if (format_hdr_data->recursion_used) {
               recurse_passthrough_input = recursion_decompress(input, *patched_ostream, precomp_tools, format_handlers, format_handlers2, format_hdr_data->recursion_data_size);
               precompressed_input = recurse_passthrough_input.get();
             }
@@ -1143,7 +1150,7 @@ int decompress_file_impl(
               if (last_block) break;
             }
 
-            if (format_hdr_data->recursion_data_size > 0) {
+            if (format_hdr_data->recursion_used) {
               //recurse_passthrough_input->get_recursion_return_code();
             }
             handlerFound = true;
@@ -1167,7 +1174,7 @@ int decompress_file_impl(
               patched_output = patched_ostream.get();
             }
 
-            if (format_hdr_data->recursion_data_size > 0) {
+            if (format_hdr_data->recursion_used) {
               auto recurse_passthrough_input = recursion_decompress(input, *patched_ostream, precomp_tools, format_handlers, format_handlers2, format_hdr_data->recursion_data_size);
               formatHandler->recompress(*recurse_passthrough_input, *patched_output, *format_hdr_data, formatHandlerHeaderByte);
               //recurse_passthrough_input->get_recursion_return_code();
