@@ -615,6 +615,8 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             output.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
           };
 
+          uint64_t already_verified_bytes = 0;
+
           std::function output_chunk_callback = [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
             precompressed_stream_size += current_chunk_size;
 
@@ -645,7 +647,32 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
                 // if there is any recompressed data we output it to verify_sha1_ostream
                 if (verify_recompressor.avail_out < CHUNK) {
-                  verify_sha1_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), CHUNK - verify_recompressor.avail_out);
+                  const auto recompressed_block_amount = CHUNK - verify_recompressor.avail_out;
+                  verify_sha1_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), recompressed_block_amount);
+                  verify_recompressor.avail_out = CHUNK;
+                  verify_recompressor.next_out = verification_vec_out.data();
+                  
+                  // Check hash of recompressed data by reseeking on input to get the same data and calculate the hash
+                  const auto saved_pos = input.tellg();
+                  input.seekg(input_file_pos + already_verified_bytes, std::ios_base::beg);
+                  auto original_sha1_block_ostream = Sha1Ostream();
+                  std::vector<char> original_block_data{};
+                  original_block_data.resize(recompressed_block_amount);
+                  input.read(original_block_data.data(), recompressed_block_amount);
+                  original_sha1_block_ostream.write(original_block_data.data(), recompressed_block_amount);
+                  const auto original_data_sha1 = original_sha1_block_ostream.get_digest();
+
+                  auto verify_sha1_block_ostream = Sha1Ostream();
+                  verify_sha1_block_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), recompressed_block_amount);
+                  const auto verified_data_sha1 = verify_sha1_block_ostream.get_digest();
+
+                  // restore input to its previous pos to not interfere with the Processor
+                  input.seekg(saved_pos, std::ios_base::beg);
+                  if (original_data_sha1 != verified_data_sha1) {
+                    return false;
+                  }
+                  already_verified_bytes += recompressed_block_amount;
+
                   verify_recompressor.avail_out = CHUNK;
                   verify_recompressor.next_out = verification_vec_out.data();
                 }
@@ -673,7 +700,10 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             precompressor_out_buf, output_chunk_size, std::move(output_chunk_callback)
           );
           // TODO: set reasonable lower limit for precompressed_stream_size
-          if (ret == PP_ERROR || precompressed_stream_size <= 0) continue;
+          if (ret == PP_ERROR || precompressed_stream_size <= 0) {
+            input.seekg(input_file_pos, std::ios_base::beg);
+            continue;
+          }
 
           // If verification did run, check that the hashes of original data and recompressed data match
           if (precomp_mgr.switches.verify_precompressed) {
@@ -1414,9 +1444,11 @@ long long fin_fget_vlint(IStreamLike& input) {
   unsigned char c;
   long long v = 0, o = 0, s = 0;
   while ((c = input.get()) >= 128) {
+    if (input.bad()) break;
     v += (((long long)(c & 127)) << s);
     s += 7;
     o = (o + 1) << 7;
+    if (input.eof()) break;
   }
   return v + o + (((long long)c) << s);
 }

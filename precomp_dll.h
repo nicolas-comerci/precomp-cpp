@@ -303,16 +303,25 @@ protected:
   public:
     std::condition_variable data_available_cv;
     bool sleeping = false;
+    // Difference here is force_eof will continue to consume anything it can from the buffer before returning, but
+    // force_kill will quit as soon as possible even if there is remaining data available.
+    bool force_kill = false;
     bool force_eof = false;
 
     explicit ProcessorIStreamLike(std::mutex* _mtx, std::condition_variable* _data_needed_cv, uint32_t* _avail_in, std::byte** _next_in)
-      : _eof(false), mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
+      : mtx(_mtx), data_needed_cv(_data_needed_cv), avail_in(_avail_in), next_in(_next_in) {}
 
     ProcessorIStreamLike& read(char* buff, std::streamsize count) override {
       std::unique_lock lock(*mtx);
       auto remainingSize = count;
       auto currBufferPos = buff;
       while (remainingSize > 0) {
+        if (force_kill) {
+          _eof = true;
+          _gcount = count - remainingSize;
+          _tellg += _gcount;
+          return *this;
+        }
         const auto iterationSize = std::min<uint64_t>(*avail_in, remainingSize);
         if (iterationSize > 0) {
           std::copy_n(reinterpret_cast<unsigned char*>(*next_in), iterationSize, currBufferPos);
@@ -325,7 +334,7 @@ protected:
         // If we couldn't read all the data from our input buffer we need to block the thread until the consumer gives us more memory in
         if (remainingSize > 0) {
           // No more data is coming, just return with was done so far
-          if (force_eof) {
+          if (force_kill || force_eof) {
             _eof = true;
             _gcount = count - remainingSize;
             _tellg += _gcount;
@@ -350,10 +359,10 @@ protected:
 
     std::streamsize gcount() override { return _gcount; }
     std::istream::pos_type tellg() override { return _tellg; }
-    bool eof() override { return _eof; };
-    bool good() override { return !eof(); };
+    bool eof() override { return _eof; }
+    bool good() override { return !eof(); }
     bool bad() override { return false; }
-    void clear() override {};
+    void clear() override {}
   };
 
   class ProcessorOStreamLike : public OStreamLike {
@@ -367,6 +376,9 @@ protected:
   public:
     std::condition_variable data_freed_cv;
     bool sleeping = false;
+    // Difference here is force_eof will continue to consume anything it can from the buffer before returning, but
+    // force_kill will quit as soon as possible even if there is remaining data available.
+    bool force_kill = false;
     bool force_eof = false;
 
     explicit ProcessorOStreamLike(std::mutex* _mtx, std::condition_variable* _data_full_cv, uint32_t* _avail_out, std::byte** _next_out)
@@ -377,6 +389,11 @@ protected:
       auto remainingSize = count;
       auto currBufferPos = buf;
       while (remainingSize > 0) {
+        if (force_kill || force_eof) {
+          _eof = true;
+          _tellp += count - remainingSize;
+          return *this;
+        }
         const auto iterationSize = std::min<uint64_t>(*avail_out, remainingSize);
         if (iterationSize > 0) {
           std::copy_n(currBufferPos, iterationSize, reinterpret_cast<unsigned char*>(*next_out));
@@ -389,7 +406,7 @@ protected:
         // If we couldn't write all the data to our output buffer we need to block the thread until the consumer takes that data and gives us more memory
         if (remainingSize > 0) {
           // No more data is coming, just return with was done so far
-          if (force_eof) {
+          if (force_kill || force_eof) {
             _eof = true;
             _tellp += count - remainingSize;
             return *this;
@@ -411,10 +428,10 @@ protected:
       throw std::runtime_error("SEEK NOT ALLOWED ON ProcessorOStreamLike");
     }
 
-    bool eof() override { return _eof; };
-    bool good() override { return !eof(); };
+    bool eof() override { return _eof; }
+    bool good() override { return !eof(); }
     bool bad() override { return false; }
-    void clear() override {};
+    void clear() override {}
   };
 
   std::function<bool(IStreamLike&, OStreamLike&)> process_func;
@@ -435,7 +452,9 @@ public:
     : process_func(std::move(process_func_)), input_stream(&mtx, &data_flush_needed_cv, avail_in, next_in), output_stream(&mtx, &data_flush_needed_cv, avail_out, next_out) {
   }
   virtual ~ProcessorAdapter() {
+    input_stream.force_kill = true;
     input_stream.force_eof = true;
+    output_stream.force_kill = true;
     output_stream.force_eof = true;
     input_stream.data_available_cv.notify_all();
     output_stream.data_freed_cv.notify_all();
