@@ -592,10 +592,10 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           // For verification, we will run recompression and calculate SHA1 of recompressed data as we write each block.
           // We can use that SHA1 at the end to compare against the input read data's SHA1 hash.
           auto verify_recompressor = PrecompPcfRecompressor(precomp_mgr.format_handler_tools, precomp_mgr.get_format_handlers(), precomp_mgr.get_format_handlers2());
-          auto verify_sha1_ostream = Sha1Ostream();
           std::vector<std::byte> verification_vec_in{};
           std::vector<std::byte> verification_vec_out{};
           verification_vec_out.resize(CHUNK);
+          std::vector<char> original_block_data{};
 
           static auto output_chunk = [](
             PrecompFormatPrecompressor& precompressor, OStreamLike& output, uint32_t current_chunk_size, std::vector<std::byte>& out_buf,
@@ -625,6 +625,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
               if (precompressed_tmp->bad()) return false;
             }
             else {
+              // Output the chunk and verify it's data against the original input
               // TODO: Change this chunk_tmp to a memiostream or similar so we don't need to copy to a file
               PrecompTmpFile chunk_tmp;
               chunk_tmp.open(precomp_mgr.get_tempfile_name("verify_chunk"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -647,18 +648,17 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
                 // if there is any recompressed data we output it to verify_sha1_ostream
                 if (verify_recompressor.avail_out < CHUNK) {
+                  // Check how much was actually outputted from the recompressor and reset the output buffer for next iteration
                   const auto recompressed_block_amount = CHUNK - verify_recompressor.avail_out;
-                  verify_sha1_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), recompressed_block_amount);
                   verify_recompressor.avail_out = CHUNK;
                   verify_recompressor.next_out = verification_vec_out.data();
                   
                   // Check hash of recompressed data by reseeking on input to get the same data and calculate the hash
                   const auto saved_pos = input.tellg();
                   input.seekg(input_file_pos + already_verified_bytes, std::ios_base::beg);
-                  auto original_sha1_block_ostream = Sha1Ostream();
-                  std::vector<char> original_block_data{};
                   original_block_data.resize(recompressed_block_amount);
                   input.read(original_block_data.data(), recompressed_block_amount);
+                  auto original_sha1_block_ostream = Sha1Ostream();
                   original_sha1_block_ostream.write(original_block_data.data(), recompressed_block_amount);
                   const auto original_data_sha1 = original_sha1_block_ostream.get_digest();
 
@@ -672,9 +672,6 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
                     return false;
                   }
                   already_verified_bytes += recompressed_block_amount;
-
-                  verify_recompressor.avail_out = CHUNK;
-                  verify_recompressor.next_out = verification_vec_out.data();
                 }
                 else if (verify_recompressor.avail_in == 0) {
                   // all input consumed and yet no new data outputted, we are done with what can be done for recompression up to this chunk
@@ -703,17 +700,6 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           if (ret == PP_ERROR || precompressed_stream_size <= 0) {
             input.seekg(input_file_pos, std::ios_base::beg);
             continue;
-          }
-
-          // If verification did run, check that the hashes of original data and recompressed data match
-          if (precomp_mgr.switches.verify_precompressed) {
-            const auto verified_sha1 = verify_sha1_ostream.get_digest();
-            input.seekg(input_file_pos, std::ios_base::beg);
-            auto original_data_view = IStreamLikeView(&input, precompressor->original_stream_size + input_file_pos);
-            const auto original_data_sha1 = calculate_sha1(original_data_view, 0);
-
-            const auto verification_success = original_data_sha1 == verified_sha1;
-            if (!verification_success) continue;
           }
 
           precompressor->increase_detected_count();
