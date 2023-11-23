@@ -203,7 +203,7 @@ std::unique_ptr<precompression_result> try_decompression_pdf(Tools& precomp_tool
     // write decompressed data
     if (!rdres.uncompressed_stream_mem.empty()) {
       unsigned char* buf_ptr = rdres.uncompressed_stream_mem.data();
-      result->precompressed_stream = memiostream::make(buf_ptr, buf_ptr + result->precompressed_size);
+      result->precompressed_stream = std::make_unique<memiostream>(buf_ptr, buf_ptr + result->precompressed_size);
     }
     else {
       tmpfile->reopen();

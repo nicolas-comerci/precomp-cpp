@@ -62,8 +62,8 @@ std::unique_ptr<precompression_result> try_precompression_mp3(Tools& precomp_too
   if (in_memory) { // small stream => do everything in memory
     input.seekg(original_input_pos, std::ios_base::beg);
     mp3_mem_in.resize(mp3_length);
-    auto memstream = memiostream::make(mp3_mem_in.data(), mp3_mem_in.data() + mp3_length);
-    fast_copy(input, *memstream, mp3_length);
+    auto memstream = memiostream(mp3_mem_in.data(), mp3_mem_in.data() + mp3_length);
+    fast_copy(input, memstream, mp3_length);
 
     attempt_precompression = [&]() {
       unsigned char* mem = nullptr;
@@ -150,8 +150,7 @@ std::unique_ptr<precompression_result> try_precompression_mp3(Tools& precomp_too
 
     if (in_memory) {
       auto mem = mp3_mem_out.release();
-      auto memstream = memiostream::make(mem, mem + result->precompressed_size, true);
-      result->precompressed_stream = std::move(memstream);
+      result->precompressed_stream = std::make_unique<memiostream>(mem, mem + result->precompressed_size, true);
     }
     else {
       tmpfile->reopen();
@@ -262,7 +261,7 @@ Mp3FormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
 
   // parse frames until first invalid frame is found or end-of-file
   std::array<unsigned char, 4> frame_hdr{};
-  auto memstream = memiostream::make(buffer.data(), buffer.data() + buffer.size());
+  auto memstream = std::make_unique<memiostream>(buffer.data(), buffer.data() + buffer.size());
 
   for (;;) {
     if (!read_with_memstream_buffer(input, memstream, reinterpret_cast<char*>(frame_hdr.data()), 4, act_pos)) break;
@@ -410,8 +409,8 @@ void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
     std::vector<unsigned char> mp3_mem_in {};
     mp3_mem_in.resize(precomp_hdr_data.precompressed_size);
     {
-      auto memstream = memiostream::make(mp3_mem_in.data(), mp3_mem_in.data() + precomp_hdr_data.precompressed_size);
-      fast_copy(precompressed_input, *memstream, precomp_hdr_data.precompressed_size);
+      auto memstream = memiostream(mp3_mem_in.data(), mp3_mem_in.data() + precomp_hdr_data.precompressed_size);
+      fast_copy(precompressed_input, memstream, precomp_hdr_data.precompressed_size);
     }
 
     unsigned char* mp3_mem_out = nullptr;
@@ -421,7 +420,7 @@ void Mp3FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike&
     recompress_success = pmplib_convert_stream2mem(&mp3_mem_out, &mp3_mem_out_size, recompress_msg);
 
     if (recompress_success) {
-      recompressed_tmp = memiostream::make(mp3_mem_out, mp3_mem_out + precomp_hdr_data.original_size, true);
+      recompressed_tmp = std::make_unique<memiostream>(mp3_mem_out, mp3_mem_out + precomp_hdr_data.original_size, true);
       mp3_mem_out = nullptr;
     }
     else {

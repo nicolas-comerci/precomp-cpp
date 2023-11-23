@@ -596,6 +596,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           std::vector<std::byte> verification_vec_out{};
           verification_vec_out.resize(CHUNK);
           std::vector<char> original_block_data{};
+          MemVecIOStream mem_tmp;
 
           static auto output_chunk = [](
             PrecompFormatPrecompressor& precompressor, OStreamLike& output, uint32_t current_chunk_size, std::vector<std::byte>& out_buf,
@@ -626,16 +627,13 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             }
             else {
               // Output the chunk and verify it's data against the original input
-              // TODO: Change this chunk_tmp to a memiostream or similar so we don't need to copy to a file
-              PrecompTmpFile chunk_tmp;
-              chunk_tmp.open(precomp_mgr.get_tempfile_name("verify_chunk"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
-              output_chunk(*precompressor, chunk_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
-              const uint32_t written = chunk_tmp.tellp();
-              chunk_tmp.reopen();
+              mem_tmp.seekg(0, std::ios_base::beg);
+              output_chunk(*precompressor, mem_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
+              const uint32_t written = mem_tmp.tellp();
+              mem_tmp.seekg(0, std::ios_base::beg);
 
               verification_vec_in.resize(written);
-              chunk_tmp.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
-              chunk_tmp.close();
+              mem_tmp.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
 
               // Recompress using PrecompPcfRecompressor reading from verification_vec, dump output to verify_sha1_ostream
               verify_recompressor.avail_in = written;
@@ -683,8 +681,8 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
                 return false;
               }
 
-              chunk_tmp.reopen();
-              fast_copy(chunk_tmp, *precompressed_tmp, written);
+              mem_tmp.seekg(0, std::ios_base::beg);
+              fast_copy(mem_tmp, *precompressed_tmp, written);
               if (precompressed_tmp->bad()) return false;
             }
             blockCount += 1;

@@ -261,7 +261,7 @@ void try_decompression_deflate_type(
       result->zlib_header = std::vector(hdr, hdr + hdr_length);
       if (!rdres.uncompressed_stream_mem.empty()) {
           //rdres.uncompressed_stream_mem.resize(rdres.uncompressed_stream_size);
-          auto memstream = memiostream::make(std::move(rdres.uncompressed_stream_mem));
+          auto memstream = std::make_unique<memiostream>(std::move(rdres.uncompressed_stream_mem));
           result->precompressed_stream = std::move(memstream);
       }
       else {

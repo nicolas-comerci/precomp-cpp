@@ -405,8 +405,7 @@ public:
   ~PrecompTmpFile() override;
 };
 
-class memiostream: public WrappedIOStream<std::iostream>
-{
+class memiostream: public WrappedIOStream<std::iostream> {
   class membuf : public std::streambuf
   {
   public:
@@ -427,8 +426,91 @@ class memiostream: public WrappedIOStream<std::iostream>
   explicit memiostream(membuf* buf);
 
 public:
-  static std::unique_ptr<memiostream> make(std::vector<unsigned char>&& memvector);
-  static std::unique_ptr<memiostream> make(unsigned char* begin, unsigned char* end, bool take_mem_ownership = false);
+  explicit memiostream();
+  explicit memiostream(unsigned char* begin, unsigned char* end, bool take_mem_ownership = false);
+  explicit memiostream(std::vector<unsigned char>&& memvector);
+};
+
+class MemVecIOStream: public IStreamLike, public OStreamLike {
+  std::vector<std::byte> memvec {};
+
+  uint64_t pos = 0;
+  uint64_t _gcount = 0;
+
+  void resize_for_pos(uint64_t new_pos) {
+    if (new_pos >= memvec.size()) {
+      memvec.resize(new_pos + 1);
+    }
+  }
+public:
+  explicit MemVecIOStream() {}
+
+  MemVecIOStream& read(char* buff, std::streamsize count) override {
+    if (memvec.empty() || pos > memvec.size()) {
+      _gcount = 0;
+      return *this;
+    }
+    const auto to_read = std::min<uint64_t>(count, memvec.size() - pos);
+    std::copy_n(reinterpret_cast<char*>(memvec.data() + pos), to_read, buff);
+    _gcount = to_read;
+    pos += to_read;
+    return *this;
+  }
+  std::istream::int_type get() override {
+    char buff[1];
+    read(buff, 1);
+    return _gcount == 1 ? buff[0] : EOF;
+  }
+
+  // Write is more permissive, if trying to write past the end of the vector we just resize it to fit the new data
+  MemVecIOStream& write(const char* buf, std::streamsize count) override {
+    const auto new_pos = pos + count;
+    if (new_pos >= memvec.size()) {
+      memvec.resize(new_pos + 1);
+    }
+    std::copy_n(buf, count, reinterpret_cast<char*>(memvec.data() + pos));
+    pos += count;
+    return *this;
+  }
+
+  std::istream::pos_type tellg() override { return pos; }
+  std::istream::pos_type tellp() override { return pos; }
+
+  MemVecIOStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    uint64_t new_pos;
+    switch (dir) {
+    case std::ios_base::end:
+      {
+      new_pos = pos - offset;
+      new_pos = new_pos >= 0 ? new_pos : 0;
+      break;
+      }
+    case std::ios_base::cur:
+      {
+      new_pos = pos + offset;
+      break;
+      }
+    case std::ios_base::beg:
+      {
+      new_pos = offset;
+      break;
+      }
+    }
+    pos = new_pos;
+    return *this;
+  }
+  OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
+    seekg(offset, dir);
+    return *this;
+  }
+
+  std::streamsize gcount() override { return _gcount; }
+  bool eof() override {
+    return pos >= memvec.size();
+  }
+  bool good() override { return true; }
+  bool bad() override { return false; }
+  void clear() override {}
 };
 
 void fast_copy(IStreamLike& file1, OStreamLike& file2, long long bytecount);

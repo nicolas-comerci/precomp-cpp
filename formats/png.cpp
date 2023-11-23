@@ -124,8 +124,7 @@ std::unique_ptr<precompression_result> try_decompression_png(Tools& precomp_tool
       result->calculate_idat_count();
 
       if (!rdres.uncompressed_stream_mem.empty()) {
-        auto memstream = memiostream::make(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
-        result->precompressed_stream = std::move(memstream);
+        result->precompressed_stream = std::make_unique<memiostream>(rdres.uncompressed_stream_mem.data(), rdres.uncompressed_stream_mem.data() + rdres.uncompressed_stream_size);
       }
       else {
         tmpfile->reopen();
@@ -165,7 +164,7 @@ PngFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
   auto deflate_stream_pos = idat_magic_pos + 6;
 
   auto checkbuf_at_idat = std::span(checkbuf.data() + 4, checkbuf.size() - 4);
-  auto memstream = memiostream::make(checkbuf_at_idat.data(), checkbuf_at_idat.data() + checkbuf_at_idat.size());
+  auto memstream = std::make_unique<memiostream>(checkbuf_at_idat.data(), checkbuf_at_idat.data() + checkbuf_at_idat.size());
 
   // get preceding length bytes
   std::array<unsigned char, 12> in_buf{};

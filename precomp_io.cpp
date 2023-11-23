@@ -422,14 +422,9 @@ std::streambuf::pos_type memiostream::membuf::seekpos(std::streambuf::pos_type s
 }
 
 memiostream::memiostream(membuf* buf): WrappedIOStream(buf), m_buf(std::unique_ptr<membuf>(buf)) {}
-std::unique_ptr<memiostream> memiostream::make(std::vector<unsigned char>&& memvector) {
-  auto membuf_ptr = new membuf(std::move(memvector));
-  return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
-}
-std::unique_ptr<memiostream> memiostream::make(unsigned char* begin, unsigned char* end, bool take_mem_ownership) {
-  auto membuf_ptr = new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), take_mem_ownership);
-  return std::unique_ptr<memiostream>(new memiostream(membuf_ptr));
-}
+memiostream::memiostream(unsigned char* begin, unsigned char* end, bool take_mem_ownership)
+  : memiostream(new membuf(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end), take_mem_ownership)) {}
+memiostream::memiostream(std::vector<unsigned char>&& memvector): memiostream(new membuf(std::move(memvector))) {}
 
 void fast_copy(IStreamLike& file1, OStreamLike& file2, long long bytecount) {
   constexpr auto COPY_BUF_SIZE = 512;
@@ -473,7 +468,7 @@ bool read_with_memstream_buffer(IStreamLike& orig_input, std::unique_ptr<memiost
   if (read_amt < minimum_gcount) return false;
   if (read_amt < CHUNK) new_read_data.resize(read_amt);  // shrink to fit data, needed because memiostream relies on the vector's size
 
-  memstream_buf = memiostream::make(std::move(new_read_data));
+  memstream_buf = std::make_unique<memiostream>(std::move(new_read_data));
   memstream_buf->read(target_buf, minimum_gcount);
   if (memstream_buf->gcount() == minimum_gcount) cur_pos += minimum_gcount;
   return memstream_buf->gcount() == minimum_gcount;  // if somehow that fails again we fail and return false, else true for success
@@ -488,11 +483,11 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
   if (stream_size < max_memory_size) {  // File small enough, will use it from memory
     std::vector<unsigned char> mem{};
     mem.resize(stream_size);
-    auto mem_png = memiostream::make(std::move(mem));
+    auto mem_png = std::make_unique<memiostream>(std::move(mem));
     if (!checkbuf.empty() && stream_size < checkbuf.size()) {  // The whole file did fit the checkbuf, we can copy it from there
-      auto checkbuf_stream = memiostream::make(checkbuf.data(), checkbuf.data() + checkbuf.size());
-      checkbuf_stream->seekg(stream_pos - original_input_pos, std::ios_base::beg);
-      copy_to_temp(*checkbuf_stream, *mem_png);
+      auto checkbuf_stream = memiostream(checkbuf.data(), checkbuf.data() + checkbuf.size());
+      checkbuf_stream.seekg(stream_pos - original_input_pos, std::ios_base::beg);
+      copy_to_temp(checkbuf_stream, *mem_png);
     }
     else {  // just copy it from the input file
       copy_to_temp(original_input, *mem_png);

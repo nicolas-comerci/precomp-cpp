@@ -70,8 +70,8 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Tools& precomp_tool
   if (in_memory) { // small stream => do everything in memory
     input.seekg(jpg_start_pos, std::ios_base::beg);
     jpg_mem_in.resize(jpg_length + MJPGDHT_LEN);
-    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpg_length);
-    fast_copy(input, *memstream, jpg_length);
+    auto memstream = memiostream(jpg_mem_in.data(), jpg_mem_in.data() + jpg_length);
+    fast_copy(input, memstream, jpg_length);
 
     bool brunsli_success = false;
 
@@ -288,8 +288,7 @@ std::unique_ptr<precompression_result> try_decompression_jpg(Tools& precomp_tool
 
     if (in_memory) {
       auto mem = jpg_mem_out.release();
-      auto memstream = memiostream::make(mem, mem + result->precompressed_size, true);
-      result->precompressed_stream = std::move(memstream);
+      result->precompressed_stream = std::make_unique<memiostream>(mem, mem + result->precompressed_size, true);
     }
     else {
       tmpfile->reopen();
@@ -431,8 +430,8 @@ void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike
 
   if (in_memory) {
     jpg_mem_in.resize(jpeg_format_hdr_data.precompressed_size);
-    auto memstream = memiostream::make(jpg_mem_in.data(), jpg_mem_in.data() + jpeg_format_hdr_data.precompressed_size);
-    fast_copy(precompressed_input, *memstream, jpeg_format_hdr_data.precompressed_size);
+    auto memstream = memiostream(jpg_mem_in.data(), jpg_mem_in.data() + jpeg_format_hdr_data.precompressed_size);
+    fast_copy(precompressed_input, memstream, jpeg_format_hdr_data.precompressed_size);
 
     if (jpeg_format_hdr_data.brunsli_used) {
       brunsli::JPEGData jpegData;
@@ -522,10 +521,10 @@ void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike
 
     // remove motion JPG huffman table
     if (in_memory) {
-      auto memstream1 = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
-      fast_copy(*memstream1, recompressed_stream, ffda_pos - 1 - MJPGDHT_LEN);
-      auto memstream2 = memiostream::make(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (jpeg_format_hdr_data.original_size + MJPGDHT_LEN) - (ffda_pos - 1));
-      fast_copy(*memstream2, recompressed_stream, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
+      auto memstream1 = memiostream(jpg_mem_out.get(), jpg_mem_out.get() + ffda_pos - 1 - MJPGDHT_LEN);
+      fast_copy(memstream1, recompressed_stream, ffda_pos - 1 - MJPGDHT_LEN);
+      auto memstream2 = memiostream(jpg_mem_out.get() + (ffda_pos - 1), jpg_mem_out.get() + (jpeg_format_hdr_data.original_size + MJPGDHT_LEN) - (ffda_pos - 1));
+      fast_copy(memstream2, recompressed_stream, jpeg_format_hdr_data.original_size + MJPGDHT_LEN - (ffda_pos - 1));
     }
     else {
       frecomp.seekg(frecomp_pos, std::ios_base::beg);
@@ -538,8 +537,8 @@ void JpegFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike
   }
   else {
     if (in_memory) {
-      auto memstream = memiostream::make(jpg_mem_out.get(), jpg_mem_out.get() + jpeg_format_hdr_data.original_size);
-      fast_copy(*memstream, recompressed_stream, jpeg_format_hdr_data.original_size);
+      auto memstream = memiostream(jpg_mem_out.get(), jpg_mem_out.get() + jpeg_format_hdr_data.original_size);
+      fast_copy(memstream, recompressed_stream, jpeg_format_hdr_data.original_size);
     }
     else {
       fast_copy(frecomp, recompressed_stream, jpeg_format_hdr_data.original_size);
