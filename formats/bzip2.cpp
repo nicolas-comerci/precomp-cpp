@@ -73,6 +73,7 @@ public:
 
   void increase_detected_count() override { precomp_tools->increase_detected_count("bZip2"); }
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("bZip2"); }
+  void increase_partially_precompressed_count() override { precomp_tools->increase_partially_precompressed_count("bZip2"); }
 };
 
 class BZip2FormatHeaderData : public PrecompFormatHeaderData {

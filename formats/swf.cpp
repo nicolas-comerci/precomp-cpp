@@ -31,6 +31,7 @@ public:
 
   void increase_detected_count() override { precomp_tools->increase_detected_count("SWF"); }
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("SWF"); }
+  void increase_partially_precompressed_count() override { precomp_tools->increase_partially_precompressed_count("SWF"); }
 };
 
 std::unique_ptr<PrecompFormatPrecompressor> SwfFormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {

@@ -59,6 +59,7 @@ class FormatResults {
 public:
   unsigned int detected_amount = 0;
   unsigned int precompressed_amount = 0;
+  unsigned int partially_precompressed_amount = 0;
 };
 
 class ResultStatistics: public CResultStatistics {
@@ -68,6 +69,7 @@ public:
 
   void increase_detected_count(std::string tag) { format_results[tag].detected_amount++; }
   void increase_precompressed_count(std::string tag) { format_results[tag].precompressed_amount++; }
+  void increase_partially_precompressed_count(std::string tag) { format_results[tag].partially_precompressed_amount++; }
 
   unsigned int get_total_detected_count() {
     unsigned int total = 0;
@@ -85,10 +87,18 @@ public:
     return total;
   }
 
-  void print_results() {
-    print_to_console("Recompressed streams: " + std::to_string(get_total_precompressed_count()) + "/" + std::to_string(get_total_detected_count()) + "\n");
+  unsigned int get_total_partially_precompressed_count() {
+    unsigned int total = 0;
     for (const auto& [key, value] : format_results) {
-      print_to_console(key + " streams: " + std::to_string(value.precompressed_amount) + "/" + std::to_string(value.detected_amount) + "\n");
+      total += value.partially_precompressed_amount;
+    }
+    return total;
+  }
+
+  void print_results() {
+    print_to_console("Recompressed streams: " + std::to_string(get_total_precompressed_count()) + "/" + std::to_string(get_total_partially_precompressed_count()) + "/" +std::to_string(get_total_detected_count()) + "\n");
+    for (const auto& [key, value] : format_results) {
+      print_to_console(key + " streams: " + std::to_string(value.precompressed_amount) + "/" + std::to_string(value.partially_precompressed_amount) + "/" + std::to_string(value.detected_amount) + "\n");
     }
   }
 };
@@ -129,6 +139,7 @@ public:
   std::function<std::string(const std::string& name, bool append_tag)> get_tempfile_name;
   std::function<void(std::string)> increase_detected_count;
   std::function<void(std::string)> increase_precompressed_count;
+  std::function<void(std::string)> increase_partially_precompressed_count;
   std::function<void(SupportedFormats, long long, unsigned int)> add_ignore_offset;
 
   Tools(
@@ -136,12 +147,14 @@ public:
     std::function<std::string(const std::string& name, bool append_tag)>&& _get_tempfile_name,
     std::function<void(std::string)>&& _increase_detected_count,
     std::function<void(std::string)>&& _increase_precompressed_count,
+    std::function<void(std::string)>&& _increase_partially_precompressed_count,
     std::function<void(SupportedFormats, long long, unsigned int)>&& _add_ignore_offset
   ) :
     progress_callback(std::move(_progress_callback)),
     get_tempfile_name(std::move(_get_tempfile_name)),
     increase_detected_count(std::move(_increase_detected_count)),
     increase_precompressed_count(std::move(_increase_precompressed_count)),
+    increase_partially_precompressed_count(std::move(_increase_partially_precompressed_count)),
     add_ignore_offset(std::move(_add_ignore_offset)) {}
 };
 
@@ -262,6 +275,7 @@ public:
 
   virtual void increase_detected_count() = 0;
   virtual void increase_precompressed_count() = 0;
+  virtual void increase_partially_precompressed_count() = 0;
 
 };
 

@@ -62,6 +62,7 @@ public:
 
   void increase_detected_count() override { precomp_tools->increase_detected_count("zLib (intense mode)"); }
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("zLib (intense mode)"); }
+  void increase_partially_precompressed_count() override { precomp_tools->increase_partially_precompressed_count("zLib (intense mode)"); }
 };
 
 std::unique_ptr<PrecompFormatPrecompressor> ZlibFormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {

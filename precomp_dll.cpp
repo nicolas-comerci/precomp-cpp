@@ -263,6 +263,7 @@ Precomp::Precomp():
     [this](std::string name, bool append_tag) { return this->get_tempfile_name(name, append_tag); },
     [this](std::string name) { return this->statistics.increase_detected_count(name); },
     [this](std::string name) { return this->statistics.increase_precompressed_count(name); },
+    [this](std::string name) { return this->statistics.increase_partially_precompressed_count(name); },
     [this](SupportedFormats format, long long pos, unsigned int recursion_depth) {
       if (this->is_format_handler_active(format, recursion_depth)) this->ignore_offsets[recursion_depth][format].emplace(pos);
     }
@@ -328,7 +329,7 @@ void Precomp::set_progress_callback(std::function<void(float)> callback) {
 }
 void Precomp::call_progress_callback() const {
   if (!this->progress_callback) return;
-  this->progress_callback(static_cast<float>(this->input_file_pos) / this->switches.fin_length);
+  this->progress_callback((static_cast<float>(this->input_file_pos) / this->switches.fin_length) * 100);
 }
 
 std::string Precomp::get_tempfile_name(const std::string& name, bool prepend_random_tag) const {
@@ -518,6 +519,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
   for (long long input_file_pos = 0; input_file_pos < input_length; input_file_pos++) {
     if (recursion_depth == 0) precomp_mgr.input_file_pos = input_file_pos;
     bool compressed_data_found = false;
+    bool is_partial_stream = false;
 
     bool ignore_this_pos = false;
 
@@ -569,6 +571,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
         std::unique_ptr<IStreamLike> precompressed;
 
         uint64_t precompressed_stream_size = 0;
+        uint64_t already_verified_bytes = 0;
         const auto output_chunk_size = 1 * 1024 * 1024; // TODO: make this configurable
 
         try {
@@ -596,11 +599,11 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
           std::vector<std::byte> verification_vec_out{};
           verification_vec_out.resize(CHUNK);
           std::vector<char> original_block_data{};
-          MemVecIOStream mem_tmp;
+          MemVecIOStream mem_tmp_verify;
 
           static auto output_chunk = [](
             PrecompFormatPrecompressor& precompressor, OStreamLike& output, uint32_t current_chunk_size, std::vector<std::byte>& out_buf,
-            uint64_t blockCount, std::byte header_byte, SupportedFormats formatTag, bool is_last_block
+            uint64_t blockCount, std::byte header_byte, SupportedFormats formatTag, bool is_last_block, IStreamLike& block_extra_data, uint64_t block_extra_data_size
           ) {
             if (blockCount == 0) {
               // Output Precomp format header
@@ -611,29 +614,33 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
             // Block chunk header
             output.put(static_cast<char>(is_last_block ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
-            precompressor.dump_extra_block_header_data(output);
+            fast_copy(block_extra_data, output, block_extra_data_size);
             fout_fput_vlint(output, current_chunk_size);
             output.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
           };
 
-          uint64_t already_verified_bytes = 0;
-
           std::function output_chunk_callback = [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
-            precompressed_stream_size += current_chunk_size;
+            MemVecIOStream extra_block_hdr_data;
+            precompressor->dump_extra_block_header_data(extra_block_hdr_data);
+            const uint64_t extra_hdr_data_size = extra_block_hdr_data.tellp();
+            extra_block_hdr_data.seekg(0, std::ios_base::beg);
 
+            uint32_t written;
             if (!precomp_mgr.switches.verify_precompressed) {
-              output_chunk(*precompressor, *precompressed_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
+              const auto prev_precompressed_pos = precompressed_tmp->tellp();
+              output_chunk(*precompressor, *precompressed_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block, extra_block_hdr_data, extra_hdr_data_size);
               if (precompressed_tmp->bad()) return false;
+              written = precompressed_tmp->tellp() - prev_precompressed_pos;
             }
             else {
               // Output the chunk and verify it's data against the original input
-              mem_tmp.seekg(0, std::ios_base::beg);
-              output_chunk(*precompressor, mem_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block);
-              const uint32_t written = mem_tmp.tellp();
-              mem_tmp.seekg(0, std::ios_base::beg);
+              mem_tmp_verify.seekg(0, std::ios_base::beg);
+              output_chunk(*precompressor, mem_tmp_verify, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block, extra_block_hdr_data, extra_hdr_data_size);
+              written = mem_tmp_verify.tellp();
+              mem_tmp_verify.seekg(0, std::ios_base::beg);
 
               verification_vec_in.resize(written);
-              mem_tmp.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
+              mem_tmp_verify.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
 
               // Recompress using PrecompPcfRecompressor reading from verification_vec, dump output to verify_sha1_ostream
               verify_recompressor.avail_in = written;
@@ -667,6 +674,22 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
                   // restore input to its previous pos to not interfere with the Processor
                   input.seekg(saved_pos, std::ios_base::beg);
                   if (original_data_sha1 != verified_data_sha1) {
+                    // if hashes mismatch, attempt to fix the mismatch with penalty bytes
+                    const auto original_block_data_ptr = reinterpret_cast<unsigned char*>(original_block_data.data());
+                    auto original_block_view = memiostream(original_block_data_ptr, original_block_data_ptr + recompressed_block_amount, false);
+                    const auto recompressed_block_data_ptr = reinterpret_cast<unsigned char*>(verification_vec_out.data());
+                    auto recompressed_block_view = memiostream(recompressed_block_data_ptr, recompressed_block_data_ptr + recompressed_block_amount, false);
+                    auto [identical_bytes, penalty_bytes] = compare_files_penalty(
+                      precomp_mgr.format_handler_tools.progress_callback, original_block_view, recompressed_block_view, recompressed_block_amount
+                    );
+
+                    if (identical_bytes == recompressed_block_amount) {
+                      print_to_console("\n PENALTY BYTES HUBIERAN HECHO PATRIA \n");
+                    }
+                    else {
+                      print_to_console("\n NI SIQUIERA PENALTY BYTES ARREGLAN ACA \n");
+                    }
+
                     return false;
                   }
                   already_verified_bytes += recompressed_block_amount;
@@ -681,10 +704,12 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
                 return false;
               }
 
-              mem_tmp.seekg(0, std::ios_base::beg);
-              fast_copy(mem_tmp, *precompressed_tmp, written);
+              mem_tmp_verify.seekg(0, std::ios_base::beg);
+              fast_copy(mem_tmp_verify, *precompressed_tmp, written);
               if (precompressed_tmp->bad()) return false;
             }
+
+            precompressed_stream_size += written;
             blockCount += 1;
             return true;
           };
@@ -694,15 +719,19 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
             precompressor_in_buf, input,
             precompressor_out_buf, output_chunk_size, std::move(output_chunk_callback)
           );
-          // TODO: set reasonable lower limit for precompressed_stream_size
-          if (ret == PP_ERROR || precompressed_stream_size <= 0) {
+
+          if (
+            (ret == PP_ERROR && !precomp_mgr.switches.verify_precompressed) ||
+            precompressed_stream_size <= 0 ||
+            blockCount == 0 ||
+            already_verified_bytes == 0 && precomp_mgr.switches.verify_precompressed
+          ) {
             input.seekg(input_file_pos, std::ios_base::beg);
             continue;
           }
 
           precompressor->increase_detected_count();
-
-          precompressed_stream_size = precompressed_tmp->tellp();
+          if (ret != PP_STREAM_END) is_partial_stream = true;
 
           print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", precompressor->original_stream_size);
           print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", precompressed_stream_size);
@@ -716,7 +745,12 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
         }
         catch (...) { continue; }  // TODO: print/record/report handler failed
 
-        precompressor->increase_precompressed_count();
+        if (is_partial_stream) {
+          precompressor->increase_partially_precompressed_count();
+        }
+        else {
+          precompressor->increase_precompressed_count();
+        }
         anything_was_used = true;
 
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
@@ -746,9 +780,18 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
         }
 
         fast_copy(*precompressed, output, precompressed_stream_size);
+        if (is_partial_stream) {
+          // partial stream finish marker
+          output.put(static_cast<char>(std::byte { 0b10000000 }));
+        }
 
-        // set input file pointer after recompressed data
-        input_file_pos += precompressor->original_stream_size - 1;
+        // set input file pointer after recompressed data (minus 1 because iteration will sum 1)
+        if (precomp_mgr.switches.verify_precompressed) {
+          input_file_pos += already_verified_bytes - 1;
+        }
+        else {
+          input_file_pos += precompressor->original_stream_size - 1;
+        }
         compressed_data_found = true;
         break;
       }
@@ -1112,11 +1155,17 @@ int decompress_file_impl(
 
             while (true) {
               const auto data_hdr = static_cast<std::byte>(precompressed_input->get());
-              recompressor->read_extra_block_header_data(*precompressed_input);
-              const auto data_block_size = fin_fget_vlint(*precompressed_input);
-
               const bool last_block = (data_hdr & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
               const bool finish_stream = (data_hdr & std::byte{ 0b00000001 }) == std::byte{ 0b00000001 };
+              if (last_block && !finish_stream) {
+                // end stream finish marker, its a Partial Stream. We already outputted all the data that could be recompressed from the Partial Stream
+                // so we are done here.
+                break;
+              }
+
+              recompressor->read_extra_block_header_data(*precompressed_input);
+              const auto data_block_size = fin_fget_vlint(*precompressed_input);
+              
               PrecompProcessorReturnCode retval;
               if (finish_stream && !last_block) {
                 throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
@@ -1460,7 +1509,7 @@ std::tuple<long long, std::vector<std::tuple<uint32_t, char>>> compare_files_pen
       if (i + 1 > candidate_chunk_size || input_bytes1[i] != input_bytes2[i]) {  // should not be out of bounds on input_bytes2 because of short-circuit evaluation
         // if penalty_bytes_size gets too large, stop
         // penalty_bytes will be larger than 1/6th of stream? bail, why 1/6th? beats me, but this is roughly equivalent to what Precomp v0.4.8 was doing,
-        // only much much simpler
+        // only much, much simpler
         if (static_cast<double>(penalty_bytes.size() + 1) >= static_cast<double>(original_size) * (1.0 / 6)) {
           endNow = true;
           break;

@@ -85,6 +85,7 @@ public:
 
   void increase_detected_count() override { precomp_tools->increase_detected_count("Brute mode"); }
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("Brute mode"); }
+  void increase_partially_precompressed_count() override { precomp_tools->increase_partially_precompressed_count("Brute mode"); }
 };
 class DeflateRecompressor : public PrecompFormatRecompressor {
   std::vector<unsigned char>* recon_data;

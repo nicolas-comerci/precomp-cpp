@@ -437,11 +437,6 @@ class MemVecIOStream: public IStreamLike, public OStreamLike {
   uint64_t pos = 0;
   uint64_t _gcount = 0;
 
-  void resize_for_pos(uint64_t new_pos) {
-    if (new_pos >= memvec.size()) {
-      memvec.resize(new_pos + 1);
-    }
-  }
 public:
   explicit MemVecIOStream() {}
 
@@ -466,7 +461,7 @@ public:
   MemVecIOStream& write(const char* buf, std::streamsize count) override {
     const auto new_pos = pos + count;
     if (new_pos >= memvec.size()) {
-      memvec.resize(new_pos + 1);
+      memvec.resize(new_pos);
     }
     std::copy_n(buf, count, reinterpret_cast<char*>(memvec.data() + pos));
     pos += count;
@@ -502,6 +497,12 @@ public:
   OStreamLike& seekp(std::ostream::off_type offset, std::ios_base::seekdir dir) override {
     seekg(offset, dir);
     return *this;
+  }
+
+  void reset() {
+    pos = 0;
+    _gcount = 0;
+    memvec.clear();
   }
 
   std::streamsize gcount() override { return _gcount; }
