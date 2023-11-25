@@ -491,7 +491,9 @@ public:
     ) {}
 };
 
-int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output, unsigned int recursion_depth) {
+int compress_file(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth);
+
+int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth) {
   if (recursion_depth == 0) {
       write_header(precomp_mgr);
       precomp_mgr.init_format_handlers();
@@ -508,15 +510,21 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
   unsigned char in_buf[IN_BUF_SIZE];
 
+  std::optional<uintmax_t> input_length;
+
   input.seekg(0, std::ios_base::beg);
   input.read(reinterpret_cast<char*>(in_buf), IN_BUF_SIZE);
+  const auto initial_read = input.gcount();
+  if (initial_read < IN_BUF_SIZE) {
+    input_length = initial_read;
+  }
   long long in_buf_pos = 0;
   // This buffer will be fed to the format handlers so they can confirm if the current position is the beggining of a stream they support
   std::span<unsigned char> checkbuf;
 
   bool anything_was_used = false;
 
-  for (long long input_file_pos = 0; input_file_pos < input_length; input_file_pos++) {
+  for (long long input_file_pos = 0; !input_length.has_value() || input_file_pos < *input_length; input_file_pos++) {
     if (recursion_depth == 0) precomp_mgr.input_file_pos = input_file_pos;
     bool compressed_data_found = false;
     bool is_partial_stream = false;
@@ -526,6 +534,10 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
     if ((in_buf_pos + IN_BUF_SIZE) <= (input_file_pos + CHECKBUF_SIZE)) {
       input.seekg(input_file_pos, std::ios_base::beg);
       input.read(reinterpret_cast<char*>(in_buf), IN_BUF_SIZE);
+      const auto just_read = input.gcount();
+      if (just_read < IN_BUF_SIZE) {
+        input_length = input_file_pos + just_read;
+      }
       in_buf_pos = input_file_pos;
     }
     auto cb_pos = input_file_pos - in_buf_pos;
@@ -568,10 +580,11 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
         if (!quick_check_result) continue;
 
         std::unique_ptr<PrecompFormatPrecompressor> precompressor{};
-        std::unique_ptr<IStreamLike> precompressed;
 
         uint64_t precompressed_stream_size = 0;
         uint64_t already_verified_bytes = 0;
+        // they are not really outputted, its more like "with the precompressed data that is already outputted you can recompress this amount of bytes"
+        uint64_t already_verified_bytes_outputted = 0;
         const auto output_chunk_size = 1 * 1024 * 1024; // TODO: make this configurable
 
         try {
@@ -581,8 +594,8 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
           input.seekg(input_file_pos, std::ios_base::beg);
 
-          std::unique_ptr<PrecompTmpFile> precompressed_tmp = std::make_unique<PrecompTmpFile>();
-          precompressed_tmp->open(precomp_mgr.get_tempfile_name("original_bzip2"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
+          std::unique_ptr<PrecompTmpFile> verify_tmpfile = std::make_unique<PrecompTmpFile>();
+          verify_tmpfile->open(precomp_mgr.get_tempfile_name("verify_cosify"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
 
           // Precomp format header
           std::byte header_byte{ 0b1 };
@@ -627,14 +640,20 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
             uint32_t written;
             if (!precomp_mgr.switches.verify_precompressed) {
-              const auto prev_precompressed_pos = precompressed_tmp->tellp();
-              output_chunk(*precompressor, *precompressed_tmp, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block, extra_block_hdr_data, extra_hdr_data_size);
-              if (precompressed_tmp->bad()) return false;
-              written = precompressed_tmp->tellp() - prev_precompressed_pos;
+              if (blockCount == 0) {
+                const auto saved_pos = input.tellg();
+                end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+                input.seekg(saved_pos, std::ios_base::beg);
+              }
+
+              const auto prev_precompressed_pos = output.tellp();
+              output_chunk(*precompressor, output, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block, extra_block_hdr_data, extra_hdr_data_size);
+              if (output.bad()) return false;
+              written = output.tellp() - prev_precompressed_pos;
             }
             else {
               // Output the chunk and verify it's data against the original input
-              mem_tmp_verify.seekg(0, std::ios_base::beg);
+              mem_tmp_verify.seekg(0, std::ios_base::beg);  // reused across iterations so ensure we are at the start
               output_chunk(*precompressor, mem_tmp_verify, current_chunk_size, out_buf, blockCount, header_byte, formatTag, is_last_block, extra_block_hdr_data, extra_hdr_data_size);
               written = mem_tmp_verify.tellp();
               mem_tmp_verify.seekg(0, std::ios_base::beg);
@@ -648,6 +667,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
               verify_recompressor.avail_out = CHUNK;
               verify_recompressor.next_out = verification_vec_out.data();
               PrecompProcessorReturnCode verification_ret = PP_OK;
+              bool is_first_verified_block = true;
               while (verification_ret == PP_OK) {
                 verification_ret = verify_recompressor.process(is_last_block);
 
@@ -704,9 +724,40 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
                 return false;
               }
 
-              mem_tmp_verify.seekg(0, std::ios_base::beg);
-              fast_copy(mem_tmp_verify, *precompressed_tmp, written);
-              if (precompressed_tmp->bad()) return false;
+              // We only want to actually output data when we know its going to allow us to recompress some data, if no new data was recompressed
+              // during verification we hold the data on a temporary file until we get some more verified data, at which point we dump it to the
+              // real output
+              if (already_verified_bytes == already_verified_bytes_outputted) {
+                mem_tmp_verify.seekg(0, std::ios_base::beg);
+                fast_copy(mem_tmp_verify, *verify_tmpfile, written);
+                if (verify_tmpfile->bad()) return false;
+              }
+              else {
+                if (is_first_verified_block) {
+                  is_first_verified_block = false;
+
+                  const auto saved_pos = input.tellg();
+                  end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+                  input.seekg(saved_pos, std::ios_base::beg);
+                }
+                // If we have any data in the verify_tmpfile from before we had any verified data, dump it now
+                const auto verify_tmpfile_size = verify_tmpfile->tellp();
+                if (verify_tmpfile_size > 0) {
+                  verify_tmpfile->reopen();
+                  if (!verify_tmpfile->is_open()) {
+                    throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
+                  }
+                  fast_copy(*verify_tmpfile, output, verify_tmpfile_size);
+                  // reopen yet again so we can start outputting from the start of the tempfile if needed
+                  verify_tmpfile->reopen();
+                }
+                mem_tmp_verify.seekg(0, std::ios_base::beg);
+                fast_copy(mem_tmp_verify, output, written);
+                if (output.bad()) return false;
+
+                already_verified_bytes_outputted = already_verified_bytes;
+              }
+              
             }
 
             precompressed_stream_size += written;
@@ -735,13 +786,6 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
 
           print_to_log(PRECOMP_DEBUG_LOG, "Compressed size: %lli\n", precompressor->original_stream_size);
           print_to_log(PRECOMP_DEBUG_LOG, "Can be decompressed to %lli bytes\n", precompressed_stream_size);
-
-          // ensure precompressed is ready to be read from again
-          precompressed_tmp->reopen();
-          if (!precompressed_tmp->is_open()) {
-            throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
-          }
-          precompressed = std::move(precompressed_tmp);
         }
         catch (...) { continue; }  // TODO: print/record/report handler failed
 
@@ -753,33 +797,6 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input
         }
         anything_was_used = true;
 
-        // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
-        // going to write this stream, which means we can as well write any pending uncompressed data now
-        // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
-        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
-
-        // If the format allows for it, recurse inside the most likely newly decompressed data
-        if (formatHandler->recursion_allowed && false) {
-          auto recurse_tempfile_name = precomp_mgr.get_tempfile_name("recurse");
-          recursion_result r{};
-          try {
-            r = recursion_compress(precomp_mgr, precompressed_stream_size, *precompressed, recurse_tempfile_name, recursion_depth);
-          }
-          catch (...) {}  // TODO: print/record/report handler failed
-          if (r.success) {
-            auto rec_tmpfile = new PrecompTmpFile();
-            rec_tmpfile->open(r.file_name, std::ios_base::in | std::ios_base::binary);
-            precompressed = std::unique_ptr<IStreamLike>(rec_tmpfile);
-            auto recursion_filesize = r.file_length;
-            auto recursion_used = true;
-          }
-          else {
-            // ensure that the precompressed stream is ready to read from the start, as if recursion attempt never happened
-            precompressed->seekg(0, std::ios_base::beg);
-          }
-        }
-
-        fast_copy(*precompressed, output, precompressed_stream_size);
         if (is_partial_stream) {
           // partial stream finish marker
           output.put(static_cast<char>(std::byte { 0b10000000 }));
@@ -938,9 +955,9 @@ int wrap_with_exception_catch(std::function<int()> func)
   }
 }
 
-int compress_file(Precomp& precomp_mgr, IStreamLike& input, uintmax_t input_length, OStreamLike& output, unsigned int recursion_depth)
+int compress_file(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth)
 {
-  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, input_length, output, recursion_depth); });
+  return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, output, recursion_depth); });
 }
 
 class RecursionPasstroughStream: public PrecompPcfRecompressor, public IStreamLike {
@@ -1396,7 +1413,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed
 
   precomp_mgr.ignore_offsets.resize(precomp_mgr.ignore_offsets.size() + 1);
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", new_recursion_depth);
-  const auto ret_code = compress_file(precomp_mgr, *recursion_input, decompressed_bytes, *recursion_output, new_recursion_depth);
+  const auto ret_code = compress_file(precomp_mgr, *recursion_input, *recursion_output, new_recursion_depth);
   if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
   tmp_r.success = ret_code == RETURN_SUCCESS;
 
@@ -1553,7 +1570,7 @@ CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
 void PrecompPrintResults(Precomp* precomp_mgr) { precomp_mgr->statistics.print_results(); }
 
 int PrecompPrecompress(Precomp* precomp_mgr) {
-  return compress_file(*precomp_mgr, *precomp_mgr->fin, precomp_mgr->switches.fin_length, *precomp_mgr->fout, 0);
+  return compress_file(*precomp_mgr, *precomp_mgr->fin, *precomp_mgr->fout, 0);
 }
 
 int PrecompRecompress(Precomp* precomp_mgr) {
