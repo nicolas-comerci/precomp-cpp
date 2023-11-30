@@ -440,6 +440,8 @@ class MemVecIOStream: public IStreamLike, public OStreamLike {
 public:
   explicit MemVecIOStream() {}
 
+  const std::vector<std::byte>& vector() { return memvec; }
+
   MemVecIOStream& read(char* buff, std::streamsize count) override {
     if (memvec.empty() || pos > memvec.size()) {
       _gcount = 0;

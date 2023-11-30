@@ -496,6 +496,33 @@ public:
 
 int compress_file(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth);
 
+class PrecompPcfPrecompressor : public ProcessorAdapter {
+public:
+  uint32_t avail_in = 0;
+  std::byte* next_in = nullptr;
+  uint32_t avail_out = 0;
+  std::byte* next_out = nullptr;
+
+  explicit PrecompPcfPrecompressor(
+    Precomp& precomp_mgr,
+    unsigned int recursion_depth
+  ) :
+    ProcessorAdapter(
+      &avail_in, &next_in, &avail_out, &next_out,
+      [recursion_depth, &precomp_mgr](IStreamLike& input, OStreamLike& output) -> bool
+      {
+        auto buffered_istream = BufferedIStream(&input, precomp_mgr.get_tempfile_name("recursion_input_buffer"));
+        precomp_mgr.ignore_offsets.resize(precomp_mgr.ignore_offsets.size() + 1);
+        const auto result = compress_file(precomp_mgr, buffered_istream, output, recursion_depth);
+        precomp_mgr.ignore_offsets.pop_back();
+        // We use this to Precompress recursively on the fly, we don't want to fail if nothing was recompressed
+        // because that data already got outputted anyways most likely, and we at most waste 2 bytes (recursion header + end marker)
+        return result >= RETURN_SUCCESS;
+      }
+    )
+  {}
+};
+
 int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth) {
   if (recursion_depth == 0) {
       write_header(precomp_mgr);
@@ -589,6 +616,17 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
         // they are not really outputted, its more like "with the precompressed data that is already outputted you can recompress this amount of bytes"
         uint64_t already_verified_bytes_outputted = 0;
         const auto output_chunk_size = 1 * 1024 * 1024; // TODO: make this configurable
+
+        // For recursion we will take the raw outputted data (before chunking or adding headers) and feed it to a PrecompPcfPrecompressor.
+        // It will handle the chunking at that new recursion level, we only need to leave a header with a recursion flag.
+        // Verification runs always on the stream without recursion, as far as we are concerned precompressing again should be a process that cannot
+        // fail, at worst it should just not find anything inside. Any failure is critical and the whole process should fail.
+        // Similarly the correctness of recompressing this recursively precompressed data is derived from the verification of each "leaf" stream,
+        // and no further verification should be required.
+        auto recurse_precompressor = PrecompPcfPrecompressor(precomp_mgr, recursion_depth + 1);
+        std::vector<std::byte> recursion_out{};
+        recursion_out.resize(CHUNK);
+        MemVecIOStream mem_tmp_recurse;
 
         try {
           precompressor = formatHandler->make_precompressor(precomp_mgr.format_handler_tools, precomp_mgr.switches, checkbuf);
@@ -731,6 +769,9 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
               // during verification we hold the data on a temporary file until we get some more verified data, at which point we dump it to the
               // real output
               if (already_verified_bytes == already_verified_bytes_outputted) {
+                if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
+                  mem_tmp_recurse.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
+                }
                 mem_tmp_verify.seekg(0, std::ios_base::beg);
                 fast_copy(mem_tmp_verify, *verify_tmpfile, written);
                 if (verify_tmpfile->bad()) return false;
@@ -750,17 +791,77 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                   if (!verify_tmpfile->is_open()) {
                     throw PrecompError(ERR_TEMP_FILE_DISAPPEARED);
                   }
-                  fast_copy(*verify_tmpfile, output, verify_tmpfile_size);
+
+                  // If we should recursively precompress then do it, either just dump the precompressed data
+                  if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
+                    recurse_precompressor.avail_in = mem_tmp_recurse.tellg();
+                    recurse_precompressor.next_in = const_cast<std::byte*>(mem_tmp_recurse.vector().data());  // bleehrg! find better way to do this
+                    recurse_precompressor.avail_out = CHUNK;
+                    recurse_precompressor.next_out = recursion_out.data();
+
+                    PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
+                    while (recursive_precompression_ret == PP_OK) {
+                      recursive_precompression_ret = recurse_precompressor.process(is_last_block);
+
+                      // if there is any recursively precompressed data we output it to the actual output stream
+                      if (recurse_precompressor.avail_out < CHUNK) {
+                        // TODO: do it lol
+                        recurse_precompressor.avail_out = CHUNK;
+                        recurse_precompressor.next_out = recursion_out.data();
+                      }
+                      else if (recurse_precompressor.avail_in == 0) {
+                        // all input consumed and yet no new data outputted, we are done with what can be done for recursively precompressing up to this chunk
+                        break;
+                      }
+                    }
+                    if (recursive_precompression_ret == PP_ERROR) {
+                      throw std::runtime_error("Error during precompression recursion");
+                    }
+                  }
+                  //else {
+                    fast_copy(*verify_tmpfile, output, verify_tmpfile_size);
+                  //}
+
                   // reopen yet again so we can start outputting from the start of the tempfile if needed
                   verify_tmpfile->reopen();
                 }
-                mem_tmp_verify.seekg(0, std::ios_base::beg);
-                fast_copy(mem_tmp_verify, output, written);
-                if (output.bad()) return false;
+
+                // If we should recursively precompress then do it, either just dump the precompressed data
+                if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
+                  recurse_precompressor.avail_in = current_chunk_size;
+                  recurse_precompressor.next_in = out_buf.data();
+                  recurse_precompressor.avail_out = CHUNK;
+                  recurse_precompressor.next_out = recursion_out.data();
+
+                  PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
+                  while (recursive_precompression_ret == PP_OK) {
+                    recursive_precompression_ret = recurse_precompressor.process(is_last_block);
+
+                    // if there is any recursively precompressed data we output it to the actual output stream
+                    if (recurse_precompressor.avail_out < CHUNK) {
+                      // TODO: do it lol
+                      recurse_precompressor.avail_out = CHUNK;
+                      recurse_precompressor.next_out = recursion_out.data();
+                    }
+                    else if (recurse_precompressor.avail_in == 0 && !is_last_block) {
+                      // All input consumed and yet no new data outputted, we are done with what can be done for recursively precompressing up to this chunk.
+                      // If it is the last block we don't break so that the precompressor can actually get an EOF and finish.
+                      break;
+                    }
+                  }
+
+                  if (is_last_block && recursive_precompression_ret != PP_STREAM_END) {
+                    throw std::runtime_error("Error during precompression recursion");
+                  }
+                }
+                //else {
+                  mem_tmp_verify.seekg(0, std::ios_base::beg);
+                  fast_copy(mem_tmp_verify, output, written);
+                  if (output.bad()) return false;
+                //}
 
                 already_verified_bytes_outputted = already_verified_bytes;
               }
-              
             }
 
             precompressed_stream_size += written;
@@ -801,6 +902,28 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
         anything_was_used = true;
 
         if (is_partial_stream) {
+          // If the stream is partial and we are using recursion then we need to truncate the recursive stream
+          if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
+            recurse_precompressor.avail_in = 0;  // no more data in, forcing eof
+            recurse_precompressor.avail_out = CHUNK;
+            recurse_precompressor.next_out = recursion_out.data();
+
+            PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
+            while (recursive_precompression_ret == PP_OK) {
+              recursive_precompression_ret = recurse_precompressor.process(true);
+
+              // if there is any recursively precompressed data we output it to the actual output stream
+              if (recurse_precompressor.avail_out < CHUNK) {
+                // TODO: do it lol
+                recurse_precompressor.avail_out = CHUNK;
+                recurse_precompressor.next_out = recursion_out.data();
+              }
+            }
+            if (recursive_precompression_ret == PP_ERROR) {
+              throw std::runtime_error("Error during precompression recursion");
+            }
+          }
+
           // partial stream finish marker
           output.put(static_cast<char>(std::byte { 0b10000000 }));
         }
