@@ -550,6 +550,74 @@ public:
     std::string get_digest();
 };
 
+// A type of IStreamLike that assumes it will wrap a non-seekable IStreamLike so it buffers all the read data so that it can seek back even though
+// it would normally be impossible.
+// It requires the implementation of the set_new_buffer_start_pos, which should be called as soon as you know you are completely done with some data.
+class IBufferedIStream : public IStreamLike {
+public:
+  // Discards any data before the new start pos, also sets the current pos to this new position
+  virtual void set_new_buffer_start_pos(uint64_t new_buffer_start_pos) = 0;
+};
+
+// In case you have a seekable IStreamLike but want to use it where a IBufferedIStream is required. This just wraps the istream and ignores set_new_buffer_start_pos.
+// Seems to defeat the point but this allows code to just assume you get a IBufferedIStream and properly call set_new_buffer_start_pos when needed without having
+// to check for anything.
+class FakeBufferedIStream : public IBufferedIStream {
+  IStreamLike* istream;
+public:
+  FakeBufferedIStream() = delete;
+  explicit FakeBufferedIStream(IStreamLike* istream_) : istream(istream_) {}
+
+  void set_new_buffer_start_pos(uint64_t new_buffer_start_pos) override {}
+  FakeBufferedIStream& read(char* buff, std::streamsize count) override {
+    istream->read(buff, count);
+    return *this;
+  }
+  std::streamsize gcount() override { return istream->gcount(); }
+  std::istream::pos_type tellg() override { return istream->tellg(); }
+  FakeBufferedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override {
+    istream->seekg(offset, dir);
+    return *this;
+  }
+  bool eof() override { return istream->eof(); }
+  bool good() override { return istream->good(); }
+  bool bad() override { return istream->bad(); }
+  void clear() override { istream->clear(); }
+};
+
+class BufferedIStream: public IBufferedIStream {
+  IStreamLike* istream;
+  PrecompTmpFile buffer;
+  uint64_t buffer_size = 0;
+  uint64_t buffer_start_pos = 0;
+  uint64_t current_pos = 0;
+  std::streamsize gcount_ = 0;
+  std::optional<uint64_t> istream_eof_pos = std::nullopt;
+
+  std::string temporary_file_name;
+
+  void ensure_buffer_is_open() {
+    if (buffer.is_open()) return;
+    buffer.open(temporary_file_name, std::ios_base::in | std::ios_base::out | std::ios_base::binary | std::ios_base::trunc);
+  }
+public:
+  BufferedIStream() = delete;
+  explicit BufferedIStream(IStreamLike* istream_, std::string temporary_file_name_): istream(istream_), temporary_file_name(std::move(temporary_file_name_)) {}
+
+  void set_new_buffer_start_pos(uint64_t new_buffer_start_pos) override;
+
+  BufferedIStream& read(char* buff, std::streamsize count) override;
+  std::streamsize gcount() override { return gcount_; }
+
+  std::istream::pos_type tellg() override { return current_pos; }
+  BufferedIStream& seekg(std::istream::off_type offset, std::ios_base::seekdir dir) override;
+
+  bool eof() override { return istream_eof_pos.has_value() && istream_eof_pos.value() == current_pos; }
+  bool good() override { return istream->good(); }
+  bool bad() override { return istream->bad(); }
+  void clear() override { istream->clear(); }
+};
+
 #ifdef DEBUG
 /*
  * The purpose of this class is to allow debugging when developing a new type of ISteamLike (most likely by a consumer with a GenericIStreamLike) by comparing

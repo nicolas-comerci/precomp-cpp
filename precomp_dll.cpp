@@ -413,7 +413,7 @@ LIBPRECOMP void PrecompGetCopyrightMsg(char* msg) {
   }
 }
 
-void end_uncompressed_data(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, const long long& uncompressed_pos, std::optional<long long>& uncompressed_length) {
+void end_uncompressed_data(IBufferedIStream& input, OStreamLike& output, const long long& uncompressed_pos, std::optional<long long>& uncompressed_length) {
   if (!uncompressed_length.has_value()) return;
 
   fout_fput_vlint(output, *uncompressed_length);
@@ -421,6 +421,9 @@ void end_uncompressed_data(Precomp& precomp_mgr, IStreamLike& input, OStreamLike
   // fast copy of uncompressed data
   input.seekg(uncompressed_pos, std::ios_base::beg);
   fast_copy(input, output, *uncompressed_length);
+
+  // Tell input it can discard the uncompressed data from it's buffer
+  input.set_new_buffer_start_pos(uncompressed_pos + *uncompressed_length);
 
   uncompressed_length = std::nullopt;
 }
@@ -491,9 +494,9 @@ public:
     ) {}
 };
 
-int compress_file(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth);
+int compress_file(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth);
 
-int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth) {
+int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth) {
   if (recursion_depth == 0) {
       write_header(precomp_mgr);
       precomp_mgr.init_format_handlers();
@@ -642,7 +645,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& ou
             if (!precomp_mgr.switches.verify_precompressed) {
               if (blockCount == 0) {
                 const auto saved_pos = input.tellg();
-                end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+                end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
                 input.seekg(saved_pos, std::ios_base::beg);
               }
 
@@ -737,7 +740,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& ou
                   is_first_verified_block = false;
 
                   const auto saved_pos = input.tellg();
-                  end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+                  end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
                   input.seekg(saved_pos, std::ios_base::beg);
                 }
                 // If we have any data in the verify_tmpfile from before we had any verified data, dump it now
@@ -875,7 +878,7 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& ou
         // We got successful stream and if required it was verified, even if we need to recurse and recursion fails/doesn't find anything, we already know we are
         // going to write this stream, which means we can as well write any pending uncompressed data now
         // (might allow any pipe/code using the library waiting on data from Precomp to be able to work with it while we do recursive processing)
-        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+        end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
 
         // If the format allows for it, recurse inside the most likely newly decompressed data
         if (formatHandler->recursion_allowed) {
@@ -921,13 +924,18 @@ int compress_file_impl(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& ou
       // If there is a maximum uncompressed_block_length we dump the current uncompressed data as a single block, this makes it so anything waiting on data from Precomp
       // can get some data to possibly process earlier
       if (precomp_mgr.switches.uncompressed_block_length != 0 && uncompressed_length >= precomp_mgr.switches.uncompressed_block_length) {
-        end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+        end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
       }
+    }
+    else {
+      // We found data and precompressed it, and have our current input_file_pos after that data, we have no need for any data prior to this
+      // as it was all already precompressed or outputted as uncompressed data
+      input.set_new_buffer_start_pos(input_file_pos);
     }
   }
 
   // Dump any trailing uncompressed data in case nothing was detected at the end of the stream
-  end_uncompressed_data(precomp_mgr, input, output, uncompressed_pos, uncompressed_length);
+  end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
 
   // Stream end marker
   output.put(0xFF);
@@ -955,7 +963,7 @@ int wrap_with_exception_catch(std::function<int()> func)
   }
 }
 
-int compress_file(Precomp& precomp_mgr, IStreamLike& input, OStreamLike& output, unsigned int recursion_depth)
+int compress_file(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth)
 {
   return wrap_with_exception_catch([&]() { return compress_file_impl(precomp_mgr, input, output, recursion_depth); });
 }
@@ -1405,6 +1413,8 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed
   }
 
   auto recursion_input = std::make_unique<IStreamLikeView>(&tmpfile, decompressed_bytes);
+  // The recursion input here is always backed by a PrecompTmpFile or a memory stream and is thus seekable, so we just use a FakeBufferedIStream
+  auto recursion_input_fake_buffered = FakeBufferedIStream(recursion_input.get());
 
   tmp_r.file_name = out_filename;
   auto fout = new std::ofstream();
@@ -1413,7 +1423,7 @@ recursion_result recursion_compress(Precomp& precomp_mgr, long long decompressed
 
   precomp_mgr.ignore_offsets.resize(precomp_mgr.ignore_offsets.size() + 1);
   print_to_log(PRECOMP_DEBUG_LOG, "Recursion start - new recursion depth %i\n", new_recursion_depth);
-  const auto ret_code = compress_file(precomp_mgr, *recursion_input, *recursion_output, new_recursion_depth);
+  const auto ret_code = compress_file(precomp_mgr, recursion_input_fake_buffered, *recursion_output, new_recursion_depth);
   if (ret_code != RETURN_SUCCESS && ret_code != RETURN_NOTHING_DECOMPRESSED) throw PrecompError(ret_code);
   tmp_r.success = ret_code == RETURN_SUCCESS;
 
@@ -1570,7 +1580,9 @@ CResultStatistics* PrecompGetResultStatistics(Precomp* precomp_mgr) {
 void PrecompPrintResults(Precomp* precomp_mgr) { precomp_mgr->statistics.print_results(); }
 
 int PrecompPrecompress(Precomp* precomp_mgr) {
-  return compress_file(*precomp_mgr, *precomp_mgr->fin, *precomp_mgr->fout, 0);
+  std::unique_ptr<IStreamLike> fin = std::move(precomp_mgr->fin);
+  auto buffered_istream = std::make_unique<BufferedIStream>(fin.get(), precomp_mgr->get_tempfile_name("input_buffer"));
+  return compress_file(*precomp_mgr, *buffered_istream, *precomp_mgr->fout, 0);
 }
 
 int PrecompRecompress(Precomp* precomp_mgr) {

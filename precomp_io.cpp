@@ -503,6 +503,72 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
   return temp_png;
 }
 
+void BufferedIStream::set_new_buffer_start_pos(uint64_t new_buffer_start_pos) {
+  if (new_buffer_start_pos < buffer_start_pos) throw std::runtime_error("Cant set buffering before already discarded data");
+  if (new_buffer_start_pos > buffer_start_pos + buffer_size) throw std::runtime_error("Cant set new buffering start pos in a way that would skip data");
+
+  // Copy any remaining data to the start of the temporary file and truncate it
+  const auto new_buffer_size = buffer_size - (new_buffer_start_pos - buffer_start_pos);
+
+  std::vector<char> old_data;
+  if (new_buffer_size != 0) {
+    old_data.resize(new_buffer_size);
+
+    const auto buffer_old_data_pos = new_buffer_start_pos - buffer_start_pos;
+    buffer.seekg(buffer_old_data_pos, std::ios_base::beg);
+    buffer.read(old_data.data(), new_buffer_size);
+  }
+  buffer.close();
+  std::filesystem::remove(buffer.file_path);
+  buffer.reopen();
+  if (new_buffer_size > 0) {
+    buffer.write(old_data.data(), new_buffer_size);
+  }
+  buffer_size = new_buffer_size;
+  buffer_start_pos = new_buffer_start_pos;
+  current_pos = new_buffer_start_pos;
+}
+
+BufferedIStream& BufferedIStream::read(char* buff, std::streamsize count) {
+  const auto initial_current_pos = current_pos;
+  seekg(count, std::ios_base::cur);
+  const auto final_current_pos = current_pos;
+  gcount_ = final_current_pos - initial_current_pos;
+  buffer.seekg(initial_current_pos - buffer_start_pos, std::ios_base::beg);
+  buffer.read(buff, count);
+  return *this;
+}
+
+BufferedIStream& BufferedIStream::seekg(std::istream::off_type offset, std::ios_base::seekdir dir) {
+  if (dir == std::ios_base::end) throw std::runtime_error("BufferedIStream: seekg doesn't implement std::ios_base::end as a dir");
+  const auto absolute_offset = dir == std::ios_base::cur ? offset + current_pos : offset;
+  if (absolute_offset < buffer_start_pos) throw std::runtime_error("BufferedIStream: attempted to seek to already discarded data");
+  const auto buffer_offset = absolute_offset - buffer_start_pos;
+  ensure_buffer_is_open();
+
+  // Read data is not in buffer, read it from the istream and save it on the buffer
+  if (buffer_offset > buffer_size) {
+    const auto to_read = buffer_offset - buffer_size;
+    buffer.seekg(buffer_size, std::ios_base::beg);
+    std::vector<char> in_buf;
+    in_buf.resize(to_read);
+    istream->read(in_buf.data(), to_read);
+    const auto just_read = istream->gcount();
+
+    buffer.seekp(buffer_size, std::ios_base::beg);
+    buffer.write(in_buf.data(), just_read);
+    buffer_size += just_read;
+    current_pos = buffer_start_pos + buffer_size;
+    if (just_read < to_read) {
+      istream_eof_pos = current_pos;
+    }
+  }
+  else {
+    current_pos = absolute_offset;
+  }
+  return *this;
+}
+
 #ifdef DEBUG
 void DebugComparatorIStreamLike::compare_status() {
   long long known_good_pos = known_good->tellg();
