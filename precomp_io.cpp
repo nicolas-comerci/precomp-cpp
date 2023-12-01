@@ -526,7 +526,6 @@ void BufferedIStream::set_new_buffer_start_pos(uint64_t new_buffer_start_pos) {
   }
   buffer_size = new_buffer_size;
   buffer_start_pos = new_buffer_start_pos;
-  current_pos = new_buffer_start_pos;
 }
 
 BufferedIStream& BufferedIStream::read(char* buff, std::streamsize count) {

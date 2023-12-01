@@ -557,7 +557,7 @@ public:
 // It requires the implementation of the set_new_buffer_start_pos, which should be called as soon as you know you are completely done with some data.
 class IBufferedIStream : public IStreamLike {
 public:
-  // Discards any data before the new start pos, also sets the current pos to this new position
+  // Discards any data before the new start pos
   virtual void set_new_buffer_start_pos(uint64_t new_buffer_start_pos) = 0;
 };
 

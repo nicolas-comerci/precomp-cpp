@@ -602,6 +602,8 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
           if (ignore_this_position) continue;
         }
 
+        input.seekg(input_file_pos, std::ios_base::beg);
+
         bool quick_check_result = false;
         try {
           quick_check_result = formatHandler->quick_check(checkbuf, reinterpret_cast<uintptr_t>(&input), input_file_pos);
@@ -632,8 +634,6 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
           precompressor = formatHandler->make_precompressor(precomp_mgr.format_handler_tools, precomp_mgr.switches, checkbuf);
 
           precomp_mgr.call_progress_callback();
-
-          input.seekg(input_file_pos, std::ios_base::beg);
 
           std::unique_ptr<PrecompTmpFile> verify_tmpfile = std::make_unique<PrecompTmpFile>();
           verify_tmpfile->open(precomp_mgr.get_tempfile_name("verify_cosify"), std::ios_base::in | std::ios_base::out | std::ios_base::app | std::ios_base::binary);
@@ -861,6 +861,7 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                 //}
 
                 already_verified_bytes_outputted = already_verified_bytes;
+                input.set_new_buffer_start_pos(input_file_pos + already_verified_bytes_outputted);
               }
             }
 
@@ -881,7 +882,6 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
             blockCount == 0 ||
             already_verified_bytes == 0 && precomp_mgr.switches.verify_precompressed
           ) {
-            input.seekg(input_file_pos, std::ios_base::beg);
             continue;
           }
 
@@ -963,6 +963,8 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
           }
           if (ignore_this_position) continue;
         }
+
+        input.seekg(input_file_pos, std::ios_base::beg);
 
         bool quick_check_result = false;
         try {
@@ -1053,7 +1055,7 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
     else {
       // We found data and precompressed it, and have our current input_file_pos after that data, we have no need for any data prior to this
       // as it was all already precompressed or outputted as uncompressed data
-      input.set_new_buffer_start_pos(input_file_pos);
+      input.set_new_buffer_start_pos(input_file_pos + 1);  // +1 as we want the pos for the next iteration, not the current one
     }
   }
 
