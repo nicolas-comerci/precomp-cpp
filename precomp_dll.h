@@ -271,7 +271,10 @@ public:
   // Precompressors are allowed to not drop any data at the start of the entire stream or block, not sure how you would make
   // that work, but didn't want to impose it as a restriction
   virtual void dump_extra_stream_header_data(OStreamLike& output) const {}
-  virtual void dump_extra_block_header_data(OStreamLike& output) {}
+  virtual void dump_extra_block_header_data(OStreamLike& output) const {}
+  // This informs the Precompressor that block was actually dumped and it can mutate its own state, discard data, etc, regarding the block
+  // that was officially dumped because it will no longer be needed.
+  virtual void block_dumped(OStreamLike& output) {}
 
   virtual void increase_detected_count() = 0;
   virtual void increase_precompressed_count() = 0;

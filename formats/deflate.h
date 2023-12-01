@@ -81,7 +81,8 @@ public:
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) const override;
-  void dump_extra_block_header_data(OStreamLike& output) override;
+  void dump_extra_block_header_data(OStreamLike& output) const override;
+  void block_dumped(OStreamLike& output) override;
 
   void increase_detected_count() override { precomp_tools->increase_detected_count("Brute mode"); }
   void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("Brute mode"); }

@@ -53,7 +53,8 @@ void DeflateWithHeaderPrecompressor::dump_extra_stream_header_data(OStreamLike& 
   output.write(reinterpret_cast<const char*>(pre_deflate_header.data()), pre_deflate_header.size() - 1);
   output.put(pre_deflate_header[pre_deflate_header.size() - 1] + 1);
 }
-void DeflateWithHeaderPrecompressor::dump_extra_block_header_data(OStreamLike& output) { return deflate_precompressor->dump_extra_block_header_data(output); }
+void DeflateWithHeaderPrecompressor::dump_extra_block_header_data(OStreamLike& output) const { return deflate_precompressor->dump_extra_block_header_data(output); }
+void DeflateWithHeaderPrecompressor::block_dumped(OStreamLike& output) { return deflate_precompressor->block_dumped(output); }
 
 class ZlibPrecompressor: public DeflateWithHeaderPrecompressor {
 public:

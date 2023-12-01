@@ -15,7 +15,8 @@ public:
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) const override;
-  void dump_extra_block_header_data(OStreamLike& output) override;
+  void dump_extra_block_header_data(OStreamLike& output) const override;
+  void block_dumped(OStreamLike& output) override;
 };
 
 bool zlib_header_check(const std::span<unsigned char> checkbuf_span);

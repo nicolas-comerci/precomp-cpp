@@ -133,12 +133,15 @@ PrecompProcessorReturnCode DeflatePrecompressor::process(bool input_eof) {
 void DeflatePrecompressor::dump_extra_stream_header_data(OStreamLike& output) const {
   fout_fput_vlint(output, 0);  // No Zlib header
 }
-void DeflatePrecompressor::dump_extra_block_header_data(OStreamLike& output) {
+void DeflatePrecompressor::dump_extra_block_header_data(OStreamLike& output) const {
   const auto new_recon_data_size = result.recon_data.size() - recon_data_written;
   fout_fput_vlint(output, new_recon_data_size);
   output.write(reinterpret_cast<const char*>(result.recon_data.data() + recon_data_written), new_recon_data_size);
-  recon_data_written += new_recon_data_size;
 }
+void DeflatePrecompressor::block_dumped(OStreamLike& output) {
+  recon_data_written = result.recon_data.size();
+}
+
 
 DeflateRecompressor::DeflateRecompressor(const DeflateFormatHeaderData& precomp_hdr_data, const std::function<void()>& _progress_callback)
   : PrecompFormatRecompressor(precomp_hdr_data, _progress_callback),
@@ -517,5 +520,6 @@ std::unique_ptr<PrecompFormatHeaderData> DeflateFormatHandler::read_format_heade
   auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
   unsigned hdr_length;
   fin_fget_deflate_hdr(input, fmt_hdr->rdres, precomp_hdr_flags, fmt_hdr->stream_hdr, hdr_length, inc_last_hdr_byte());
+  fmt_hdr->recursion_used = true;
   return fmt_hdr;
 }

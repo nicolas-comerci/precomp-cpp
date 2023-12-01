@@ -331,6 +331,7 @@ std::unique_ptr<precompression_result> attempt_precompression(Precomp& precomp_m
 std::unique_ptr<PrecompFormatHeaderData> BZip2FormatHandler::read_format_header(IStreamLike& input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<BZip2FormatHeaderData>();
   fmt_hdr->level = input.get();
+  fmt_hdr->recursion_used = true;
   return fmt_hdr;
 }
 
