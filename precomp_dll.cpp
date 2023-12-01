@@ -523,6 +523,49 @@ public:
   {}
 };
 
+bool compare_verified_chunk(Precomp& precomp_mgr, IStreamLike& input, uint32_t output_data_size, uint64_t& already_verified_bytes, long long input_file_pos,
+  std::vector<char>& original_block_data, std::vector<std::byte>& verification_vec_out) {
+  // Check how much was actually outputted from the recompressor and reset the output buffer for next iteration
+  const auto recompressed_block_amount = output_data_size;
+
+  // Check hash of recompressed data by reseeking on input to get the same data and calculate the hash
+  const auto saved_pos = input.tellg();
+  input.seekg(input_file_pos + already_verified_bytes, std::ios_base::beg);
+  original_block_data.resize(recompressed_block_amount);
+  input.read(original_block_data.data(), recompressed_block_amount);
+  auto original_sha1_block_ostream = Sha1Ostream();
+  original_sha1_block_ostream.write(original_block_data.data(), recompressed_block_amount);
+  const auto original_data_sha1 = original_sha1_block_ostream.get_digest();
+
+  auto verify_sha1_block_ostream = Sha1Ostream();
+  verify_sha1_block_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), recompressed_block_amount);
+  const auto verified_data_sha1 = verify_sha1_block_ostream.get_digest();
+
+  // restore input to its previous pos to not interfere with the Processor
+  input.seekg(saved_pos, std::ios_base::beg);
+  if (original_data_sha1 != verified_data_sha1) {
+    // if hashes mismatch, attempt to fix the mismatch with penalty bytes
+    const auto original_block_data_ptr = reinterpret_cast<unsigned char*>(original_block_data.data());
+    auto original_block_view = memiostream(original_block_data_ptr, original_block_data_ptr + recompressed_block_amount, false);
+    const auto recompressed_block_data_ptr = reinterpret_cast<unsigned char*>(verification_vec_out.data());
+    auto recompressed_block_view = memiostream(recompressed_block_data_ptr, recompressed_block_data_ptr + recompressed_block_amount, false);
+    auto [identical_bytes, penalty_bytes] = compare_files_penalty(
+      precomp_mgr.format_handler_tools.progress_callback, original_block_view, recompressed_block_view, recompressed_block_amount
+    );
+
+    if (identical_bytes == recompressed_block_amount) {
+      print_to_console("\n PENALTY BYTES HUBIERAN HECHO PATRIA \n");
+    }
+    else {
+      print_to_console("\n NI SIQUIERA PENALTY BYTES ARREGLAN ACA \n");
+    }
+
+    return false;
+  }
+  already_verified_bytes += recompressed_block_amount;
+  return true;  
+}
+
 int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLike& output, unsigned int recursion_depth) {
   if (recursion_depth == 0) {
       write_header(precomp_mgr);
@@ -625,6 +668,10 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
         // fail, at worst it should just not find anything inside. Any failure is critical and the whole process should fail.
         // Similarly the correctness of recompressing this recursively precompressed data is derived from the verification of each "leaf" stream,
         // and no further verification should be required.
+        const bool use_recursion = formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth;
+        if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth <= recursion_depth) {
+          precomp_mgr.statistics.max_recursion_depth_reached = true;
+        }
         auto recurse_precompressor = PrecompPcfPrecompressor(precomp_mgr, recursion_depth + 1);
         std::vector<std::byte> recursion_out{};
         recursion_out.resize(CHUNK);
@@ -703,63 +750,16 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
               mem_tmp_verify.read(reinterpret_cast<char*>(verification_vec_in.data()), written);
 
               // Recompress using PrecompPcfRecompressor reading from verification_vec, dump output to verify_sha1_ostream
-              verify_recompressor.avail_in = written;
-              verify_recompressor.next_in = verification_vec_in.data();
-              verify_recompressor.avail_out = CHUNK;
-              verify_recompressor.next_out = verification_vec_out.data();
-              PrecompProcessorReturnCode verification_ret = PP_OK;
-              bool is_first_verified_block = true;
-              while (verification_ret == PP_OK) {
-                verification_ret = verify_recompressor.process(is_last_block);
-
-                // if there is any recompressed data we output it to verify_sha1_ostream
-                if (verify_recompressor.avail_out < CHUNK) {
-                  // Check how much was actually outputted from the recompressor and reset the output buffer for next iteration
-                  const auto recompressed_block_amount = CHUNK - verify_recompressor.avail_out;
-                  verify_recompressor.avail_out = CHUNK;
-                  verify_recompressor.next_out = verification_vec_out.data();
-                  
-                  // Check hash of recompressed data by reseeking on input to get the same data and calculate the hash
-                  const auto saved_pos = input.tellg();
-                  input.seekg(input_file_pos + already_verified_bytes, std::ios_base::beg);
-                  original_block_data.resize(recompressed_block_amount);
-                  input.read(original_block_data.data(), recompressed_block_amount);
-                  auto original_sha1_block_ostream = Sha1Ostream();
-                  original_sha1_block_ostream.write(original_block_data.data(), recompressed_block_amount);
-                  const auto original_data_sha1 = original_sha1_block_ostream.get_digest();
-
-                  auto verify_sha1_block_ostream = Sha1Ostream();
-                  verify_sha1_block_ostream.write(reinterpret_cast<char*>(verification_vec_out.data()), recompressed_block_amount);
-                  const auto verified_data_sha1 = verify_sha1_block_ostream.get_digest();
-
-                  // restore input to its previous pos to not interfere with the Processor
-                  input.seekg(saved_pos, std::ios_base::beg);
-                  if (original_data_sha1 != verified_data_sha1) {
-                    // if hashes mismatch, attempt to fix the mismatch with penalty bytes
-                    const auto original_block_data_ptr = reinterpret_cast<unsigned char*>(original_block_data.data());
-                    auto original_block_view = memiostream(original_block_data_ptr, original_block_data_ptr + recompressed_block_amount, false);
-                    const auto recompressed_block_data_ptr = reinterpret_cast<unsigned char*>(verification_vec_out.data());
-                    auto recompressed_block_view = memiostream(recompressed_block_data_ptr, recompressed_block_data_ptr + recompressed_block_amount, false);
-                    auto [identical_bytes, penalty_bytes] = compare_files_penalty(
-                      precomp_mgr.format_handler_tools.progress_callback, original_block_view, recompressed_block_view, recompressed_block_amount
-                    );
-
-                    if (identical_bytes == recompressed_block_amount) {
-                      print_to_console("\n PENALTY BYTES HUBIERAN HECHO PATRIA \n");
-                    }
-                    else {
-                      print_to_console("\n NI SIQUIERA PENALTY BYTES ARREGLAN ACA \n");
-                    }
-
-                    return false;
-                  }
-                  already_verified_bytes += recompressed_block_amount;
+              PrecompProcessorReturnCode verification_ret = process_and_exhaust_output(
+                verify_recompressor,
+                verification_vec_in.data(),
+                written,
+                verification_vec_out,
+                is_last_block,
+                [&](uint32_t output_data_size) -> bool {
+                  return compare_verified_chunk(precomp_mgr, input, output_data_size, already_verified_bytes, input_file_pos, original_block_data, verification_vec_out);
                 }
-                else if (verify_recompressor.avail_in == 0) {
-                  // all input consumed and yet no new data outputted, we are done with what can be done for recompression up to this chunk
-                  break;
-                }
-              }
+              );
               if (verification_ret == PP_ERROR || verification_ret == PP_STREAM_END && !is_last_block) {
                 // something went wrong here
                 return false;
@@ -769,7 +769,7 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
               // during verification we hold the data on a temporary file until we get some more verified data, at which point we dump it to the
               // real output
               if (already_verified_bytes == already_verified_bytes_outputted) {
-                if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
+                if (use_recursion) {
                   mem_tmp_recurse.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
                 }
                 mem_tmp_verify.seekg(0, std::ios_base::beg);
@@ -777,9 +777,7 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                 if (verify_tmpfile->bad()) return false;
               }
               else {
-                if (is_first_verified_block) {
-                  is_first_verified_block = false;
-
+                if (already_verified_bytes_outputted == 0) {
                   const auto saved_pos = input.tellg();
                   end_uncompressed_data(input, output, uncompressed_pos, uncompressed_length);
                   input.seekg(saved_pos, std::ios_base::beg);
@@ -793,27 +791,18 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                   }
 
                   // If we should recursively precompress then do it, either just dump the precompressed data
-                  if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
-                    recurse_precompressor.avail_in = mem_tmp_recurse.tellg();
-                    recurse_precompressor.next_in = const_cast<std::byte*>(mem_tmp_recurse.vector().data());  // bleehrg! find better way to do this
-                    recurse_precompressor.avail_out = CHUNK;
-                    recurse_precompressor.next_out = recursion_out.data();
-
-                    PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
-                    while (recursive_precompression_ret == PP_OK) {
-                      recursive_precompression_ret = recurse_precompressor.process(is_last_block);
-
-                      // if there is any recursively precompressed data we output it to the actual output stream
-                      if (recurse_precompressor.avail_out < CHUNK) {
+                  if (use_recursion) {
+                    PrecompProcessorReturnCode recursive_precompression_ret = process_and_exhaust_output(
+                      recurse_precompressor,
+                      const_cast<std::byte*>(mem_tmp_recurse.vector().data()),  // bleehrg! find better way to do this,
+                      mem_tmp_recurse.tellg(),
+                      recursion_out,
+                      is_last_block,
+                      [](uint32_t output_data_size) -> bool {
                         // TODO: do it lol
-                        recurse_precompressor.avail_out = CHUNK;
-                        recurse_precompressor.next_out = recursion_out.data();
+                        return true;
                       }
-                      else if (recurse_precompressor.avail_in == 0) {
-                        // all input consumed and yet no new data outputted, we are done with what can be done for recursively precompressing up to this chunk
-                        break;
-                      }
-                    }
+                    );
                     if (recursive_precompression_ret == PP_ERROR) {
                       throw std::runtime_error("Error during precompression recursion");
                     }
@@ -827,29 +816,18 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                 }
 
                 // If we should recursively precompress then do it, either just dump the precompressed data
-                if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
-                  recurse_precompressor.avail_in = current_chunk_size;
-                  recurse_precompressor.next_in = out_buf.data();
-                  recurse_precompressor.avail_out = CHUNK;
-                  recurse_precompressor.next_out = recursion_out.data();
-
-                  PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
-                  while (recursive_precompression_ret == PP_OK) {
-                    recursive_precompression_ret = recurse_precompressor.process(is_last_block);
-
-                    // if there is any recursively precompressed data we output it to the actual output stream
-                    if (recurse_precompressor.avail_out < CHUNK) {
+                if (use_recursion) {
+                  PrecompProcessorReturnCode recursive_precompression_ret = process_and_exhaust_output(
+                    recurse_precompressor,
+                    out_buf.data(),
+                    current_chunk_size,
+                    recursion_out,
+                    is_last_block,
+                    [](uint32_t output_data_size) -> bool {
                       // TODO: do it lol
-                      recurse_precompressor.avail_out = CHUNK;
-                      recurse_precompressor.next_out = recursion_out.data();
+                      return true;
                     }
-                    else if (recurse_precompressor.avail_in == 0 && !is_last_block) {
-                      // All input consumed and yet no new data outputted, we are done with what can be done for recursively precompressing up to this chunk.
-                      // If it is the last block we don't break so that the precompressor can actually get an EOF and finish.
-                      break;
-                    }
-                  }
-
+                  );
                   if (is_last_block && recursive_precompression_ret != PP_STREAM_END) {
                     throw std::runtime_error("Error during precompression recursion");
                   }
@@ -903,22 +881,18 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
 
         if (is_partial_stream) {
           // If the stream is partial and we are using recursion then we need to truncate the recursive stream
-          if (formatHandler->recursion_allowed && precomp_mgr.switches.max_recursion_depth > recursion_depth) {
-            recurse_precompressor.avail_in = 0;  // no more data in, forcing eof
-            recurse_precompressor.avail_out = CHUNK;
-            recurse_precompressor.next_out = recursion_out.data();
-
-            PrecompProcessorReturnCode recursive_precompression_ret = PP_OK;
-            while (recursive_precompression_ret == PP_OK) {
-              recursive_precompression_ret = recurse_precompressor.process(true);
-
-              // if there is any recursively precompressed data we output it to the actual output stream
-              if (recurse_precompressor.avail_out < CHUNK) {
+          if (use_recursion) {
+            PrecompProcessorReturnCode recursive_precompression_ret = process_and_exhaust_output(
+              recurse_precompressor,
+              nullptr,
+              0,
+              recursion_out,
+              true,
+              [](uint32_t output_data_size) -> bool {
                 // TODO: do it lol
-                recurse_precompressor.avail_out = CHUNK;
-                recurse_precompressor.next_out = recursion_out.data();
+                return true;
               }
-            }
+            );
             if (recursive_precompression_ret == PP_ERROR) {
               throw std::runtime_error("Error during precompression recursion");
             }

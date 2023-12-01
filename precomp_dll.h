@@ -715,4 +715,42 @@ template <typename T>
   return process_from_input_and_output_chunks(processor, in_buf, input, out_buf, output_chunk_size, std::move(output_callback));
 }
 
+// This allows you to run a processor with given input data and then process until all the possible output that can be squeezed out without more input
+// data has been outputted. You get to set a callback to do what you need to do with the output data.
+template <typename T>
+PrecompProcessorReturnCode process_and_exhaust_output(
+  T& processor, std::byte* next_in, uint32_t avail_in,
+  std::vector<std::byte>& out_buffer, bool is_last_block,
+  std::function<bool(uint32_t)> output_callback
+) {
+  static_assert(!std::is_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  static_assert(!is_smart_pointer_v<T>, "No processor pointers, dereference it yourself!");
+  processor.avail_in = avail_in;
+  processor.next_in = next_in;
+  processor.avail_out = CHUNK;
+  processor.next_out = out_buffer.data();
+
+  PrecompProcessorReturnCode ret = PP_OK;
+  while (ret == PP_OK) {
+    ret = processor.process(is_last_block);
+
+    // if there is any outputted data give it using the callback
+    if (processor.avail_out < CHUNK) {
+      const bool success = output_callback(CHUNK - processor.avail_out);
+      if (!success) {
+        ret = PP_ERROR;
+        break;
+      }
+
+      processor.avail_out = CHUNK;
+      processor.next_out = out_buffer.data();
+    }
+    else if (processor.avail_in == 0 && !is_last_block) {
+      // all input consumed and yet no new data outputted, we are done squeezing data out from input given up to this point
+      break;
+    }
+  }
+  return ret;
+}
+
 #endif // PRECOMP_DLL_H
