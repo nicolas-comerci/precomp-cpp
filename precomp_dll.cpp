@@ -544,6 +544,7 @@ bool compare_verified_chunk(Precomp& precomp_mgr, IStreamLike& input, uint32_t o
   // restore input to its previous pos to not interfere with the Processor
   input.seekg(saved_pos, std::ios_base::beg);
   if (original_data_sha1 != verified_data_sha1) {
+    /*  TODO: PENALTY BYTES STUFF
     // if hashes mismatch, attempt to fix the mismatch with penalty bytes
     const auto original_block_data_ptr = reinterpret_cast<unsigned char*>(original_block_data.data());
     auto original_block_view = memiostream(original_block_data_ptr, original_block_data_ptr + recompressed_block_amount, false);
@@ -559,7 +560,7 @@ bool compare_verified_chunk(Precomp& precomp_mgr, IStreamLike& input, uint32_t o
     else {
       print_to_console("\n NI SIQUIERA PENALTY BYTES ARREGLAN ACA \n");
     }
-
+    */
     return false;
   }
   already_verified_bytes += recompressed_block_amount;
@@ -852,9 +853,8 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
             }
             output_chunk(
               *precompressor, output, recursive_to_output.tellp(), recursive_to_output.vector(), false,
-              header_byte | std::byte{ 0b10000000 }, formatTag, true
+              header_byte | std::byte{ 0b10000000 }, formatTag, false  // for partial stream there is no real last block, if finishes when it gets the partial stream finish marker
             );
-            output.write(reinterpret_cast<const char*>(recursive_to_output.vector().data()), recursive_to_output.tellp());
           }
 
           // partial stream finish marker
@@ -1221,6 +1221,8 @@ int decompress_file_impl(
             auto format_hdr_data = formatHandler->read_format_header(input, header1, formatHandlerHeaderByte);
             formatHandler->write_pre_recursion_data(output, *format_hdr_data);
 
+            const bool recursion_used = (header1 & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
+
             OStreamLike* patched_output = &output;
             // If there are penalty_bytes we get a patched ostream which will patch the needed bytes transparently while writing to the ostream
             std::unique_ptr<PenaltyBytesPatchedOStream> patched_ostream{};
@@ -1235,7 +1237,7 @@ int decompress_file_impl(
             recursion_out_buf.resize(CHUNK);
             auto recompressor = formatHandler->make_recompressor(*format_hdr_data, formatHandlerHeaderByte, precomp_tools);
 
-            bool is_input_eof = false;
+            bool is_finalize_stream = false;
             while (true) {
               const auto data_hdr = static_cast<std::byte>(input.get());
               const bool last_block = (data_hdr & std::byte{ 0b10000000 }) == std::byte{ 0b10000000 };
@@ -1263,22 +1265,23 @@ int decompress_file_impl(
                   input.read(reinterpret_cast<char*>(in_buf.data()), amt_to_read);
                   if (input.gcount() != amt_to_read) throw PrecompError(ERR_DURING_RECOMPRESSION);
                   remaining_block_bytes -= amt_to_read;
-                  is_input_eof = finish_stream && remaining_block_bytes == 0;
+                  is_finalize_stream = finish_stream && remaining_block_bytes == 0;
 
-                  if (!format_hdr_data->recursion_used) {
+                  if (!recursion_used) {
                     recompressor->avail_in = amt_to_read;
                     recompressor->next_in = reinterpret_cast<std::byte*>(in_buf.data());
                   }
                   else {
                     recurse_tmp.seekp(0, std::ios_base::beg);
                     const PrecompProcessorReturnCode recursion_ret = process_and_exhaust_output(
-                      recurse_recompressor, reinterpret_cast<std::byte*>(in_buf.data()), amt_to_read, recursion_out_buf, is_input_eof,
+                      recurse_recompressor, reinterpret_cast<std::byte*>(in_buf.data()), amt_to_read, recursion_out_buf,
+                      false, // recompressing PCF does not need last block indicator because it has its own end of stream marker
                       [&recurse_tmp, &recursion_out_buf] (uint32_t data_recompressed) {
                         recurse_tmp.write(reinterpret_cast<const char*>(recursion_out_buf.data()), data_recompressed);
                         return true;
                       }
                     );
-                    if (recursion_ret == PP_ERROR || (recursion_ret != PP_STREAM_END && is_input_eof)) {
+                    if (recursion_ret == PP_ERROR || (recursion_ret != PP_STREAM_END && is_finalize_stream)) {
                       throw PrecompError(ERR_DURING_RECOMPRESSION);
                     }
                     recompressor->avail_in = recurse_tmp.tellp();
@@ -1289,12 +1292,7 @@ int decompress_file_impl(
                 recompressor->avail_out = CHUNK;
                 recompressor->next_out = reinterpret_cast<std::byte*>(out_buf.data());
 
-                if (is_input_eof) {
-                  retval = recompressor->process(true);
-                }
-                else {
-                  retval = recompressor->process(false);
-                }
+                retval = recompressor->process(is_finalize_stream);
                 if (retval == PP_ERROR || (retval == PP_STREAM_END && !last_block)) {
                   // Error or premature end!
                   throw PrecompError(ERR_DURING_RECOMPRESSION);
