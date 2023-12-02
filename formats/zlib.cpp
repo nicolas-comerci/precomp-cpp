@@ -20,8 +20,20 @@ bool ZlibFormatHandler::quick_check(const std::span<unsigned char> buffer, uintp
 DeflateWithHeaderPrecompressor::DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches) :
   PrecompFormatPrecompressor(_precomp_tools),
   deflate_precompressor(std::make_unique<DeflatePrecompressor>(_precomp_tools, precomp_switches)), pre_deflate_header(std::move(_pre_deflate_header)) {}
+DeflateWithHeaderPrecompressor::DeflateWithHeaderPrecompressor(
+  std::vector<unsigned char>&& _hdr_magic, std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches
+) :
+  DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _precomp_tools, precomp_switches) {
+  hdr_magic = std::move(_hdr_magic);
+}
 
 PrecompProcessorReturnCode DeflateWithHeaderPrecompressor::process(bool input_eof) {
+  while (hdr_magic_bytes_skipped < hdr_magic.size() && avail_in > 0) {
+    // TODO: maybe check that the bytes are the same?
+    avail_in -= 1;
+    next_in += 1;
+    hdr_magic_bytes_skipped++;
+  }
   while (hdr_bytes_skipped < pre_deflate_header.size() && avail_in > 0) {
     // TODO: maybe check that the bytes are the same?
     avail_in -= 1;

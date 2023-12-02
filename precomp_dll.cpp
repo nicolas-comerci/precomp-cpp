@@ -94,7 +94,7 @@ void print_to_log(PrecompLoggingLevels log_level, std::string format) {
 
 std::map<SupportedFormats, std::function<PrecompFormatHandler* (Tools*)>> registeredHandlerFactoryFunctions {};
 REGISTER_PRECOMP_FORMAT_HANDLER(D_ZIP, ZipFormatHandler::create);
-REGISTER_PRECOMP_FORMAT_HANDLER(D_GZIP, GZipFormatHandler::create);
+
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PDF, PdfFormatHandler::create);
 // This also adds support for D_MULTIPNG, handlers that define more than one SupportedFormats are somewhat wonky for now
 REGISTER_PRECOMP_FORMAT_HANDLER(D_PNG, PngFormatHandler::create);
@@ -104,6 +104,7 @@ REGISTER_PRECOMP_FORMAT_HANDLER(D_MP3, Mp3FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER(D_BASE64, Base64FormatHandler::create);
 std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>> registeredHandlerFactoryFunctions2 = std::map<SupportedFormats, std::function<PrecompFormatHandler2* ()>>{};
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_SWF, SwfFormatHandler::create);
+REGISTER_PRECOMP_FORMAT_HANDLER2(D_GZIP, GZipFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_RAW, ZlibFormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BZIP2, BZip2FormatHandler::create);
 REGISTER_PRECOMP_FORMAT_HANDLER2(D_BRUTE, DeflateFormatHandler::create);
@@ -343,7 +344,7 @@ void Precomp::init_format_handlers(bool is_recompressing) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_ZIP](&format_handler_tools)));
     }
     if (is_recompressing || switches.use_gzip) {
-        format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_GZIP](&format_handler_tools)));
+        format_handlers2.push_back(std::unique_ptr<PrecompFormatHandler2>(registeredHandlerFactoryFunctions2[D_GZIP]()));
     }
     if (is_recompressing || switches.use_pdf) {
         format_handlers.push_back(std::unique_ptr<PrecompFormatHandler>(registeredHandlerFactoryFunctions[D_PDF](&format_handler_tools)));

@@ -9,9 +9,12 @@ class DeflateWithHeaderPrecompressor : public PrecompFormatPrecompressor {
 protected:
   std::unique_ptr<DeflatePrecompressor> deflate_precompressor;
   std::vector<unsigned char> pre_deflate_header;
+	std::vector<unsigned char> hdr_magic;
   unsigned int hdr_bytes_skipped = 0;
+  unsigned int hdr_magic_bytes_skipped = 0;
 public:
-  DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches);
+  explicit DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches);
+  explicit DeflateWithHeaderPrecompressor(std::vector<unsigned char>&& _hdr_magic, std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches);
 
   PrecompProcessorReturnCode process(bool input_eof) override;
   void dump_extra_stream_header_data(OStreamLike& output) const override;

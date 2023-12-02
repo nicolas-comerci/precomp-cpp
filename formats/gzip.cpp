@@ -1,29 +1,7 @@
 #include "gzip.h"
 #include "formats/deflate.h"
 
-bool GZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
-  auto checkbuf = buffer.data();
-  if ((*checkbuf == 31) && (*(checkbuf + 1) == 139)) {
-    // check zLib header in GZip header
-    int compression_method = (*(checkbuf + 2) & 15);
-    // reserved FLG bits must be zero
-    if ((compression_method == 8) && ((*(checkbuf + 3) & 224) == 0)) return true;
-  }
-  return false;
-}
-
-class gzip_precompression_result: public deflate_precompression_result {
-public:
-  explicit gzip_precompression_result(Tools* tools): deflate_precompression_result(D_GZIP, tools) {}
-
-  void increase_detected_count() override { tools->increase_detected_count("GZip"); }
-  void increase_precompressed_count() override { tools->increase_precompressed_count("GZip"); }
-};
-
-std::unique_ptr<precompression_result>
-GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output,
-                                          std::span<unsigned char> checkbuf_span,
-                                          long long input_stream_pos, const Switches& precomp_switches, unsigned int recursion_depth) {
+std::optional<uint64_t> calculate_gzip_header_length(const std::span<unsigned char>& checkbuf_span) {
   auto checkbuf = checkbuf_span.data();
   //((*(checkbuf + 8) == 2) || (*(checkbuf + 8) == 4)) { //XFL = 2 or 4
           //  TODO: Can be 0 also, check if other values are used, too.
@@ -37,9 +15,8 @@ GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &outpu
   bool fname = (*(checkbuf + 3) & 8) == 8;
   bool fcomment = (*(checkbuf + 3) & 16) == 16;
 
-  int header_length = 10;
+  uint64_t header_length = 10;
 
-  // TODO: Why not move this code to the quick_check?
   bool dont_compress = false;
   if (fhcrc || fextra || fname || fcomment) {
     int act_checkbuf_pos = 10;
@@ -76,32 +53,50 @@ GZipFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &outpu
       header_length += 2;
     }
   }
-  if (dont_compress) return std::unique_ptr<precompression_result>{};
-
-  std::unique_ptr<deflate_precompression_result> result = std::make_unique<gzip_precompression_result>(precomp_tools);
-  try_decompression_deflate_type(result, *precomp_tools, precomp_switches, input, output,
-    D_GZIP, checkbuf + 2, header_length - 2, input_stream_pos + header_length, false,
-    "in GZIP", precomp_tools->get_tempfile_name("precomp_gzip", true), recursion_depth);
-
-  result->original_size_extra += header_length;  // Add the Gzip header length to the deflate stream size for the proper original Gzip stream size
-  return result;
+  return dont_compress ? std::nullopt : std::optional{ header_length };
 }
 
-std::unique_ptr<PrecompFormatHeaderData> GZipFormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
-  auto fmt_hdr = std::make_unique<DeflateFormatHeaderData>();
-  fmt_hdr->read_data(input, precomp_hdr_flags, false);
-  return fmt_hdr;
+bool GZipFormatHandler::quick_check(const std::span<unsigned char> buffer, uintptr_t current_input_id, const long long original_input_pos) {
+  auto checkbuf = buffer.data();
+  if ((*checkbuf != 31) || (*(checkbuf + 1) != 139)) return false;
+
+  // check zLib header in GZip header
+  const int compression_method = (*(checkbuf + 2) & 15);
+  // reserved FLG bits must be zero
+  if ((compression_method != 8) || ((*(checkbuf + 3) & 224) != 0)) return false;
+  if (!calculate_gzip_header_length(buffer).has_value()) return false;
+
+  return true;
 }
 
-void GZipFormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {
-  auto precomp_deflate_hdr_data = static_cast<DeflateFormatHeaderData&>(precomp_hdr_data);
+class GZipPrecompressor : public DeflateWithHeaderPrecompressor {
+public:
+  GZipPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches) :
+    DeflateWithHeaderPrecompressor(std::vector<unsigned char>{ 31, 139 }, std::move(_pre_deflate_header), _precomp_tools, precomp_switches) {}
+
+  PrecompProcessorReturnCode process(bool input_eof) override {
+    const auto retval = DeflateWithHeaderPrecompressor::process(input_eof);
+    original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped + hdr_magic_bytes_skipped;
+    return retval;
+  }
+
+  void increase_detected_count() override { precomp_tools->increase_detected_count("GZip"); }
+  void increase_precompressed_count() override { precomp_tools->increase_precompressed_count("GZip"); }
+  void increase_partially_precompressed_count() override { precomp_tools->increase_partially_precompressed_count("GZip"); }
+};
+
+std::unique_ptr<PrecompFormatPrecompressor> GZipFormatHandler::make_precompressor(Tools& precomp_tools, Switches& precomp_switches, const std::span<unsigned char>& buffer) {
+  auto checkbuf = buffer.data();
+  uint64_t header_length = calculate_gzip_header_length(buffer).value();
+
+  return std::make_unique<GZipPrecompressor>(
+    std::vector(buffer.data() + 2, buffer.data() + header_length),
+    &precomp_tools, precomp_switches);
+}
+
+void GZipFormatHandler::write_pre_recursion_data(OStreamLike& output, PrecompFormatHeaderData& precomp_hdr_data) {
   // GZIP header
   output.put(31);
   output.put(139);
-  // Write zlib_header
-  output.write(reinterpret_cast<char*>(precomp_deflate_hdr_data.stream_hdr.data()), precomp_deflate_hdr_data.stream_hdr.size());
-}
-
-void GZipFormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
-  recompress_deflate(precompressed_input, recompressed_stream, static_cast<DeflateFormatHeaderData&>(precomp_hdr_data), precomp_tools->get_tempfile_name("recomp_gzip", true), "GZIP", *precomp_tools);
+  ZlibFormatHandler::write_pre_recursion_data(output, precomp_hdr_data);
 }

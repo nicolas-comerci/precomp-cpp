@@ -11,21 +11,13 @@ bool SwfFormatHandler::quick_check(const std::span<unsigned char> buffer, uintpt
 }
 
 class SwfPrecompressor: public DeflateWithHeaderPrecompressor {
-  std::array<unsigned char, 3> cws{ 'C', 'W', 'S' };
-  unsigned int cws_bytes_skipped = 0;
 public:
   SwfPrecompressor(std::vector<unsigned char>&& _pre_deflate_header, Tools* _precomp_tools, const Switches& precomp_switches) :
-    DeflateWithHeaderPrecompressor(std::move(_pre_deflate_header), _precomp_tools, precomp_switches) {}
+    DeflateWithHeaderPrecompressor(std::vector<unsigned char>{ 'C', 'W', 'S' }, std::move(_pre_deflate_header), _precomp_tools, precomp_switches) {}
 
   PrecompProcessorReturnCode process(bool input_eof) override {
-    while (cws_bytes_skipped < cws.size() && avail_in > 0) {
-      // TODO: maybe check that the bytes are the same?
-      avail_in -= 1;
-      next_in += 1;
-      cws_bytes_skipped++;
-    }
     const auto retval = DeflateWithHeaderPrecompressor::process(input_eof);
-    original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped + cws_bytes_skipped;
+    original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped + hdr_magic_bytes_skipped;
     return retval;
   }
 
