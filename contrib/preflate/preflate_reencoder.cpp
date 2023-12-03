@@ -142,14 +142,16 @@ bool preflate_reencode(OutputStream& os,
     size_t newSize = mb.uncompressedSize;
     uncompressedData.resize(curUncSize + newSize);
     if (is.read(uncompressedData.data() + curUncSize, newSize) != newSize) {
-      return false;
+      fail = true;
+      break;
     }
 
     reachedLastMetaBlock = mb.isLastMetaBlock;
     if (futureQueue.empty() && (queueLimit == 0 || reachedLastMetaBlock)) {
       PreflateReencoderTask task(decoder, std::move(mb), std::vector<uint8_t>(uncompressedData), curUncSize);
       if (!task.decodeAndRepredict() || !task.reencode()) {
-        return false;
+        fail = true;
+        break;
       }
     } else {
       if (futureQueue.size() >= queueLimit) {
@@ -158,6 +160,7 @@ bool preflate_reencode(OutputStream& os,
         std::shared_ptr<PreflateReencoderTask> data = first.get();
         if (fail || !data || !data->reencode()) {
           fail = true;
+          break;
         }
       }
       std::shared_ptr<PreflateReencoderTask> ptask;

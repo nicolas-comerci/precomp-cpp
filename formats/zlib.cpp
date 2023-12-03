@@ -55,7 +55,7 @@ PrecompProcessorReturnCode DeflateWithHeaderPrecompressor::process(bool input_eo
   avail_out = deflate_precompressor->avail_out;
   next_out = deflate_precompressor->next_out;
 
-  original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped;
+  original_stream_size = deflate_precompressor->original_stream_size + hdr_bytes_skipped + hdr_magic_bytes_skipped;
 
   return retval;
 }

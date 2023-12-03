@@ -676,7 +676,6 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
         auto recurse_precompressor = PrecompPcfPrecompressor(precomp_mgr, recursion_depth + 1);
         std::vector<std::byte> recursion_out{};
         recursion_out.resize(CHUNK);
-        MemVecIOStream mem_tmp_recurse;
 
         // Precomp format header
         std::byte header_byte{ 0b1 };
@@ -685,22 +684,33 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
         }
         //header_byte |= result->recursion_used ? std::byte{ 0b10000000 } : std::byte{ 0b0 };
 
-        static auto output_chunk = [](
-          PrecompFormatPrecompressor& precompressor, OStreamLike& output, uint32_t current_chunk_size, const std::vector<std::byte>& out_buf,
+        // memory data, header data size, chunk data pos, chunk size
+        using PendingChunk = std::tuple<MemVecIOStream, std::streampos, std::streampos, std::streampos>;
+        static auto make_chunk = [](
+          PrecompFormatPrecompressor& precompressor, uint32_t current_chunk_size, const std::vector<std::byte>& out_buf,
           bool is_first_block, std::byte header_byte, SupportedFormats formatTag, bool is_last_block
-          ) {
+          )-> PendingChunk {
+            MemVecIOStream block_mem;
             if (is_first_block) {
               // Output Precomp format header
-              output.put(static_cast<char>(header_byte));
-              output.put(formatTag);
-              precompressor.dump_extra_stream_header_data(output);
+              block_mem.put(static_cast<char>(header_byte));
+              block_mem.put(formatTag);
+              precompressor.dump_extra_stream_header_data(block_mem);
             }
 
             // Block chunk header
-            output.put(static_cast<char>(is_last_block ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
-            precompressor.dump_extra_block_header_data(output);
-            fout_fput_vlint(output, current_chunk_size);
-            output.write(reinterpret_cast<const char*>(out_buf.data()), current_chunk_size);
+            block_mem.put(static_cast<char>(is_last_block ? std::byte{ 0b10000001 } : std::byte{ 0b00000000 }));
+            precompressor.dump_extra_block_header_data(block_mem);
+            precompressor.block_dumped(block_mem);
+            const auto header_data_size = block_mem.tellp();
+
+            fout_fput_vlint(block_mem, current_chunk_size);
+            const auto chunk_data_pos = block_mem.tellp();
+            block_mem.write(reinterpret_cast<const char*>(out_buf.data()), current_chunk_size);
+            const auto chunk_size = block_mem.tellp();
+
+            block_mem.seekg(0, std::ios_base::beg); // leave the memory stream ready for reading
+            return { block_mem, header_data_size, chunk_data_pos, chunk_size };
           };
 
         try {
@@ -716,22 +726,21 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
           std::vector<std::byte> verification_vec_out{};
           verification_vec_out.resize(CHUNK);
           std::vector<char> original_block_data{};
-          MemVecIOStream mem_tmp_verify;
 
+          std::queue<PendingChunk> pending_chunks;
           std::function output_chunk_callback = [&](std::vector<std::byte>& out_buf, uint32_t current_chunk_size, bool is_last_block) {
             bool new_verified_data = true;
             const auto prev_already_verified_bytes = already_verified_bytes;
             if (precomp_mgr.switches.verify_precompressed) {
               // Output the chunk and verify it's data against the original input
-              mem_tmp_verify.seekg(0, std::ios_base::beg);  // reused across iterations so ensure we are at the start
-              output_chunk(*precompressor, mem_tmp_verify, current_chunk_size, out_buf, verification_is_first_block, header_byte, formatTag, is_last_block);
-              uint32_t written = mem_tmp_verify.tellp();
+              auto new_chunk = make_chunk(*precompressor, current_chunk_size, out_buf, verification_is_first_block, header_byte, formatTag, is_last_block);
+              auto& [block_mem, _, _2, chunk_size] = new_chunk;
 
               // Recompress using PrecompPcfRecompressor reading from verification_vec, dump output to verify_sha1_ostream
-              PrecompProcessorReturnCode verification_ret = process_and_exhaust_output(
+              const PrecompProcessorReturnCode verification_ret = process_and_exhaust_output(
                 verify_recompressor,
-                const_cast<std::byte*>(mem_tmp_verify.vector().data()),  // puajj const_cast, find better way
-                written,
+                const_cast<std::byte*>(block_mem.vector().data()),  // puajj const_cast, find better way
+                chunk_size,
                 verification_vec_out,
                 is_last_block,
                 [&](uint32_t output_data_size) -> bool {
@@ -743,14 +752,16 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
                 return false;
               }
 
+              pending_chunks.push(std::move(new_chunk));
               new_verified_data = already_verified_bytes > prev_already_verified_bytes;
+            }
+            else {
+              pending_chunks.emplace(make_chunk(*precompressor, current_chunk_size, out_buf, verification_is_first_block, header_byte, formatTag, is_last_block));
             }
             verification_is_first_block = false;
 
             // We only want to actually output data when we know its going to allow us to recompress some data, if no new data was recompressed
-            // during verification we hold the data on a temporary file until we get some more verified data, at which point we dump it to the
-            // real output
-            mem_tmp_recurse.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
+            // during verification we hold the data chunks until we get some more verified data, at which point we dump it to the real output
             if (!new_verified_data) return true;
 
             if (output_is_first_block) {
@@ -760,37 +771,54 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
             }
             // If we should recursively precompress then do it, either just dump the precompressed data
             if (use_recursion) {
-              MemVecIOStream recursive_to_output;
-              PrecompProcessorReturnCode recursive_precompression_ret = process_and_exhaust_output(
-                recurse_precompressor,
-                const_cast<std::byte*>(mem_tmp_recurse.vector().data()),  // bleehrg! find better way to do this,
-                mem_tmp_recurse.tellg(),
-                recursion_out,
-                is_last_block,
-                [&recursive_to_output, &recursion_out](uint32_t output_data_size) -> bool {
-                  recursive_to_output.write(reinterpret_cast<char*>(recursion_out.data()), output_data_size);
-                  return true;
+              while (!pending_chunks.empty()) {
+                auto [block_mem, header_data_size, chunk_data_pos, chunk_size] = std::move(pending_chunks.front());
+                pending_chunks.pop();
+
+                MemVecIOStream recursive_to_output;
+                const bool finalize_recursion = is_last_block && pending_chunks.empty();  // finalize only if we just popped the actual last block
+                PrecompProcessorReturnCode recursive_precompression_ret = process_and_exhaust_output(
+                  recurse_precompressor,
+                  const_cast<std::byte*>(block_mem.vector().data() + chunk_data_pos),  // bleehrg! find better way to do this,
+                  chunk_size - chunk_data_pos,
+                  recursion_out,
+                  finalize_recursion,
+                  [&recursive_to_output, &recursion_out](uint32_t output_data_size) -> bool {
+                    recursive_to_output.write(reinterpret_cast<char*>(recursion_out.data()), output_data_size);
+                    return true;
+                  }
+                );
+                if (recursive_precompression_ret == PP_ERROR || (finalize_recursion && recursive_precompression_ret != PP_STREAM_END)) {
+                  throw std::runtime_error("Error during precompression recursion");
                 }
-              );
-              if (recursive_precompression_ret == PP_ERROR || (is_last_block && recursive_precompression_ret != PP_STREAM_END)) {
-                throw std::runtime_error("Error during precompression recursion");
+
+                // Probably need to find a better way of doing this, but we need to flag the stream as recusive
+                if (output_is_first_block) {
+                  output.put(block_mem.get() | 0b10000000);
+                  fast_copy(block_mem, output, static_cast<long long>(header_data_size) - 1);
+                  output_is_first_block = false;
+                }
+                else {
+                  fast_copy(block_mem, output, header_data_size);
+                }
+
+                const uint64_t recursive_block_data_size = recursive_to_output.tellp();
+                fout_fput_vlint(output, recursive_block_data_size);
+                recursive_to_output.seekg(0, std::ios_base::beg);
+                fast_copy(recursive_to_output, output, recursive_block_data_size);
+                if (output.bad()) return false;
               }
-              output_chunk(
-                *precompressor, output, recursive_to_output.tellp(), recursive_to_output.vector(), output_is_first_block,
-                header_byte | std::byte{ 0b10000000 }, formatTag, is_last_block
-              );
             }
             else {
-              mem_tmp_recurse.write(reinterpret_cast<char*>(out_buf.data()), current_chunk_size);
-              output_chunk(*precompressor, output, mem_tmp_recurse.tellp(), mem_tmp_recurse.vector(), output_is_first_block, header_byte, formatTag, is_last_block);
-              if (output.bad()) return false;
-              mem_tmp_recurse.seekp(0, std::ios_base::beg);
-            }
-            precompressor->block_dumped(output);
-            output_is_first_block = false;
+              while (!pending_chunks.empty()) {
+                auto [block_mem, _, _2, chunk_size] = std::move(pending_chunks.front());
+                pending_chunks.pop();
 
-            // reopen yet again so we can start outputting from the start of the tempfile if needed
-            mem_tmp_recurse.seekp(0, std::ios_base::beg);
+                fast_copy(block_mem, output, chunk_size);
+                if (output.bad()) return false;
+              }
+            }
+            output_is_first_block = false;
 
             if (precomp_mgr.switches.verify_precompressed) {
               input.set_new_buffer_start_pos(input_file_pos + already_verified_bytes);
@@ -852,10 +880,11 @@ int compress_file_impl(Precomp& precomp_mgr, IBufferedIStream& input, OStreamLik
             if (recursive_precompression_ret != PP_STREAM_END) {
               throw std::runtime_error("Error during precompression recursion");
             }
-            output_chunk(
-              *precompressor, output, recursive_to_output.tellp(), recursive_to_output.vector(), false,
+            auto [block_mem, _, _2, chunk_size] = make_chunk(
+              *precompressor, recursive_to_output.tellp(), recursive_to_output.vector(), false,
               header_byte | std::byte{ 0b10000000 }, formatTag, false  // for partial stream there is no real last block, if finishes when it gets the partial stream finish marker
             );
+            fast_copy(block_mem, output, chunk_size);
           }
 
           // partial stream finish marker
