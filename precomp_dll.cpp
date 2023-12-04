@@ -423,7 +423,11 @@ void end_uncompressed_data(IBufferedIStream& input, OStreamLike& output, const l
   fast_copy(input, output, *uncompressed_length);
 
   // Tell input it can discard the uncompressed data from it's buffer
-  input.set_new_buffer_start_pos(uncompressed_pos + *uncompressed_length);
+  if (!input.eof()) {
+    // We only do this if we didn't reach eof because otherwise it would put as past the end of the buffer which we can't do, and also
+    // we are imminently going to end precompressing, which will clear the whole buffer so there is hardly a point anyways
+    input.set_new_buffer_start_pos(uncompressed_pos + *uncompressed_length);
+  }
 
   uncompressed_length = std::nullopt;
 }
@@ -1280,7 +1284,6 @@ int decompress_file_impl(
               recompressor->read_extra_block_header_data(input);
               const auto data_block_size = fin_fget_vlint(input);
               
-              PrecompProcessorReturnCode retval;
               if (finish_stream && !last_block) {
                 throw PrecompError(ERR_DURING_RECOMPRESSION);  // trying to finish stream when there are more blocks coming, no-go, something's wrong here, bail
               }
@@ -1292,7 +1295,9 @@ int decompress_file_impl(
                 if (recompressor->avail_in == 0 && remaining_block_bytes > 0) {
                   const auto amt_to_read = std::min<long long>(remaining_block_bytes, CHUNK);
                   input.read(reinterpret_cast<char*>(in_buf.data()), amt_to_read);
-                  if (input.gcount() != amt_to_read) throw PrecompError(ERR_DURING_RECOMPRESSION);
+                  if (input.gcount() != amt_to_read) {
+                    throw PrecompError(ERR_DURING_RECOMPRESSION);
+                  }
                   remaining_block_bytes -= amt_to_read;
                   is_finalize_stream = finish_stream && remaining_block_bytes == 0;
 
@@ -1321,7 +1326,7 @@ int decompress_file_impl(
                 recompressor->avail_out = CHUNK;
                 recompressor->next_out = reinterpret_cast<std::byte*>(out_buf.data());
 
-                retval = recompressor->process(is_finalize_stream);
+                const PrecompProcessorReturnCode retval = recompressor->process(is_finalize_stream);
                 if (retval == PP_ERROR || (retval == PP_STREAM_END && !last_block)) {
                   // Error or premature end!
                   throw PrecompError(ERR_DURING_RECOMPRESSION);
@@ -1378,7 +1383,9 @@ int decompress_file_impl(
         if (handlerFound) break;
       }
     }
-    if (!handlerFound) throw PrecompError(ERR_DURING_RECOMPRESSION);
+    if (!handlerFound) {
+      throw PrecompError(ERR_DURING_RECOMPRESSION);
+    }
   
     fin_pos = input.tellg();
   }

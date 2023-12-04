@@ -31,27 +31,29 @@ void print_to_console(const char* format, Args... args) {
 
 char get_char_with_echo();
 
-// batch error levels
+// batch return codes
 constexpr auto RETURN_SUCCESS = 0;
 constexpr auto ERR_GENERIC_OR_UNKNOWN = 1;
 constexpr auto RETURN_NOTHING_DECOMPRESSED = 2;
-constexpr auto ERR_DISK_FULL = 3;
-constexpr auto ERR_TEMP_FILE_DISAPPEARED = 4;
-constexpr auto ERR_IGNORE_POS_TOO_BIG = 5;
-constexpr auto ERR_IDENTICAL_BYTE_SIZE_TOO_BIG = 6;
-constexpr auto ERR_RECURSION_DEPTH_TOO_BIG = 7;
-constexpr auto ERR_ONLY_SET_RECURSION_DEPTH_ONCE = 8;
-constexpr auto ERR_ONLY_SET_MIN_SIZE_ONCE = 9;
-constexpr auto ERR_DONT_USE_SPACE = 10;
-constexpr auto ERR_MORE_THAN_ONE_OUTPUT_FILE = 11;
-constexpr auto ERR_MORE_THAN_ONE_INPUT_FILE = 12;
-constexpr auto ERR_CTRL_C = 13;
-constexpr auto ERR_INTENSE_MODE_LIMIT_TOO_BIG = 14;
-constexpr auto ERR_BRUTE_MODE_LIMIT_TOO_BIG = 15;
-constexpr auto ERR_DURING_RECOMPRESSION = 19;
-constexpr auto ERR_NO_PCF_HEADER = 20;
-constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = 21;
-constexpr auto ERR_BROTLI_NO_LONGER_SUPPORTED = 22;
+
+constexpr auto ERR_DISK_FULL = -3;
+constexpr auto ERR_TEMP_FILE_DISAPPEARED = -4;
+constexpr auto ERR_IGNORE_POS_TOO_BIG = -5;
+constexpr auto ERR_IDENTICAL_BYTE_SIZE_TOO_BIG = -6;
+constexpr auto ERR_RECURSION_DEPTH_TOO_BIG = -7;
+constexpr auto ERR_ONLY_SET_RECURSION_DEPTH_ONCE = -8;
+constexpr auto ERR_ONLY_SET_MIN_SIZE_ONCE = -9;
+constexpr auto ERR_DONT_USE_SPACE = -10;
+constexpr auto ERR_MORE_THAN_ONE_OUTPUT_FILE = -11;
+constexpr auto ERR_MORE_THAN_ONE_INPUT_FILE = -12;
+constexpr auto ERR_CTRL_C = -13;
+constexpr auto ERR_INTENSE_MODE_LIMIT_TOO_BIG = -14;
+constexpr auto ERR_BRUTE_MODE_LIMIT_TOO_BIG = -15;
+constexpr auto ERR_DURING_RECOMPRESSION = -19;
+constexpr auto ERR_NO_PCF_HEADER = -20;
+constexpr auto ERR_PCF_HEADER_INCOMPATIBLE_VERSION = -21;
+constexpr auto ERR_BROTLI_NO_LONGER_SUPPORTED = -22;
+
 
 class PrecompError: public std::exception {
 public:
