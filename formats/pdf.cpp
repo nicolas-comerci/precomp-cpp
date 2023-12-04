@@ -221,6 +221,7 @@ PdfFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
   auto checkbuf = checkbuf_span.data();
   std::unique_ptr<pdf_precompression_result> result = std::make_unique<pdf_precompression_result>(precomp_tools, 0, 0);
   long long act_search_pos = 12;
+  // TODO: move this to quick check?
   bool found_stream = false;
   do {
     if (*(checkbuf + act_search_pos) == 's') {
@@ -233,90 +234,92 @@ PdfFormatHandler::attempt_precompression(IStreamLike &input, OStreamLike &output
   } while (act_search_pos < (CHECKBUF_SIZE - 6));
   if (!found_stream) return result;
 
+  // TODO: PDF BMP MODE IS BROKEN RIGHT NOW BECAUSE IT REQUIRES SEEKING BEFORE original_input_pos WHICH NOW THAT WE HAVE BUFFERED INPUT IS NO LONGER ALLOWED
+  // TODO: must refactor/rewrite in such a way that this is no longer required, might be needed to read the whole PDF from the PDF header
   // check if the stream is an image and width and height are given
-
-  // read 4096 bytes before stream
-
-  unsigned char type_buf[4097];
-  long long int type_buf_length;
-
-  type_buf[4096] = 0;
-
-  if ((original_input_pos + act_search_pos) >= 4096) {
-    input.seekg((original_input_pos + act_search_pos) - 4096, std::ios_base::beg);
-    input.read(reinterpret_cast<char*>(type_buf), 4096);
-    type_buf_length = 4096;
-  }
-  else {
-    input.seekg(0, std::ios_base::beg);
-    input.read(reinterpret_cast<char*>(type_buf), original_input_pos + act_search_pos);
-    type_buf_length = original_input_pos + act_search_pos;
-  }
-
-  // find "<<"
-
-  long long start_pos = -1;
-
-  for (long long i = type_buf_length; i > 0; i--) {
-    if ((type_buf[i] == '<') && (type_buf[i - 1] == '<')) {
-      start_pos = i;
-      break;
-    }
-  }
-
   int width_val = 0, height_val = 0, bpc_val = 0;
+  if (precomp_switches.pdf_bmp_mode) {
+    // read 4096 bytes before stream
 
-  if ((start_pos > -1) && (precomp_switches.pdf_bmp_mode)) {
+    unsigned char type_buf[4097];
+    long long int type_buf_length;
 
-    unsigned int width_pos, height_pos, bpc_pos;
+    type_buf[4096] = 0;
 
-    // find "/Width"
-    width_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Width") - type_buf;
+    if ((original_input_pos + act_search_pos) >= 4096) {
+      input.seekg((original_input_pos + act_search_pos) - 4096, std::ios_base::beg);
+      input.read(reinterpret_cast<char*>(type_buf), 4096);
+      type_buf_length = 4096;
+    }
+    else {
+      input.seekg(0, std::ios_base::beg);
+      input.read(reinterpret_cast<char*>(type_buf), original_input_pos + act_search_pos);
+      type_buf_length = original_input_pos + act_search_pos;
+    }
 
-    if (width_pos > 0)
-      for (auto i = width_pos + 7; i < type_buf_length; i++) {
-        if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-          if (type_buf[i] != ' ') {
-            width_val = width_val * 10 + (type_buf[i] - '0');
+    // find "<<"
+
+    long long start_pos = -1;
+
+    for (long long i = type_buf_length; i > 0; i--) {
+      if ((type_buf[i] == '<') && (type_buf[i - 1] == '<')) {
+        start_pos = i;
+        break;
+      }
+    }
+
+    if (start_pos > -1) {
+
+      unsigned int width_pos, height_pos, bpc_pos;
+
+      // find "/Width"
+      width_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Width") - type_buf;
+
+      if (width_pos > 0)
+        for (auto i = width_pos + 7; i < type_buf_length; i++) {
+          if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
+            if (type_buf[i] != ' ') {
+              width_val = width_val * 10 + (type_buf[i] - '0');
+            }
+          }
+          else {
+            break;
           }
         }
-        else {
-          break;
-        }
-      }
 
-    // find "/Height"
-    height_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Height") - type_buf;
+      // find "/Height"
+      height_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/Height") - type_buf;
 
-    if (height_pos > 0)
-      for (auto i = height_pos + 8; i < type_buf_length; i++) {
-        if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-          if (type_buf[i] != ' ') {
-            height_val = height_val * 10 + (type_buf[i] - '0');
+      if (height_pos > 0)
+        for (auto i = height_pos + 8; i < type_buf_length; i++) {
+          if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
+            if (type_buf[i] != ' ') {
+              height_val = height_val * 10 + (type_buf[i] - '0');
+            }
+          }
+          else {
+            break;
           }
         }
-        else {
-          break;
-        }
-      }
 
-    // find "/BitsPerComponent"
-    bpc_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/BitsPerComponent") - type_buf;
+      // find "/BitsPerComponent"
+      bpc_pos = (unsigned char*)strstr((const char*)(type_buf + start_pos), "/BitsPerComponent") - type_buf;
 
-    if (bpc_pos > 0)
-      for (auto i = bpc_pos + 18; i < type_buf_length; i++) {
-        if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
-          if (type_buf[i] != ' ') {
-            bpc_val = bpc_val * 10 + (type_buf[i] - '0');
+      if (bpc_pos > 0)
+        for (auto i = bpc_pos + 18; i < type_buf_length; i++) {
+          if (((type_buf[i] >= '0') && (type_buf[i] <= '9')) || (type_buf[i] == ' ')) {
+            if (type_buf[i] != ' ') {
+              bpc_val = bpc_val * 10 + (type_buf[i] - '0');
+            }
+          }
+          else {
+            break;
           }
         }
-        else {
-          break;
-        }
-      }
 
-    if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
-      print_to_log(PRECOMP_DEBUG_LOG, "Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
+      if ((width_val != 0) && (height_val != 0) && (bpc_val != 0)) {
+        print_to_log(PRECOMP_DEBUG_LOG, "Possible image in PDF found: %i * %i, %i bit\n", width_val, height_val, bpc_val);
+      }
     }
   }
 
