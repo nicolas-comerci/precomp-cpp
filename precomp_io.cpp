@@ -504,8 +504,21 @@ std::unique_ptr<IStreamLike> make_temporary_stream(
 }
 
 void BufferedIStream::set_new_buffer_start_pos(uint64_t new_buffer_start_pos) {
-  if (new_buffer_start_pos < buffer_start_pos) throw std::runtime_error("Cant set buffering before already discarded data");
-  if (new_buffer_start_pos > buffer_start_pos + buffer_size) throw std::runtime_error("Cant set new buffering start pos in a way that would skip data");
+  if (new_buffer_start_pos < buffer_start_pos) {
+    throw std::runtime_error("Cant set buffering before already discarded data");
+  }
+  // Special case if we attempt to set the new buffer start pos to EOF, it's past the actual data but we allow it
+  // We clear everything as its not possible to read anything ever again from this BufferedIStream
+  if (istream_eof_pos.has_value() && *istream_eof_pos == new_buffer_start_pos - 1) {
+    buffer.close();
+    buffer_size = 0;
+    buffer_start_pos = *istream_eof_pos;
+    std::filesystem::remove(buffer.file_path);
+    return;
+  }
+  if (new_buffer_start_pos > buffer_start_pos + buffer_size) {
+    throw std::runtime_error("Cant set new buffering start pos in a way that would skip data");
+  }
 
   // Copy any remaining data to the start of the temporary file and truncate it
   const auto new_buffer_size = buffer_size - (new_buffer_start_pos - buffer_start_pos);
@@ -529,7 +542,12 @@ void BufferedIStream::set_new_buffer_start_pos(uint64_t new_buffer_start_pos) {
 }
 
 BufferedIStream& BufferedIStream::read(char* buff, std::streamsize count) {
+  if (eof()) {
+    gcount_ = 0;
+    return *this;
+  }
   const auto initial_current_pos = current_pos;
+  // we seek because seeking loads the buffer (if needed) and we will copy the data from there
   seekg(count, std::ios_base::cur);
   const auto final_current_pos = current_pos;
   gcount_ = final_current_pos - initial_current_pos;

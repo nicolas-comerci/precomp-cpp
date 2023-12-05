@@ -423,11 +423,7 @@ void end_uncompressed_data(IBufferedIStream& input, OStreamLike& output, const l
   fast_copy(input, output, *uncompressed_length);
 
   // Tell input it can discard the uncompressed data from it's buffer
-  if (!input.eof()) {
-    // We only do this if we didn't reach eof because otherwise it would put as past the end of the buffer which we can't do, and also
-    // we are imminently going to end precompressing, which will clear the whole buffer so there is hardly a point anyways
-    input.set_new_buffer_start_pos(uncompressed_pos + *uncompressed_length);
-  }
+  input.set_new_buffer_start_pos(uncompressed_pos + *uncompressed_length);
 
   uncompressed_length = std::nullopt;
 }
