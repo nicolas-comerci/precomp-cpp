@@ -22,7 +22,9 @@ class base64_precompression_result : public precompression_result {
         }
         else {
             outfile.put(base64_line_len[0]);
-            if (line_case == 1) outfile.put(base64_line_len[base64_line_len.size() - 1]);
+            if (line_case == 1) {
+              outfile.put(base64_line_len.back());
+            }
         }
     }
 public:
@@ -313,6 +315,7 @@ std::unique_ptr<precompression_result> try_decompression_base64(Tools& precomp_t
 
     // write compressed data header (Base64)
     result->flags = std::byte{ 0b1 } | (line_case << 2);
+    result->line_case = static_cast<int>(line_case);
     result->base64_header = std::vector(checkbuf, checkbuf + base64_header_length);
 
     result->original_size = compressed_size;
@@ -369,18 +372,19 @@ public:
 std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header(IStreamLike &input, std::byte precomp_hdr_flags, SupportedFormats precomp_hdr_format) {
   auto fmt_hdr = std::make_unique<Base64FormatHeaderData>();
 
-  int line_case = static_cast<int>(precomp_hdr_flags & std::byte{ 0b1100 });
+  const int line_case = static_cast<int>(precomp_hdr_flags & std::byte{ 0b1100 }) >> 2;
 
   // restore Base64 "header"
-  auto base64_header_length = fin_fget_vlint(input);
+  const auto base64_header_length = fin_fget_vlint(input);
 
   print_to_log(PRECOMP_DEBUG_LOG, "Base64 header length: %i\n", base64_header_length);
   fmt_hdr->base64_stream_hdr.resize(base64_header_length);
   input.read(reinterpret_cast<char*>(fmt_hdr->base64_stream_hdr.data()), base64_header_length);
+  // The header has the first byte with -1 to prevent re-detection, so we need to properly restore it here.
+  fmt_hdr->base64_stream_hdr[0] += 1;
 
   // read line length list
-  auto line_count = fin_fget_vlint(input);
-
+  const auto line_count = fin_fget_vlint(input);
   fmt_hdr->base64_line_len.resize(line_count);
 
   if (line_case == 2) {
@@ -408,10 +412,9 @@ std::unique_ptr<PrecompFormatHeaderData> Base64FormatHandler::read_format_header
 }
 
 void Base64FormatHandler::write_pre_recursion_data(OStreamLike &output, PrecompFormatHeaderData& precomp_hdr_data) {
-  auto precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
+  auto& precomp_b64_hdr_data = static_cast<Base64FormatHeaderData&>(precomp_hdr_data);
   // Write Base64 header
-  output.put(precomp_b64_hdr_data.base64_stream_hdr[0] + 1); // first char was decreased
-  output.write(reinterpret_cast<char*>(precomp_b64_hdr_data.base64_stream_hdr.data() + 1), precomp_b64_hdr_data.base64_stream_hdr.size() - 1);
+  output.write(reinterpret_cast<char*>(precomp_b64_hdr_data.base64_stream_hdr.data()), precomp_b64_hdr_data.base64_stream_hdr.size());
 }
 
 void Base64FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLike& recompressed_stream, PrecompFormatHeaderData& precomp_hdr_data, SupportedFormats precomp_hdr_format) {
@@ -425,5 +428,5 @@ void Base64FormatHandler::recompress(IStreamLike& precompressed_input, OStreamLi
     print_to_log(PRECOMP_DEBUG_LOG, "Encoded length: %lli - decoded length: %lli\n", precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);
   }
 
-  base64_reencode(precompressed_input, recompressed_stream, precomp_b64_hdr_data.base64_line_len, precomp_b64_hdr_data.original_size, precomp_b64_hdr_data.precompressed_size);
+  base64_reencode(precompressed_input, recompressed_stream, precomp_b64_hdr_data.base64_line_len, precomp_b64_hdr_data.precompressed_size, precomp_b64_hdr_data.original_size);
 }
