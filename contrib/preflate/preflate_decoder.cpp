@@ -277,9 +277,10 @@ bool preflate_decode(OutputStream& unpacked_output,
     auto [data, deflate_size_sum] = first.get();
     if (fail || !data || !data->encode(unpacked_output)) {
       fail = true;
-      break;
     }
-    deflate_size = deflate_size_sum;
+    else {
+      deflate_size = deflate_size_sum;
+    }
   }
   decOutCache.flush();
   if (!fail) deflate_size = (deflate_bits + 7) >> 3; // Complete any missing bits to get a whole size in bytes
