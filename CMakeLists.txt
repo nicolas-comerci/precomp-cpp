@@ -76,10 +76,10 @@ add_stem2file(PACKMP3_SRC "${SRCDIR}/contrib/packmp3/%STEM%.cpp"
 add_definitions(-DBUILD_LIB)
 
 add_definitions(-DHAVE_BOOL)
-if (MSVC)
+if (MSVC OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32))
   include_directories(AFTER "msinttypes")
   add_definitions(-D_UNICODE -DUNICODE)
-endif (MSVC)
+endif (MSVC OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32))
 
 # Not the cleanest thing ever, but we just make Mac compilation use unix/linux code, for now it works
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
